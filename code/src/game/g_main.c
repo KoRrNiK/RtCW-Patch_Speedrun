@@ -53,6 +53,10 @@ gentity_t       *g_camEnt = NULL;   //----(SA)	script camera
 extern int bg_pmove_gameskill_integer;
 // done
 
+// Bunny hop globals (defined in bg_pmove.c)
+extern int bh_movement_integer;
+extern int bh_autojump_integer;
+
 vmCvar_t g_gametype;
 
 // Rafael gameskill
@@ -60,6 +64,10 @@ vmCvar_t g_gameskill;
 // done
 
 vmCvar_t g_reloading;       //----(SA)	added
+
+// Bunny hop cvars
+vmCvar_t g_bh_movement;
+vmCvar_t g_bh_autojump;
 
 vmCvar_t g_dmflags;
 vmCvar_t g_fraglimit;
@@ -140,6 +148,7 @@ vmCvar_t g_soldierChargeTime;
 // jpw
 
 vmCvar_t g_playerStart;         // set when the player enters the game
+vmCvar_t g_triggerLog;          // speedrun: log trigger activations
 
 // Knightmare- game balancing cvars
 vmCvar_t		sk_rot_health;
@@ -228,6 +237,10 @@ cvarTable_t gameCvarTable[] = {
 	{ &g_gameskill, "g_gameskill", "2", CVAR_SERVERINFO | CVAR_LATCH, 0, qfalse  },   // (SA) new default '2' (was '1')
 	// done
 
+	// Bunny hop cvars
+	{ &g_bh_movement, "bh_movement", "0", CVAR_ARCHIVE, 0, qfalse },
+	{ &g_bh_autojump, "bh_autojump", "0", CVAR_ARCHIVE, 0, qfalse },
+
 	// Knightmare- game balancing cvars
 	{ &sk_rot_health, "sk_rot_health", "0", 0, 0, qfalse  },
 	{ &sk_rot_armor, "sk_rot_armor", "0", 0, 0, qfalse  },
@@ -311,6 +324,7 @@ cvarTable_t gameCvarTable[] = {
 
 
 	{ &g_playerStart, "g_playerStart", "0", CVAR_ROM, 0, qfalse  },
+	{ &g_triggerLog, "g_triggerLog", "0", CVAR_ARCHIVE, 0, qfalse  },
 
 	{ &g_maxclients, "sv_maxclients", "8", CVAR_SERVERINFO | CVAR_LATCH | CVAR_ARCHIVE, 0, qfalse  },
 	{ &g_maxGameClients, "g_maxGameClients", "0", CVAR_SERVERINFO | CVAR_LATCH | CVAR_ARCHIVE, 0, qfalse  },
@@ -1160,6 +1174,9 @@ void G_RegisterCvars( void ) {
 	bg_pmove_gameskill_integer = g_gameskill.integer;
 	// done
 
+	// Sync bunny hop settings
+	bh_movement_integer = g_bh_movement.integer;
+	bh_autojump_integer = g_bh_autojump.integer;
 	level.warmupModificationCount = g_warmup.modificationCount;
 }
 
@@ -1233,6 +1250,10 @@ void G_UpdateCvars( void ) {
 	if ( remapped ) {
 		G_RemapTeamShaders();
 	}
+
+	// Sync bunny hop settings on cvar change
+	bh_movement_integer = g_bh_movement.integer;
+	bh_autojump_integer = g_bh_autojump.integer;
 }
 
 

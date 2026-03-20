@@ -1166,6 +1166,8 @@ extern vmCvar_t g_soldierChargeTime;
 
 extern vmCvar_t g_playerStart;      //----(SA)	added
 
+extern vmCvar_t g_triggerLog;       // speedrun: log trigger activations to console
+
 void    trap_Printf( const char *fmt );
 void    trap_Error( const char *fmt );
 void    trap_Endgame( void );   //----(SA)	added

@@ -89,6 +89,10 @@ extern float pm_flightfriction;
 
 //----(SA)	end
 
+// Bunny hop globals (set from bh_movement / bh_autojump cvars)
+extern int bh_movement_integer;
+extern int bh_autojump_integer;
+
 extern int c_pmove;
 
 void PM_AddTouchEnt( int entityNum );

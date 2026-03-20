@@ -384,6 +384,13 @@ void CL_KeyMove( usercmd_t *cmd ) {
 	up += movespeed * CL_KeyState( &kb[KB_UP] );
 	up -= movespeed * CL_KeyState( &kb[KB_DOWN] );
 
+	// Send crouch state as a separate flag (for HL1-style bhop crouch-jump detection)
+	// This lets the DLL distinguish "jump+crouch held" (upmove=0, WBUTTON_CROUCH=1)
+	// from "no keys pressed" (upmove=0, WBUTTON_CROUCH=0)
+	if ( kb[KB_DOWN].active ) {
+		cmd->wbuttons |= WBUTTON_CROUCH;
+	}
+
 	forward += movespeed * CL_KeyState( &kb[KB_FORWARD] );
 	forward -= movespeed * CL_KeyState( &kb[KB_BACK] );
 
@@ -701,6 +708,9 @@ void CL_CreateNewCommands( void ) {
 	cmdNum = cl.cmdNumber & CMD_MASK;
 	cl.cmds[cmdNum] = CL_CreateCmd();
 	cmd = &cl.cmds[cmdNum];
+
+	// Update demo freecam movement (uses kb[] key states)
+	CL_UpdateDemoFreecam( frame_msec );
 }
 
 /*
@@ -1024,6 +1034,67 @@ void CL_InitInput( void ) {
 
 	cl_nodelta = Cvar_Get( "cl_nodelta", "0", 0 );
 	cl_debugMove = Cvar_Get( "cl_debugMove", "0", 0 );
+}
+
+
+/*
+============
+CL_UpdateDemoFreecam
+
+Update freecam position based on keyboard input.
+Called once per frame from CL_CreateNewCommands when freecam is active.
+============
+*/
+void CL_UpdateDemoFreecam( int frameMsec ) {
+	float speed, fwd, side, up;
+	vec3_t forward, right, upVec;
+	vec3_t move;
+	float dt;
+
+	if ( !clc.demoplaying || !clc.demoFreecam ) {
+		return;
+	}
+
+	if ( frameMsec <= 0 || frameMsec > 200 ) {
+		frameMsec = 16;
+	}
+	dt = frameMsec / 1000.0f;
+	speed = 800.0f;  /* units per second - noclip speed */
+
+	/* Use the player's current view angles for the freecam view direction.
+	   cl.viewangles is updated by mouse input even during demo playback. */
+	VectorCopy( cl.viewangles, clc.demoFreecamAngles );
+
+	/* Movement from keyboard state.
+	   Use kb[].active directly instead of CL_KeyState() because
+	   CL_CreateCmd -> CL_KeyMove already consumed the key state
+	   earlier in this frame (CL_KeyState zeroes msec on read).
+	   kb[].active is a simple boolean that stays true while held. */
+	fwd  = 0;
+	side = 0;
+	up   = 0;
+	if ( kb[KB_FORWARD].active )   fwd  += 1.0f;
+	if ( kb[KB_BACK].active )      fwd  -= 1.0f;
+	if ( kb[KB_MOVERIGHT].active ) side += 1.0f;
+	if ( kb[KB_MOVELEFT].active )  side -= 1.0f;
+	if ( kb[KB_UP].active )        up   += 1.0f;
+	if ( kb[KB_DOWN].active )      up   -= 1.0f;
+
+	if ( fwd == 0 && side == 0 && up == 0 ) {
+		return;
+	}
+
+	/* Build direction vectors from freecam angles */
+	AngleVectors( clc.demoFreecamAngles, forward, right, upVec );
+
+	/* Compute movement in world space */
+	VectorClear( move );
+	VectorMA( move, fwd * speed * dt,  forward, move );
+	VectorMA( move, side * speed * dt, right,   move );
+	VectorMA( move, up * speed * dt,   upVec,   move );
+
+	/* Apply movement to freecam position */
+	VectorAdd( clc.demoFreecamPos, move, clc.demoFreecamPos );
 }
 
 

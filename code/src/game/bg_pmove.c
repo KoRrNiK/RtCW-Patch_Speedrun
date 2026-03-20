@@ -39,7 +39,11 @@ If you have questions concerning this license or the applicable additional terms
 int bg_pmove_gameskill_integer;
 // done
 
-// JPW NERVE -- added because I need to check single/multiplayer instances and branch accordingly
+// Bunny hop settings (set from bh_movement / bh_autojump cvars)
+int bh_movement_integer;
+int bh_autojump_integer;
+
+// JPW NERVE
 #ifdef CGAMEDLL
 extern vmCvar_t cg_gameType;
 #endif
@@ -82,6 +86,9 @@ float pm_slagWadeScale    = 0.70;
 
 float pm_accelerate       = 10;
 float pm_airaccelerate    = 1;
+float pm_hl1airaccelerate = 15;	// HL1-style air acceleration value (higher than HL1's 10 for more responsive turns)
+float pm_hl1maxairspeed   = 30;	// HL1-style max air wishspeed for strafing
+float pm_hl1aircontrol    = 150;	// CPM-style air control strength for speed-preserving turns
 float pm_wateraccelerate  = 4;
 float pm_slagaccelerate   = 2;
 float pm_flyaccelerate    = 8;
@@ -533,7 +540,7 @@ static qboolean PM_CheckJump( void ) {
 	// JPW NERVE -- jumping in multiplayer uses and requires sprint juice (to prevent turbo skating, sprint + jumps)
 	// don't allow jump accel
 //	if (pm->cmd.serverTime - pm->ps->jumpTime < 850)
-	if ( pm->cmd.serverTime - pm->ps->jumpTime < 500 ) {  // (SA) trying shorter time.  I find this effect annoying ;)
+	if ( !bh_autojump_integer && pm->cmd.serverTime - pm->ps->jumpTime < 500 ) {  // (SA) trying shorter time
 		return qfalse;
 	}
 
@@ -541,16 +548,26 @@ static qboolean PM_CheckJump( void ) {
 		return qfalse;      // don't allow jump until all buttons are up
 	}
 
-	if ( pm->cmd.upmove < 10 ) {
-		// not holding jump
-		return qfalse;
-	}
+	if ( bh_autojump_integer ) {
+		// HL1-style bhop: WBUTTON_CROUCH is set by the engine when crouch key is held.
+		// When both jump+crouch are held, upmove cancels to 0 but WBUTTON_CROUCH stays set.
+		qboolean wantsJump = ( pm->cmd.upmove >= 10 ) ||
+			( pm->cmd.upmove == 0 && ( pm->cmd.wbuttons & WBUTTON_CROUCH ) );
+		if ( !wantsJump && !( pm->ps->pm_flags & PMF_JUMP_HELD ) ) {
+			return qfalse;
+		}
+	} else {
+		// Vanilla behavior - unchanged
+		if ( pm->cmd.upmove < 10 ) {
+			return qfalse;
+		}
 
-	// must wait for jump to be released
-	if ( pm->ps->pm_flags & PMF_JUMP_HELD ) {
-		// clear upmove so cmdscale doesn't lower running speed
-		pm->cmd.upmove = 0;
-		return qfalse;
+		// must wait for jump to be released
+		if ( pm->ps->pm_flags & PMF_JUMP_HELD ) {
+			// clear upmove so cmdscale doesn't lower running speed
+			pm->cmd.upmove = 0;
+			return qfalse;
+		}
 	}
 
 	pml.groundPlane = qfalse;       // jumping away
@@ -790,6 +807,84 @@ static void PM_FlyMove( void ) {
 
 /*
 ===================
+PM_AirAccelerateHL
+
+HL1/CS1.6 style air acceleration.
+Allows gaining speed through air strafing (bunny hop).
+===================
+*/
+static void PM_AirAccelerateHL( vec3_t wishdir, float wishspeed, float accel ) {
+	int i;
+	float addspeed, accelspeed, currentspeed;
+	float wishspd;
+
+	wishspd = wishspeed;
+	if ( wishspd > pm_hl1maxairspeed ) {
+		wishspd = pm_hl1maxairspeed;
+	}
+
+	currentspeed = DotProduct( pm->ps->velocity, wishdir );
+	addspeed = wishspd - currentspeed;
+	if ( addspeed <= 0 ) {
+		return;
+	}
+	accelspeed = accel * wishspeed * pml.frametime;
+	if ( accelspeed > addspeed ) {
+		accelspeed = addspeed;
+	}
+
+	for ( i = 0 ; i < 3 ; i++ ) {
+		pm->ps->velocity[i] += accelspeed * wishdir[i];
+	}
+}
+
+
+/*
+===================
+PM_AirControl
+
+CPM-style air control: allows speed-preserving turns.
+Normalizes velocity, rotates toward wish direction, restores original speed.
+This prevents speed loss during sharp mouse turns while bhop strafing.
+===================
+*/
+static void PM_AirControl( vec3_t wishdir, float wishspeed ) {
+	float zspeed, speed, dot, k;
+	int i;
+
+	if ( wishspeed == 0.0f ) {
+		return;
+	}
+
+	// Save and strip vertical component
+	zspeed = pm->ps->velocity[2];
+	pm->ps->velocity[2] = 0;
+	speed = VectorNormalize( pm->ps->velocity );
+
+	dot = DotProduct( pm->ps->velocity, wishdir );
+
+	// Scales with dot^2 so it's strongest when moving in roughly the same direction
+	// and fades out at sharper angles (prevents instant 180s but allows smooth curves)
+	k = pm_hl1aircontrol * dot * dot * pml.frametime;
+
+	if ( dot > 0 ) {
+		// Blend velocity toward wish direction while preserving speed
+		for ( i = 0; i < 2; i++ ) {
+			pm->ps->velocity[i] = pm->ps->velocity[i] * speed + wishdir[i] * k;
+		}
+		VectorNormalize( pm->ps->velocity );
+	}
+
+	// Restore original horizontal speed magnitude (speed-preserving)
+	for ( i = 0; i < 2; i++ ) {
+		pm->ps->velocity[i] *= speed;
+	}
+	pm->ps->velocity[2] = zspeed;
+}
+
+
+/*
+===================
 PM_AirMove
 
 ===================
@@ -831,14 +926,44 @@ static void PM_AirMove( void ) {
 	wishspeed *= scale;
 
 	// not on ground, so little effect on velocity
-	PM_Accelerate( wishdir, wishspeed, pm_airaccelerate );
+	if ( bh_movement_integer ) {
+		PM_AirAccelerateHL( wishdir, wishspeed, pm_hl1airaccelerate );
+		PM_AirControl( wishdir, wishspeed );
+	} else {
+		PM_Accelerate( wishdir, wishspeed, pm_airaccelerate );
+	}
 
 	// we may have a ground plane that is very steep, even
 	// though we don't have a groundentity
 	// slide along the steep plane
 	if ( pml.groundPlane ) {
-		PM_ClipVelocity( pm->ps->velocity, pml.groundTrace.plane.normal,
-						 pm->ps->velocity, OVERCLIP );
+		if ( bh_movement_integer ) {
+			// HL1/CS-style surf physics: preserve speed on steep surfaces
+			// Instead of hard-clipping velocity, smoothly redirect along the surface
+			float speedBefore;
+			vec3_t velBefore;
+
+			VectorCopy( pm->ps->velocity, velBefore );
+			speedBefore = VectorLength( velBefore );
+
+			PM_ClipVelocity( pm->ps->velocity, pml.groundTrace.plane.normal,
+							 pm->ps->velocity, OVERCLIP );
+
+			// Restore original speed magnitude along the clipped direction
+			// This prevents losing speed when sliding along steep walls/surfs
+			if ( speedBefore > 0 ) {
+				float speedAfter = VectorLength( pm->ps->velocity );
+				if ( speedAfter > 1 ) {
+					// Blend: preserve most of the original speed (90%)
+					float preserveSpeed = speedBefore * 0.9f + speedAfter * 0.1f;
+					VectorNormalize( pm->ps->velocity );
+					VectorScale( pm->ps->velocity, preserveSpeed, pm->ps->velocity );
+				}
+			}
+		} else {
+			PM_ClipVelocity( pm->ps->velocity, pml.groundTrace.plane.normal,
+							 pm->ps->velocity, OVERCLIP );
+		}
 	}
 
 #if 0
@@ -1535,10 +1660,55 @@ static void PM_GroundTrace( void ) {
 			Com_Printf( "%i:Land\n", c_pmove );
 		}
 
+		// HL1-style ramp boost: when hitting a steep slope with speed during bhop,
+		// redirect momentum along the slope instead of killing it.
+		// This lets you launch off ramps when moving fast.
+		// normal[2] < 0.80 = only slopes steeper than ~37 degrees (big ramps/surfs only)
+		if ( bh_movement_integer && trace.plane.normal[2] < 0.80 ) {
+			float hspeed;
+			vec3_t hvel;
+			VectorCopy( pm->ps->velocity, hvel );
+			hvel[2] = 0;
+			hspeed = VectorLength( hvel );
+
+			// Only ramp-boost when moving fast enough (bhop speed)
+			if ( hspeed > 300 ) {
+				float slopeAngle = 1.0f - trace.plane.normal[2]; // 0=flat, ~0.3=steep walkable
+				float boostFactor = hspeed * slopeAngle * 1.4f;
+
+				// Clip velocity along the slope to redirect momentum
+				PM_ClipVelocity( pm->ps->velocity, trace.plane.normal,
+								 pm->ps->velocity, OVERCLIP );
+
+				// Add upward boost proportional to speed and slope steepness
+				if ( pm->ps->velocity[2] > 0 ) {
+					pm->ps->velocity[2] += boostFactor;
+				} else {
+					pm->ps->velocity[2] = boostFactor;
+				}
+
+				// Launch off the ramp - don't land
+				pm->ps->groundEntityNum = ENTITYNUM_NONE;
+				pml.groundPlane = qfalse;
+				pml.walking = qfalse;
+
+				if ( pm->cmd.forwardmove >= 0 ) {
+					BG_AnimScriptEvent( pm->ps, ANIM_ET_JUMP, qfalse, qtrue );
+					pm->ps->pm_flags &= ~PMF_BACKWARDS_JUMP;
+				} else {
+					BG_AnimScriptEvent( pm->ps, ANIM_ET_JUMPBK, qfalse, qtrue );
+					pm->ps->pm_flags |= PMF_BACKWARDS_JUMP;
+				}
+				// Skip CrashLand and landing timer
+				PM_AddTouchEnt( trace.entityNum );
+				return;
+			}
+		}
+
 		PM_CrashLand();
 
 		// don't do landing time if we were just going down a slope
-		if ( pml.previous_velocity[2] < -200 ) {
+		if ( !bh_movement_integer && pml.previous_velocity[2] < -200 ) {
 			// don't allow another jump for a little while
 			pm->ps->pm_flags |= PMF_TIME_LAND;
 			pm->ps->pm_time = 250;
@@ -1635,7 +1805,13 @@ static void PM_CheckDuck( void ) {
 		return;
 	}
 
-	if ( pm->cmd.upmove < 0 ) { // duck
+	// Duck detection
+	if ( pm->cmd.upmove < 0 ) {
+		// Crouch key held alone
+		pm->ps->pm_flags |= PMF_DUCKED;
+	} else if ( bh_autojump_integer && pm->cmd.upmove == 0 &&
+				( pm->cmd.wbuttons & WBUTTON_CROUCH ) ) {
+		// HL1-style bhop: jump+crouch both held (upmove cancelled to 0, WBUTTON_CROUCH confirms crouch)
 		pm->ps->pm_flags |= PMF_DUCKED;
 	} else
 	{   // stand up if possible
@@ -3724,7 +3900,7 @@ void PM_UpdateViewAngles( playerState_t *ps, usercmd_t *cmd, void( trace ) ( tra
 	int i;
 	pmove_t tpm;
 
-	if ( pm->ps->pm_type == PM_FREEZE ) {
+	if ( ps->pm_type == PM_FREEZE ) {
 		return;
 	}
 
@@ -4180,8 +4356,13 @@ void PmoveSingle( pmove_t *pmove ) {
 	AngleVectors( pm->ps->viewangles, pml.forward, pml.right, pml.up );
 
 	if ( pm->cmd.upmove < 10 ) {
-		// not holding jump
-		pm->ps->pm_flags &= ~PMF_JUMP_HELD;
+		// HL1-style bhop: preserve JUMP_HELD when both jump+crouch are held
+		if ( bh_autojump_integer && pm->cmd.upmove == 0 &&
+			 ( pm->cmd.wbuttons & WBUTTON_CROUCH ) ) {
+			// preserve JUMP_HELD - WBUTTON_CROUCH confirms crouch key is actually held
+		} else {
+			pm->ps->pm_flags &= ~PMF_JUMP_HELD;
+		}
 	}
 
 	// decide if backpedaling animations should be used
@@ -4379,7 +4560,13 @@ int Pmove( pmove_t *pmove ) {
 		PmoveSingle( pmove );
 
 		if ( pmove->ps->pm_flags & PMF_JUMP_HELD ) {
-			pmove->cmd.upmove = 20;
+			// In bhop mode: when ducked, keep upmove at 0 so PM_CheckDuck
+			// preserves crouch on next subframe
+			if ( bh_autojump_integer && ( pmove->ps->pm_flags & PMF_DUCKED ) ) {
+				pmove->cmd.upmove = 0;
+			} else {
+				pmove->cmd.upmove = 20;
+			}
 		}
 	}
 
