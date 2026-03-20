@@ -254,6 +254,7 @@ typedef struct aas_s
 	unsigned short ***areatraveltimes;
 	//array of size numclusters with cluster cache
 	aas_routingcache_t ***clusterareacache;
+	int clusterareanum_total;					//total flat slot count across all clusters (for safe freeing after Hunk_Clear)
 	aas_routingcache_t **portalcache;
 	//maximum travel time through portals
 	int *portalmaxtraveltimes;

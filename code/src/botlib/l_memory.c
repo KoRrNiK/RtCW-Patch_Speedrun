@@ -91,9 +91,23 @@ void LinkMemoryBlock( memoryblock_t *block ) {
 //===========================================================================
 void UnlinkMemoryBlock( memoryblock_t *block ) {
 	if ( block->prev ) {
+		/* Validate prev pointer before dereferencing */
+		if ( block->prev->id != MEM_ID && block->prev->id != HUNK_ID ) {
+			/* Corrupted prev - just detach head */
+			memory = block->next;
+			if ( memory && ( memory->id == MEM_ID || memory->id == HUNK_ID ) ) {
+				memory->prev = NULL;
+			} else {
+				memory = NULL;
+			}
+			return;
+		}
 		block->prev->next = block->next;
 	} else { memory = block->next;}
 	if ( block->next ) {
+		if ( block->next->id != MEM_ID && block->next->id != HUNK_ID ) {
+			return; /* Corrupted next - skip relinking */
+		}
 		block->next->prev = block->prev;
 	}
 } //end of the function UnlinkMemoryBlock
@@ -292,6 +306,14 @@ void PrintMemoryLabels( void ) {
 	Log_Write( "\r\n" );
 	for ( block = memory; block; block = block->next )
 	{
+		// Validate the block id before touching file/label/next.
+		// After Hunk_Clear() orphaned hunk blocks may still be in the
+		// list with overwritten headers; reading their fields would crash.
+		if ( block->id != MEM_ID && block->id != HUNK_ID ) {
+			Log_Write( "%6d, CORRUPT block at %p (id=0x%08lX) -- stopping list walk\r\n",
+					   i, (void *)block, block->id );
+			break;
+		}
 #ifdef MEMDEBUG
 		if ( block->id == HUNK_ID ) {
 			Log_Write( "%6d, hunk %p, %8d: %24s line %6d: %s\r\n", i, block->ptr, block->size, block->file, block->line, block->label );
@@ -315,6 +337,11 @@ void DumpMemory( void ) {
 
 	for ( block = memory; block; block = memory )
 	{
+		// If the head block is corrupted, just detach it and stop.
+		if ( block->id != MEM_ID && block->id != HUNK_ID ) {
+			memory = NULL;
+			break;
+		}
 		FreeMemory( block->ptr );
 	} //end for
 	totalmemorysize = 0;

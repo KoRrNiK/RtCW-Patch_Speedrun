@@ -207,6 +207,9 @@ __inline float AAS_RoutingTime( void ) {
 // Changes Globals:		-
 //===========================================================================
 void AAS_FreeRoutingCache( aas_routingcache_t *cache ) {
+	if ( !cache ) {
+		return;
+	}
 	routingcachesize -= cache->size;
 	AAS_RoutingFreeMemory( cache );
 } //end of the function AAS_FreeRoutingCache
@@ -217,23 +220,46 @@ void AAS_FreeRoutingCache( aas_routingcache_t *cache ) {
 // Changes Globals:		-
 //===========================================================================
 void AAS_RemoveRoutingCacheInCluster( int clusternum ) {
-	int i;
+	int i, numSlots;
 	aas_routingcache_t *cache, *nextcache;
-	aas_cluster_t *cluster;
+	aas_routingcache_t **slotBase, **flatStart;
 
+	if ( !( *aasworld ).loaded ) {
+		return;
+	}
 	if ( !( *aasworld ).clusterareacache ) {
 		return;
 	}
-	cluster = &( *aasworld ).clusters[clusternum];
-	for ( i = 0; i < cluster->numareas; i++ )
-	{
-		for ( cache = ( *aasworld ).clusterareacache[clusternum][i]; cache; cache = nextcache )
-		{
+	if ( clusternum < 0 || clusternum >= ( *aasworld ).numclusters ) {
+		return;
+	}
+	if ( !( *aasworld ).clusterareacache[clusternum] ) {
+		return;
+	}
+	if ( ( *aasworld ).clusterareanum_total <= 0 ) {
+		return;
+	}
+	// Compute the actual number of slots for this cluster from the
+	// flat array pointer layout rather than clusters[].numareas which
+	// resides in hunk memory and may be stale after Hunk_Clear().
+	slotBase  = ( *aasworld ).clusterareacache[clusternum];
+	flatStart = ( *aasworld ).clusterareacache[0];
+	if ( clusternum + 1 < ( *aasworld ).numclusters &&
+		 ( *aasworld ).clusterareacache[clusternum + 1] ) {
+		numSlots = (int)( ( *aasworld ).clusterareacache[clusternum + 1] - slotBase );
+	} else {
+		numSlots = ( *aasworld ).clusterareanum_total - (int)( slotBase - flatStart );
+	}
+	if ( numSlots <= 0 || numSlots > ( *aasworld ).clusterareanum_total ) {
+		return;
+	}
+	for ( i = 0; i < numSlots; i++ ) {
+		for ( cache = slotBase[i]; cache; cache = nextcache ) {
 			nextcache = cache->next;
 			AAS_FreeRoutingCache( cache );
-		} //end for
-		( *aasworld ).clusterareacache[clusternum][i] = NULL;
-	} //end for
+		}
+		slotBase[i] = NULL;
+	}
 } //end of the function AAS_RemoveRoutingCacheInCluster
 //===========================================================================
 //
@@ -242,9 +268,14 @@ void AAS_RemoveRoutingCacheInCluster( int clusternum ) {
 // Changes Globals:		-
 //===========================================================================
 void AAS_RemoveRoutingCacheUsingArea( int areanum ) {
-	int i, clusternum;
-	aas_routingcache_t *cache, *nextcache;
+	int clusternum;
 
+	if ( !( *aasworld ).loaded ) {
+		return;
+	}
+	if ( areanum <= 0 || areanum >= ( *aasworld ).numareas ) {
+		return;
+	}
 	clusternum = ( *aasworld ).areasettings[areanum].cluster;
 	if ( clusternum > 0 ) {
 		//remove all the cache in the cluster the area is in
@@ -256,18 +287,17 @@ void AAS_RemoveRoutingCacheUsingArea( int areanum ) {
 		AAS_RemoveRoutingCacheInCluster( ( *aasworld ).portals[-clusternum].frontcluster );
 		AAS_RemoveRoutingCacheInCluster( ( *aasworld ).portals[-clusternum].backcluster );
 	} //end else
-	  // remove all portal cache
+	  // remove all portal cache - walk and free each node properly
 	if ( ( *aasworld ).portalcache ) {
-		for ( i = 0; i < ( *aasworld ).numareas; i++ )
-		{
-			//refresh portal cache
-			for ( cache = ( *aasworld ).portalcache[i]; cache; cache = nextcache )
-			{
+		int i;
+		aas_routingcache_t *cache, *nextcache;
+		for ( i = 0; i < ( *aasworld ).numareas; i++ ) {
+			for ( cache = ( *aasworld ).portalcache[i]; cache; cache = nextcache ) {
 				nextcache = cache->next;
 				AAS_FreeRoutingCache( cache );
-			} //end for
+			}
 			( *aasworld ).portalcache[i] = NULL;
-		} //end for
+		}
 	}
 } //end of the function AAS_RemoveRoutingCacheUsingArea
 //===========================================================================
@@ -562,36 +592,50 @@ void AAS_LinkCache(aas_routingcache_t *cache)
 // Changes Globals:		-
 //===========================================================================
 int AAS_FreeOldestCache( void ) {
-	int i, j, bestcluster, bestarea, freed;
+	int i, j, numSlots, bestcluster, bestarea, freed;
 	float besttime;
 	aas_routingcache_t *cache, *bestcache;
+	aas_routingcache_t **slotBase;
 
 	freed = qfalse;
 	besttime = 999999999;
 	bestcache = NULL;
 	bestcluster = 0;
 	bestarea = 0;
-	//refresh cluster cache
-	for ( i = 0; i < ( *aasworld ).numclusters; i++ )
-	{
-		for ( j = 0; j < ( *aasworld ).clusters[i].numareas; j++ )
+	//refresh cluster cache - compute per-cluster slot counts from the
+	//flat array pointers (not clusters[].numareas which may be stale)
+	if ( ( *aasworld ).clusterareacache && ( *aasworld ).clusterareanum_total > 0 ) {
+		for ( i = 0; i < ( *aasworld ).numclusters; i++ )
 		{
-			for ( cache = ( *aasworld ).clusterareacache[i][j]; cache; cache = cache->next )
+			if ( !( *aasworld ).clusterareacache[i] ) continue;
+			slotBase = ( *aasworld ).clusterareacache[i];
+			if ( i + 1 < ( *aasworld ).numclusters &&
+				 ( *aasworld ).clusterareacache[i + 1] ) {
+				numSlots = (int)( ( *aasworld ).clusterareacache[i + 1] - slotBase );
+			} else {
+				numSlots = ( *aasworld ).clusterareanum_total -
+					(int)( slotBase - ( *aasworld ).clusterareacache[0] );
+			}
+			if ( numSlots <= 0 || numSlots > ( *aasworld ).clusterareanum_total ) continue;
+			for ( j = 0; j < numSlots; j++ )
 			{
-				//never remove cache leading towards a portal
-				if ( ( *aasworld ).areasettings[cache->areanum].cluster < 0 ) {
-					continue;
-				}
-				//if this cache is older than the cache we found so far
-				if ( cache->time < besttime ) {
-					bestcache = cache;
-					bestcluster = i;
-					bestarea = j;
-					besttime = cache->time;
-				} //end if
+				for ( cache = slotBase[j]; cache; cache = cache->next )
+				{
+					//never remove cache leading towards a portal
+					if ( ( *aasworld ).areasettings[cache->areanum].cluster < 0 ) {
+						continue;
+					}
+					//if this cache is older than the cache we found so far
+					if ( cache->time < besttime ) {
+						bestcache = cache;
+						bestcluster = i;
+						bestarea = j;
+						besttime = cache->time;
+					} //end if
+				} //end for
 			} //end for
 		} //end for
-	} //end for
+	}
 	if ( bestcache ) {
 		cache = bestcache;
 		if ( cache->prev ) {
@@ -661,31 +705,31 @@ aas_routingcache_t *AAS_AllocRoutingCache( int numtraveltimes ) {
 // Changes Globals:		-
 //===========================================================================
 void AAS_FreeAllClusterAreaCache( void ) {
-	int i, j;
+	int i;
 	aas_routingcache_t *cache, *nextcache;
-	aas_cluster_t *cluster;
+	aas_routingcache_t **flat;
 
 	//free all cluster cache if existing
 	if ( !( *aasworld ).clusterareacache ) {
 		return;
 	}
-	//free caches
-	for ( i = 0; i < ( *aasworld ).numclusters; i++ )
-	{
-		cluster = &( *aasworld ).clusters[i];
-		for ( j = 0; j < cluster->numareas; j++ )
-		{
-			for ( cache = ( *aasworld ).clusterareacache[i][j]; cache; cache = nextcache )
-			{
-				nextcache = cache->next;
-				AAS_FreeRoutingCache( cache );
-			} //end for
-			( *aasworld ).clusterareacache[i][j] = NULL;
-		} //end for
-	} //end for
-	  //free the cluster cache array
+	// Walk the flat inner-pointer array instead of clusters[i].numareas,
+	// because clusters lives in HUNK memory which is destroyed by Hunk_Clear()
+	// before AAS_FreeRoutingCaches() is called during map changes.
+	// clusterareacache[0] points to the start of the contiguous flat array
+	// whose total size was saved in clusterareanum_total at init time.
+	flat = ( *aasworld ).clusterareacache[0];
+	for ( i = 0; i < ( *aasworld ).clusterareanum_total; i++ ) {
+		for ( cache = flat[i]; cache; cache = nextcache ) {
+			nextcache = cache->next;
+			AAS_FreeRoutingCache( cache );
+		}
+		flat[i] = NULL;
+	}
+	//free the top-level cluster cache array
 	AAS_RoutingFreeMemory( ( *aasworld ).clusterareacache );
 	( *aasworld ).clusterareacache = NULL;
+	( *aasworld ).clusterareanum_total = 0;
 } //end of the function AAS_FreeAllClusterAreaCache
 //===========================================================================
 //
@@ -702,8 +746,12 @@ void AAS_InitClusterAreaCache( void ) {
 	{
 		size += ( *aasworld ).clusters[i].numareas;
 	} //end for
-	  //two dimensional array with pointers for every cluster to routing cache
-	  //for every area in that cluster
+	// Save total flat slot count so AAS_FreeAllClusterAreaCache can walk
+	// the array without touching clusters[] (which lives in hunk memory
+	// and may be invalid after Hunk_Clear during map changes).
+	( *aasworld ).clusterareanum_total = size;
+	//two dimensional array with pointers for every cluster to routing cache
+	//for every area in that cluster
 	ptr = (char *) AAS_RoutingGetMemory(
 		( *aasworld ).numclusters * sizeof( aas_routingcache_t * * ) +
 		size * sizeof( aas_routingcache_t * ) );
@@ -729,16 +777,15 @@ void AAS_FreeAllPortalCache( void ) {
 	if ( !( *aasworld ).portalcache ) {
 		return;
 	}
-	//free portal caches
-	for ( i = 0; i < ( *aasworld ).numareas; i++ )
-	{
-		for ( cache = ( *aasworld ).portalcache[i]; cache; cache = nextcache )
-		{
+	//free all individual portal caches
+	for ( i = 0; i < ( *aasworld ).numareas; i++ ) {
+		for ( cache = ( *aasworld ).portalcache[i]; cache; cache = nextcache ) {
 			nextcache = cache->next;
 			AAS_FreeRoutingCache( cache );
-		} //end for
+		}
 		( *aasworld ).portalcache[i] = NULL;
-	} //end for
+	}
+	//free the portal cache array
 	AAS_RoutingFreeMemory( ( *aasworld ).portalcache );
 	( *aasworld ).portalcache = NULL;
 } //end of the function AAS_FreeAllPortalCache
@@ -764,14 +811,14 @@ void AAS_FreeAreaVisibility( void ) {
 	int i;
 
 	if ( ( *aasworld ).areavisibility ) {
-		for ( i = 0; i < ( *aasworld ).numareas; i++ )
-		{
+		// Each areavisibility[i] is individually heap-allocated via GetMemory
+		// (= malloc in _DEBUG builds).  They must be freed one by one so the
+		// botlib memory tracker stays consistent.
+		for ( i = 0; i < ( *aasworld ).numareas; i++ ) {
 			if ( ( *aasworld ).areavisibility[i] ) {
 				FreeMemory( ( *aasworld ).areavisibility[i] );
 			}
 		}
-	}
-	if ( ( *aasworld ).areavisibility ) {
 		FreeMemory( ( *aasworld ).areavisibility );
 	}
 	( *aasworld ).areavisibility = NULL;
@@ -907,7 +954,6 @@ int AAS_CompressVis( byte *vis, int numareas, byte *dest );
 void AAS_WriteRouteCache( void ) {
 	int i, j, numportalcache, numareacache, size;
 	aas_routingcache_t *cache;
-	aas_cluster_t *cluster;
 	fileHandle_t fp;
 	char filename[MAX_QPATH];
 	routecacheheader_t routecacheheader;
@@ -924,17 +970,30 @@ void AAS_WriteRouteCache( void ) {
 		} //end for
 	} //end for
 	numareacache = 0;
-	for ( i = 0; i < ( *aasworld ).numclusters; i++ )
-	{
-		cluster = &( *aasworld ).clusters[i];
-		for ( j = 0; j < cluster->numareas; j++ )
+	// Use flat array pointer differences for slot counts instead of
+	// clusters[].numareas which resides in hunk memory.
+	if ( ( *aasworld ).clusterareacache && ( *aasworld ).clusterareanum_total > 0 ) {
+		for ( i = 0; i < ( *aasworld ).numclusters; i++ )
 		{
-			for ( cache = ( *aasworld ).clusterareacache[i][j]; cache; cache = cache->next )
+			int ns;
+			aas_routingcache_t **sb;
+			if ( !( *aasworld ).clusterareacache[i] ) continue;
+			sb = ( *aasworld ).clusterareacache[i];
+			if ( i + 1 < ( *aasworld ).numclusters && ( *aasworld ).clusterareacache[i + 1] ) {
+				ns = (int)( ( *aasworld ).clusterareacache[i + 1] - sb );
+			} else {
+				ns = ( *aasworld ).clusterareanum_total - (int)( sb - ( *aasworld ).clusterareacache[0] );
+			}
+			if ( ns <= 0 || ns > ( *aasworld ).clusterareanum_total ) continue;
+			for ( j = 0; j < ns; j++ )
 			{
-				numareacache++;
+				for ( cache = sb[j]; cache; cache = cache->next )
+				{
+					numareacache++;
+				} //end for
 			} //end for
 		} //end for
-	} //end for
+	}
 	  // open the file for writing
 	Com_sprintf( filename, MAX_QPATH, "maps/%s.rcd", ( *aasworld ).mapname );
 	botimport.FS_FOpenFile( filename, &fp, FS_WRITE );
@@ -962,17 +1021,29 @@ void AAS_WriteRouteCache( void ) {
 			botimport.FS_Write( cache, cache->size, fp );
 		} //end for
 	} //end for
-	for ( i = 0; i < ( *aasworld ).numclusters; i++ )
-	{
-		cluster = &( *aasworld ).clusters[i];
-		for ( j = 0; j < cluster->numareas; j++ )
+	// Write cluster area caches using safe flat-array bounds
+	if ( ( *aasworld ).clusterareacache && ( *aasworld ).clusterareanum_total > 0 ) {
+		for ( i = 0; i < ( *aasworld ).numclusters; i++ )
 		{
-			for ( cache = ( *aasworld ).clusterareacache[i][j]; cache; cache = cache->next )
+			int ns;
+			aas_routingcache_t **sb;
+			if ( !( *aasworld ).clusterareacache[i] ) continue;
+			sb = ( *aasworld ).clusterareacache[i];
+			if ( i + 1 < ( *aasworld ).numclusters && ( *aasworld ).clusterareacache[i + 1] ) {
+				ns = (int)( ( *aasworld ).clusterareacache[i + 1] - sb );
+			} else {
+				ns = ( *aasworld ).clusterareanum_total - (int)( sb - ( *aasworld ).clusterareacache[0] );
+			}
+			if ( ns <= 0 || ns > ( *aasworld ).clusterareanum_total ) continue;
+			for ( j = 0; j < ns; j++ )
 			{
-				botimport.FS_Write( cache, cache->size, fp );
+				for ( cache = sb[j]; cache; cache = cache->next )
+				{
+					botimport.FS_Write( cache, cache->size, fp );
+				} //end for
 			} //end for
 		} //end for
-	} //end for
+	}
 	  // write the visareas
 	for ( i = 0; i < ( *aasworld ).numareas; i++ )
 	{
@@ -1236,6 +1307,17 @@ void AAS_FreeRoutingCaches( void ) {
 		FreeMemory( ( *aasworld ).areawaypoints );
 	}
 	( *aasworld ).areawaypoints = NULL;
+	// free hide-area scratch buffers - these are heap-allocated via
+	// GetClearedMemory (malloc), so they must be properly freed to keep
+	// the botlib memory tracker consistent.
+	if ( ( *aasworld ).hidetraveltimes ) {
+		FreeMemory( ( *aasworld ).hidetraveltimes );
+	}
+	( *aasworld ).hidetraveltimes = NULL;
+	if ( ( *aasworld ).visCache ) {
+		FreeMemory( ( *aasworld ).visCache );
+	}
+	( *aasworld ).visCache = NULL;
 } //end of the function AAS_FreeRoutingCaches
 //===========================================================================
 // this function could be replaced by a bubble sort or for even faster
@@ -2197,9 +2279,20 @@ int AAS_NearestHideArea( int srcnum, vec3_t origin, int areanum, int enemynum, v
 	static float lastTime;
 	static int loopCount;
 	//
+	// safety: AAS world must be loaded and have valid areas
+	if ( !( *aasworld ).loaded || ( *aasworld ).numareas <= 0 ) {
+		return 0;
+	}
 	if ( srcnum < 0 ) {   // hack to force run this call
 		srcnum = -srcnum - 1;
 		lastTime = 0;
+	}
+	// validate areanum
+	if ( areanum <= 0 || areanum >= ( *aasworld ).numareas ) {
+		return 0;
+	}
+	if ( enemyareanum < 0 || enemyareanum >= ( *aasworld ).numareas ) {
+		enemyareanum = 0;
 	}
 	// don't run this more than once per frame
 	if ( lastTime == AAS_Time() && loopCount >= MAX_HIDEAREA_LOOPS ) {
@@ -2275,6 +2368,10 @@ int AAS_NearestHideArea( int srcnum, vec3_t origin, int areanum, int enemynum, v
 			}
 			//number of the area the reachability leads to
 			nextareanum = reach->areanum;
+			// bounds check on nextareanum
+			if ( nextareanum <= 0 || nextareanum >= ( *aasworld ).numareas ) {
+				continue;
+			}
 			// if this moves us into the enemies area, skip it
 			if ( nextareanum == enemyareanum ) {
 				continue;
@@ -2416,6 +2513,10 @@ int AAS_FindAttackSpotWithinRange( int srcnum, int rangenum, int enemynum, float
 	#define MAX_ATTACKAREA_LOOPS    200
 	static float lastTime;
 	//
+	// safety: AAS world must be loaded and have valid areas
+	if ( !( *aasworld ).loaded || ( *aasworld ).numareas <= 0 ) {
+		return 0;
+	}
 	// RF, currently doesn't work with multiple AAS worlds, so only enable for the default world
 	//if (aasworld != aasworlds) return 0;
 	//
@@ -2445,6 +2546,16 @@ int AAS_FindAttackSpotWithinRange( int srcnum, int rangenum, int enemynum, float
 	rangearea = BotFuzzyPointReachabilityArea( rangeorg );
 	enemyarea = BotFuzzyPointReachabilityArea( enemyorg );
 	//
+	// validate computed areas
+	if ( srcarea <= 0 || srcarea >= ( *aasworld ).numareas ) {
+		return 0;
+	}
+	if ( rangearea <= 0 || rangearea >= ( *aasworld ).numareas ) {
+		return 0;
+	}
+	if ( enemyarea < 0 || enemyarea >= ( *aasworld ).numareas ) {
+		enemyarea = 0;
+	}
 	besttraveltime = 0;
 	bestarea = 0;
 	enemytraveltime = AAS_AreaTravelTimeToGoalArea( srcarea, srcorg, enemyarea, travelflags );
@@ -2496,6 +2607,10 @@ int AAS_FindAttackSpotWithinRange( int srcnum, int rangenum, int enemynum, float
 			}
 			//number of the area the reachability leads to
 			nextareanum = reach->areanum;
+			// bounds check on nextareanum
+			if ( nextareanum <= 0 || nextareanum >= ( *aasworld ).numareas ) {
+				continue;
+			}
 			// if this moves us into the enemies area, skip it
 			if ( nextareanum == enemyarea ) {
 				continue;

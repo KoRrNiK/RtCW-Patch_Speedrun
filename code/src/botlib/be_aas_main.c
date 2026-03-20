@@ -375,6 +375,9 @@ int AAS_LoadMap( const char *mapname ) {
 		} //end if
 		  //
 		( *aasworld ).initialized = qfalse;
+		// mark as not loaded BEFORE freeing, so sample functions
+		// (AAS_PointAreaNum, AAS_TraceAreas, etc.) won't touch freed data
+		( *aasworld ).loaded = qfalse;
 		//NOTE: free the routing caches before loading a new map because
 		// to free the caches the old number of areas, number of clusters
 		// and number of areas in a clusters must be available
