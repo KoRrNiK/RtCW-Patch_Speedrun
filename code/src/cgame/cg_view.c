@@ -1576,7 +1576,10 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	DEBUGTIME
 
 	// if we have been told not to render, don't
-	if ( cg_norender.integer ) {
+	// During demo playback, always render regardless of cg_norender -
+	// the server-side AICast code and "rockandroll" command set it to 1
+	// and nothing clears it without a real game module running.
+	if ( cg_norender.integer && !cg.demoPlayback ) {
 		return;
 	}
 
@@ -1585,6 +1588,10 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 
 	// update cg.predictedPlayerState
 	CG_PredictPlayerState();
+
+	// update jump statistics (needs snap data)
+	CG_UpdateJumpStats();
+	CG_UpdateMovementBar();
 
 	DEBUGTIME
 

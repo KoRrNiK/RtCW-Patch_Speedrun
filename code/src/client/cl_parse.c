@@ -444,16 +444,135 @@ void CL_ParseGamestate( msg_t *msg ) {
 	CL_SystemInfoChanged();
 
 	// reinitialize the filesystem if the game directory has changed
-	if ( FS_ConditionalRestart( clc.checksumFeed ) ) {
-		// don't set to true because we yet have to start downloading
-		// enabling this can cause double loading of a map when connecting to
-		// a server which has a different game directory set
-		//clc.downloadRestart = qtrue;
+	// IMPORTANT: Skip during demo playback! FS_Restart closes ALL file
+	// handles (including clc.demofile), which corrupts demo reading and
+	// causes flickering/garbage rendering after map changes.
+	if ( !clc.demoplaying ) {
+		if ( FS_ConditionalRestart( clc.checksumFeed ) ) {
+			// don't set to true because we yet have to start downloading
+			// enabling this can cause double loading of a map when connecting to
+			// a server which has a different game directory set
+			//clc.downloadRestart = qtrue;
+		}
 	}
 
-	// This used to call CL_StartHunkUsers, but now we enter the download state before loading the
-	// cgame
-	CL_InitDownloads();
+	// ---- SP Demo: handle map change during recording ----
+	// When recording a demo and a new gamestate arrives (map change),
+	// write an explicit gamestate block to the demo file so the
+	// playback has a clean gamestate for the new map.
+	if ( clc.demorecording && clc.demofile ) {
+		byte gsBufData[MAX_MSGLEN];
+		msg_t gsBuf;
+		int gsI;
+		entityState_t gsNullstate;
+		entityState_t *gsEnt;
+		char *gsStr;
+		int gsLen;
+
+		MSG_Init( &gsBuf, gsBufData, sizeof( gsBufData ) );
+		MSG_Bitstream( &gsBuf );
+
+		MSG_WriteLong( &gsBuf, clc.reliableSequence );
+		MSG_WriteByte( &gsBuf, svc_gamestate );
+		MSG_WriteLong( &gsBuf, clc.serverCommandSequence );
+
+		// configstrings
+		for ( gsI = 0 ; gsI < MAX_CONFIGSTRINGS ; gsI++ ) {
+			if ( !cl.gameState.stringOffsets[gsI] ) {
+				continue;
+			}
+			gsStr = cl.gameState.stringData + cl.gameState.stringOffsets[gsI];
+			MSG_WriteByte( &gsBuf, svc_configstring );
+			MSG_WriteShort( &gsBuf, gsI );
+			MSG_WriteBigString( &gsBuf, gsStr );
+		}
+
+		// baselines
+		memset( &gsNullstate, 0, sizeof( gsNullstate ) );
+		for ( gsI = 0 ; gsI < MAX_GENTITIES ; gsI++ ) {
+			gsEnt = &cl.entityBaselines[gsI];
+			if ( !gsEnt->number ) {
+				continue;
+			}
+			MSG_WriteByte( &gsBuf, svc_baseline );
+			MSG_WriteDeltaEntity( &gsBuf, &gsNullstate, gsEnt, qtrue );
+		}
+
+		MSG_WriteByte( &gsBuf, svc_EOF );
+		MSG_WriteLong( &gsBuf, clc.clientNum );
+		MSG_WriteLong( &gsBuf, clc.checksumFeed );
+		MSG_WriteByte( &gsBuf, svc_EOF );
+
+		// write to demo file
+		gsLen = LittleLong( clc.serverMessageSequence - 1 );
+		FS_Write( &gsLen, 4, clc.demofile );
+
+		gsLen = LittleLong( gsBuf.cursize );
+		FS_Write( &gsLen, 4, clc.demofile );
+		FS_Write( gsBuf.data, gsBuf.cursize, clc.demofile );
+
+		// Wait for non-delta snapshot before recording anything else
+		clc.demowaiting = qtrue;
+		Com_Printf( "^2Demo: wrote new gamestate for map change\n" );
+	}
+
+	// ---- SP Demo: handle map change during playback ----
+	// Reset the firstDemoFrameSkipped flag so the timing-skip
+	// protection in CL_SetCGameTime works for the new map.
+	if ( clc.demoplaying ) {
+		clc.firstDemoFrameSkipped = qfalse;
+	}
+
+	// Same-map backward seek optimisation: skip the expensive
+	// CL_FlushMemory (Hunk_Clear + renderer teardown) and VM_Create.
+	// Instead, just re-call CG_DEMO_RESET on the existing VM to reset
+	// cgame internal state (snapshot numbers, entity data, etc.).
+	// Because the renderer is still alive with cached assets,
+	// everything stays cached - near-instant.
+	if ( clc.demoFastRewind && clc.demoplaying ) {
+		clc.demoFastRewind = qfalse;
+		clc.lastExecutedServerCommand = clc.serverCommandSequence;
+		Cvar_Set( "g_missionStats", "0" );
+		Cvar_Set( "cg_norender", "0" );
+
+		/* Lightweight reset: only zeroes snapshot tracking & entity
+		   state inside cgame.  All registered media (shaders, models,
+		   sounds) are preserved - no re-registration overhead. */
+		cls.state = CA_LOADING;
+		VM_Call( cgvm, CG_DEMO_RESET, clc.serverMessageSequence,
+				 clc.lastExecutedServerCommand, clc.clientNum );
+		cls.state = CA_PRIMED;
+	}
+	/* ---- Demo Save/Load fast path ----
+	   During normal forward demo playback, save/load checkpoints emit
+	   a new gamestate for the same map.  Detect this and use the
+	   lightweight CG_DEMO_RESET instead of a full cgame reload.
+	   This eliminates the visual flicker (model disappearing then
+	   teleporting to the new position). */
+	else if ( clc.demoplaying && cgvm
+			  && cls.state == CA_ACTIVE ) {
+		/* Compare new map to current map */
+		const char *info = cl.gameState.stringData
+						 + cl.gameState.stringOffsets[ CS_SERVERINFO ];
+		const char *newMap = Info_ValueForKey( info, "mapname" );
+		if ( newMap[0] && !Q_stricmp( newMap, clc.demoCurrentMapname ) ) {
+			/* Same map - lightweight reset */
+			clc.lastExecutedServerCommand = clc.serverCommandSequence;
+			Cvar_Set( "g_missionStats", "0" );
+			Cvar_Set( "cg_norender", "0" );
+			cls.state = CA_LOADING;
+			VM_Call( cgvm, CG_DEMO_RESET, clc.serverMessageSequence,
+					 clc.lastExecutedServerCommand, clc.clientNum );
+			cls.state = CA_PRIMED;
+		} else {
+			/* Different map - full reload required */
+			CL_InitDownloads();
+		}
+	} else {
+		// This used to call CL_StartHunkUsers, but now we enter the download state before loading the
+		// cgame
+		CL_InitDownloads();
+	}
 
 	// make sure the game starts
 	Cvar_Set( "cl_paused", "0" );

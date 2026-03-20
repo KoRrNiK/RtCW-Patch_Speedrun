@@ -217,6 +217,24 @@ typedef struct {
 	qboolean firstDemoFrameSkipped;
 	fileHandle_t demofile;
 
+	int demoFileLen;                // total size of demo file in bytes (for progress bar)
+	int demoStartServerTime;        // serverTime from the very first snapshot
+	int demoCurrentServerTime;      // latest serverTime seen during playback
+	int demoSeekTargetTime;         // if >0, fast-forward to this serverTime after demo restart (rewind)
+	qboolean demoSeekInProgress;    // suppress rendering during backward seek
+	int demoSeekFileOffset;         // if >0, seek demo file to this offset before reading (fast backward seek)
+	qboolean demoFastRewind;        // if true, CL_ParseGamestate skips CL_InitDownloads (same-map rewind)
+	int demoMapStartServerTime;     // serverTime at the start of the current map segment (for stage timer)
+	char demoCurrentMapname[64];    // current mapname during demo playback (for map-change detection)
+	int demoCurrentMapIndex;        // index into the scanned demo map list (-1 = unknown)
+
+	// Demo freecam
+	qboolean demoFreecam;           // freecam mode active
+	vec3_t   demoFreecamPos;        // freecam world position
+	vec3_t   demoFreecamAngles;     // freecam view angles (pitch, yaw, roll)
+
+	qboolean demoHideHUD;           // hide LiveSplit panel and progress bar (H key toggle)
+
 	int timeDemoFrames;             // counter of rendered frames
 	int timeDemoStart;              // cls.realtime before first frame
 	int timeDemoBaseTime;           // each frame will be at this time + frameNum * 50
@@ -468,6 +486,9 @@ void CL_InitInput( void );
 void CL_SendCmd( void );
 void CL_ClearState( void );
 void CL_ReadPackets( void );
+void CL_UpdateDemoFreecam( int frameMsec );
+qboolean CL_DemoPaused( void );
+qboolean CL_DemoBindsHidden( void );
 
 void CL_WritePacket( void );
 void IN_CenterView( void );
@@ -534,13 +555,22 @@ int     SCR_GetBigStringWidth( const char *str );   // returns in virtual 640x48
 void    SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align );	// Knightmare changed
 void    SCR_FillRect( float x, float y, float width, float height,
 					  const float *color );
+
+//
+// cl_livesplit.c
+//
+void    SCR_LiveSplitInit( void );
+void    SCR_LiveSplitShutdown( void );
+void    SCR_LiveSplitDraw( void );
 void    SCR_DrawPic( float x, float y, float width, float height, qhandle_t hShader );
 void    SCR_DrawNamedPic( float x, float y, float width, float height, const char *picname );
 
 void    SCR_DrawBigString( int x, int y, const char *s, float alpha );          // draws a string with embedded color control characters with fade
 void    SCR_DrawBigStringColor( int x, int y, const char *s, vec4_t color );    // ignores embedded color control characters
+void    SCR_DrawStringExt( int x, int y, float size, const char *string, float *setColor, qboolean forceColor );
 void    SCR_DrawSmallStringExt( int x, int y, const char *string, float *setColor, qboolean forceColor );
 void    SCR_DrawSmallChar( int x, int y, int ch );
+void    SCR_DrawChar( int x, int y, float size, int ch );
 
 
 //

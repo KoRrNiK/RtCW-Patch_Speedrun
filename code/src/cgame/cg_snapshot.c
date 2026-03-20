@@ -457,8 +457,11 @@ void CG_ProcessSnapshots( void ) {
 	trap_GetCurrentSnapshotNumber( &n, &cg.latestSnapshotTime );
 	if ( n != cg.latestSnapshotNum ) {
 		if ( n < cg.latestSnapshotNum ) {
-			// this should never happen
-			CG_Error( "CG_ProcessSnapshots: n < cg.latestSnapshotNum" );
+			// During demo playback, seeking backward can reset the
+			// snapshot sequence.  Just accept the new lower number.
+			if ( !cg.demoPlayback ) {
+				CG_Error( "CG_ProcessSnapshots: n < cg.latestSnapshotNum" );
+			}
 		}
 		cg.latestSnapshotNum = n;
 	}
@@ -498,6 +501,14 @@ void CG_ProcessSnapshots( void ) {
 
 			// if time went backwards, we have a level restart
 			if ( cg.nextSnap->serverTime < cg.snap->serverTime ) {
+				// During demo playback, backward time jumps are normal
+				// when seeking or crossing map boundaries.  Treat this
+				// as a mini-restart instead of a fatal error.
+				if ( cg.demoPlayback ) {
+					CG_SetInitialSnapshot( cg.nextSnap );
+					cg.nextSnap = NULL;
+					continue;
+				}
 				CG_Error( "CG_ProcessSnapshots: Server time went backwards" );
 			}
 		}

@@ -323,7 +323,8 @@ CG_ParseAnimationFiles
 ======================
 */
 
-#if 0   // RF, this entire function not used anymore, since we now grab all this stuff from the server
+// RF, this was originally disabled since we grab all this stuff from the server.
+// Re-enabled for demo playback where no server VM is available.
 
 static qboolean CG_ParseAnimationFiles( const char *modelname, clientInfo_t *ci, int client ) {
 	char text[100000];
@@ -384,7 +385,6 @@ static qboolean CG_ParseAnimationFiles( const char *modelname, clientInfo_t *ci,
 	BG_AnimParseAnimScript( ci->modelInfo, &cgs.animScriptData, ci->clientNum, filename, text );
 	return qtrue;
 }
-#endif
 
 /*
 ==========================
@@ -532,8 +532,16 @@ qboolean CG_CheckForExistingModelInfo( clientInfo_t *ci, char *modelName, animMo
 
 			}
 
-			// huh!?
-			CG_Error( "CG_CheckForExistingModelInfo: unable to optain modelInfo from server" );
+			// Server VM not available (demo playback) - allocate client-side and
+			// let caller parse animation files locally.
+			{
+				static animModelInfo_t cg_localModelInfo[MAX_ANIMSCRIPT_MODELS];
+				memset( &cg_localModelInfo[i], 0, sizeof( animModelInfo_t ) );
+				cgs.animScriptData.modelInfo[i] = &cg_localModelInfo[i];
+				cgs.animScriptData.clientModels[ci->clientNum] = i + 1;
+				*modelInfo = cgs.animScriptData.modelInfo[i];
+				return qfalse;
+			}
 		}
 
 	}
@@ -679,12 +687,13 @@ static qboolean CG_RegisterClientModelname( clientInfo_t *ci, const char *modelN
 
 	// look for this model in the list of models already opened
 	if ( !CG_CheckForExistingModelInfo( ci, (char *)modelName, &ci->modelInfo ) ) {
-/*
-		if ( !CG_ParseAnimationFiles( modelName, ci, ci->clientNum ) ) {
-			Com_Printf( "Failed to load animation file %s\n", filename );
-			return qfalse;
+		// If modelname is empty, the server VM wasn't available (demo playback)
+		// and we need to parse animation files client-side.
+		if ( !ci->modelInfo->modelname[0] ) {
+			if ( !CG_ParseAnimationFiles( modelName, ci, ci->clientNum ) ) {
+				CG_Printf( "Failed to load animation file for model %s\n", modelName );
+			}
 		}
-*/
 		// special case, only cache certain shaders/models for certain characters
 		if ( !Q_strcasecmp( (char *)modelName, "zombie" ) ) {
 			cgs.media.zombieSpiritWallShader = trap_R_RegisterShader( "zombieDeathWindTrail" );

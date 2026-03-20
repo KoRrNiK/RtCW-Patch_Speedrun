@@ -42,6 +42,10 @@ extern qboolean getCameraInfo( int camNum, int time, vec3_t *origin, vec3_t *ang
 extern void SV_SendMoveSpeedsToGame( int entnum, char *text );
 extern qboolean SV_GetModelInfo( int clientNum, char *modelName, animModelInfo_t **modelInfo );
 
+/* Demo map scan functions (defined in cl_main.c) */
+extern int  CL_DemoFindMapIndex( const char *mapname );
+extern void CL_DemoUpdateMapServerTime( int mapIdx, int serverTime );
+
 
 /*
 ====================
@@ -450,6 +454,14 @@ int CL_CgameSystemCalls( int *args ) {
 		Cvar_Update( VMA( 1 ) );
 		return 0;
 	case CG_CVAR_SET:
+		/* During demo freecam, block the cgame from resetting cg_thirdPerson
+		   to 0.  CG_MapRestart (save/load transitions) does this, which hides
+		   the player body model.  Keep it forced to "1" while freecam is on. */
+		if ( clc.demoplaying && clc.demoFreecam
+			&& !Q_stricmp( (const char *)VMA( 1 ), "cg_thirdPerson" )
+			&& !Q_stricmp( (const char *)VMA( 2 ), "0" ) ) {
+			return 0;  /* silently ignore the reset */
+		}
 		Cvar_Set( VMA( 1 ), VMA( 2 ) );
 		return 0;
 	case CG_CVAR_VARIABLESTRINGBUFFER:
@@ -643,7 +655,20 @@ int CL_CgameSystemCalls( int *args ) {
 		re.SetFog( args[1], args[2], args[3], VMF( 4 ), VMF( 5 ), VMF( 6 ), VMF( 7 ) );
 		return 0;
 	case CG_R_RENDERSCENE:
-		re.RenderScene( VMA( 1 ) );
+		/* Demo freecam: override the view origin and axis before rendering.
+		   Also clear the areamask so all BSP areas are visible - the
+		   snapshot's areamask is based on the player position, not the
+		   freecam position, so areas far from the player would be culled. */
+		if ( clc.demoplaying && clc.demoFreecam ) {
+			refdef_t rdCopy;
+			memcpy( &rdCopy, VMA( 1 ), sizeof( refdef_t ) );
+			VectorCopy( clc.demoFreecamPos, rdCopy.vieworg );
+			AnglesToAxis( clc.demoFreecamAngles, rdCopy.viewaxis );
+			memset( rdCopy.areamask, 0, sizeof( rdCopy.areamask ) );
+			re.RenderScene( &rdCopy );
+		} else {
+			re.RenderScene( VMA( 1 ) );
+		}
 		return 0;
 	case CG_R_SETCOLOR:
 		re.SetColor( VMA( 1 ) );
@@ -997,19 +1022,31 @@ void CL_InitCGame( void ) {
 	Com_Printf( "CL_InitCGame: %5.2f seconds\n", ( t2 - t1 ) / 1000.0 );
 
 	// have the renderer touch all its images, so they are present
-	// on the card even if the driver does deferred loading
-	re.EndRegistration();
+	// on the card even if the driver does deferred loading.
+	// During demo playback skip this - it walks every image on the
+	// GPU just to show loading screen.  The first rendered frame
+	// will page them in anyway.
+	if ( !clc.demoplaying ) {
+		re.EndRegistration();
+	}
 
-	// make sure everything is paged in
-	if ( !Sys_LowPhysicalMemory() ) {
+	// make sure everything is paged in.
+	// During demo playback skip - touching every 256th byte of the
+	// entire hunk just to force page faults is pure overhead when
+	// the user is waiting for the next map to start playing.
+	if ( !Sys_LowPhysicalMemory() && !clc.demoplaying ) {
 		Com_TouchMemory();
 	}
 
 	// clear anything that got printed
 	Con_ClearNotify();
 
-	// Ridah, update the memory usage file
-	CL_UpdateLevelHunkUsage();
+	// Ridah, update the memory usage file.
+	// Skip during demo playback - this reads, parses and rewrites
+	// hunkusage.dat on every map load which is needless disk I/O.
+	if ( !clc.demoplaying ) {
+		CL_UpdateLevelHunkUsage();
+	}
 }
 
 
@@ -1136,8 +1173,57 @@ void CL_FirstSnapshot( void ) {
 	// set the timedelta so we are exactly on this first frame
 	cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 	cl.oldServerTime = cl.snap.serverTime;
+	cl.serverTime = cl.snap.serverTime;
 
 	clc.timeDemoBaseTime = cl.snap.serverTime;
+
+	// Track demo start time for timeline (only set once, on first map)
+	if ( clc.demoplaying && clc.demoStartServerTime == 0 ) {
+		clc.demoStartServerTime = cl.snap.serverTime;
+	}
+
+	// Track map changes for the demo stage timer
+	if ( clc.demoplaying ) {
+		qboolean isMapChange = qfalse;
+		const char *info = cl.gameState.stringData + cl.gameState.stringOffsets[ CS_SERVERINFO ];
+		const char *mapname = Info_ValueForKey( info, "mapname" );
+		if ( mapname[0] && Q_stricmp( mapname, clc.demoCurrentMapname ) ) {
+			isMapChange = ( clc.demoCurrentMapname[0] != '\0' );
+			Q_strncpyz( clc.demoCurrentMapname, mapname, sizeof( clc.demoCurrentMapname ) );
+			clc.demoMapStartServerTime = cl.snap.serverTime;
+			/* Update current map index based on the scanned map list */
+			clc.demoCurrentMapIndex = CL_DemoFindMapIndex( mapname );
+			/* Fill in the startServerTime for this map in the scan data
+			   (may already be set from the pre-scan, in which case it's a no-op) */
+			CL_DemoUpdateMapServerTime( clc.demoCurrentMapIndex, cl.snap.serverTime );
+
+			/* Auto-pause briefly on map transitions during normal forward
+			   playback so the viewer sees the very start of the new map.
+			   Skip this during seeks/rewinds and for the initial map. */
+			if ( isMapChange && !clc.demoSeekInProgress && !clc.demoFastRewind ) {
+				Cbuf_AddText( "demo_pause\n" );
+				Com_Printf( "^3Demo: new map '%s' - auto-paused.\n", mapname );
+			}
+		}
+
+		/* Re-sync freecam state after state transitions.
+		   On MAP CHANGES: move camera to the player's new starting
+		   position so we don't stare at the old map's geometry.
+		   On SAME-MAP SEEKS (backward skip, save/load): preserve
+		   the existing camera position so the user doesn't lose
+		   their chosen viewpoint. */
+		if ( clc.demoFreecam ) {
+			if ( isMapChange ) {
+				VectorCopy( cl.snap.ps.origin, clc.demoFreecamPos );
+				clc.demoFreecamPos[2] += cl.snap.ps.viewheight;
+				VectorCopy( cl.snap.ps.viewangles, clc.demoFreecamAngles );
+			}
+			/* Always restore viewangles (CL_ClearState zeros cl)
+			   and ensure third-person stays on. */
+			VectorCopy( clc.demoFreecamAngles, cl.viewangles );
+			Cvar_Set( "cg_thirdPerson", "1" );
+		}
+	}
 
 	// if this is the first frame of active play,
 	// execute the contents of activeAction now
@@ -1180,6 +1266,67 @@ void CL_SetCGameTime( void ) {
 		}
 	}
 
+	/* ---- Demo seek: fast-forward after restart (rewind) ---- */
+	/* demoSeekTargetTime > 0 = seek to that serverTime
+	   demoSeekTargetTime == -1 = restart from beginning (no fast-forward needed)
+	   demoSeekTargetTime == 0 = no seek pending */
+	if ( clc.demoplaying && clc.demoSeekTargetTime == -1 ) {
+		/* Just restarting / map jump - clear and continue normally */
+		clc.demoSeekTargetTime = 0;
+		clc.demoSeekInProgress = qfalse;
+		cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
+		cl.oldServerTime = cl.snap.serverTime;
+		cl.serverTime = cl.snap.serverTime;
+	}
+	if ( clc.demoplaying && clc.demoSeekTargetTime > 0 ) {
+		/* Read a big batch of messages. With file-offset seeking,
+		   the forward distance is small (within one map), so this
+		   finishes in 1 frame for typical backward seeks. */
+		int seekTarget = clc.demoSeekTargetTime;
+		int batchSize = 100000;
+
+		while ( cl.snap.serverTime < seekTarget && batchSize-- > 0 ) {
+			CL_ReadDemoMessage();
+
+			if ( cls.state < CA_CONNECTED ) {
+				Com_Printf( "^1Demo: seek aborted (disconnected)\n" );
+				clc.demoSeekTargetTime = 0;
+				clc.demoSeekInProgress = qfalse;
+				return;
+			}
+			/* Map change during seek: pump until CA_ACTIVE */
+			if ( cls.state != CA_ACTIVE ) {
+				int stateRecovery = 10000;
+				while ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE && stateRecovery-- > 0 ) {
+					CL_ReadDemoMessage();
+					if ( cl.newSnapshots ) {
+						cl.newSnapshots = qfalse;
+						CL_FirstSnapshot();
+					}
+				}
+				if ( cls.state != CA_ACTIVE ) {
+					Com_Printf( "^1Demo: seek aborted (couldn't recover to ACTIVE)\n" );
+					clc.demoSeekTargetTime = 0;
+					clc.demoSeekInProgress = qfalse;
+					return;
+				}
+			}
+		}
+
+		if ( cl.snap.serverTime >= seekTarget ) {
+			/* Seek complete - resync time */
+			clc.demoSeekTargetTime = 0;
+			clc.demoSeekInProgress = qfalse;
+			cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
+			cl.oldServerTime = cl.snap.serverTime;
+			cl.serverTime = cl.snap.serverTime;
+		}
+		/* else: more messages to read on next frame.
+		   demoSeekTargetTime stays set, demoSeekInProgress stays true.
+		   The rendering will show a "SEEKING..." overlay. */
+		return;
+	}
+
 	// if we have gotten to this point, cl.snap is guaranteed to be valid
 	if ( !cl.snap.valid ) {
 		Com_Error( ERR_DROP, "CL_SetCGameTime: !cl.snap.valid" );
@@ -1195,6 +1342,10 @@ void CL_SetCGameTime( void ) {
 		// Ridah, if this is a localhost, then we are probably loading a savegame
 		if ( !Q_stricmp( cls.servername, "localhost" ) ) {
 			// do nothing?
+			CL_FirstSnapshot();
+		} else if ( clc.demoplaying ) {
+			/* During demo playback, time can jump backward after a seek/restart.
+			   Instead of crashing, just resync the time base. */
 			CL_FirstSnapshot();
 		} else {
 			Com_Error( ERR_DROP, "cl.snap.serverTime < cl.oldFrameServerTime" );
@@ -1265,13 +1416,40 @@ void CL_SetCGameTime( void ) {
 	}
 
 	while ( cl.serverTime >= cl.snap.serverTime ) {
+		int prevSnapTime = cl.snap.serverTime;
 		// feed another messag, which should change
 		// the contents of cl.snap
 		CL_ReadDemoMessage();
-		if ( cls.state != CA_ACTIVE ) {
-			return;     // end of demo
+		if ( cls.state < CA_CONNECTED ) {
+			return;     // end of demo or error
+		}
+		/* If we hit the end of demo and it paused (or no new
+		   data arrived), break to avoid an infinite loop when
+		   cl_freezeDemo is set and serverTime >= snap.serverTime
+		   forever. */
+		if ( cl.snap.serverTime == prevSnapTime ) {
+			break;
+		}
+		/* After a save/load gamestate (same-map CG_DEMO_RESET fast
+		   path), state drops to CA_PRIMED.  Pump messages until the
+		   first snapshot promotes us back to CA_ACTIVE so the frame
+		   renders seamlessly without a loading screen flicker. */
+		if ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE ) {
+			int pump = 2000;
+			while ( cls.state < CA_ACTIVE && pump-- > 0 ) {
+				CL_ReadDemoMessage();
+				if ( cl.newSnapshots ) {
+					cl.newSnapshots = qfalse;
+					CL_FirstSnapshot();
+				}
+				if ( cls.state < CA_CONNECTED ) return;
+			}
+			if ( cls.state != CA_ACTIVE ) return;
 		}
 	}
+
+	// Track current server time for demo progress bar
+	clc.demoCurrentServerTime = cl.snap.serverTime;
 
 }
 

@@ -62,6 +62,16 @@ clipMap_t cm;
 int c_pointcontents;
 int c_traces, c_brush_traces, c_patch_traces;
 
+/*
+==================
+CM_ClearMap
+
+Clears the cm name so CM_LoadMap will force a reload after Hunk_Clear.
+==================
+*/
+void CM_ClearMap( void ) {
+	cm.name[0] = '\0';
+}
 
 byte        *cmod_base;
 

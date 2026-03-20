@@ -3830,15 +3830,20 @@ static void UI_LoadMovies() {
 UI_LoadDemos
 ===============
 */
+static int UI_DemoSortReverse( const void *a, const void *b ) {
+	// Reverse alphabetical so date-named demos (YYYYMMDD) appear newest first
+	return -Q_stricmp( *(const char **)a, *(const char **)b );
+}
+
 static void UI_LoadDemos() {
-	char demolist[4096];
+	char demolist[32768];
 	char demoExt[32];
 	char    *demoname;
 	int i, len;
 
 	Com_sprintf( demoExt, sizeof( demoExt ), "dm_%d", (int)trap_Cvar_VariableValue( "protocol" ) );
 
-	uiInfo.demoCount = trap_FS_GetFileList( "demos", demoExt, demolist, 4096 );
+	uiInfo.demoCount = trap_FS_GetFileList( "demos", demoExt, demolist, sizeof( demolist ) );
 
 	Com_sprintf( demoExt, sizeof( demoExt ), ".dm_%d", (int)trap_Cvar_VariableValue( "protocol" ) );
 
@@ -3852,10 +3857,11 @@ static void UI_LoadDemos() {
 			if ( !Q_stricmp( demoname +  len - strlen( demoExt ), demoExt ) ) {
 				demoname[len - strlen( demoExt )] = '\0';
 			}
-			Q_strupr( demoname );
 			uiInfo.demoList[i] = String_Alloc( demoname );
 			demoname += len + 1;
 		}
+		// Sort reverse-alphabetically so date-named demos appear newest first
+		qsort( uiInfo.demoList, uiInfo.demoCount, sizeof( uiInfo.demoList[0] ), UI_DemoSortReverse );
 	}
 
 }

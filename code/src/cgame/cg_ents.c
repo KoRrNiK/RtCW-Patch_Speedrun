@@ -523,8 +523,8 @@ static void CG_EntityEffects( centity_t *cent ) {
 	}*/
 
 
-	// constant light glow
-	if ( cent->currentState.constantLight ) {
+	// constant light glow (skip AI entities - constantLight repurposed for ESP health)
+	if ( cent->currentState.constantLight && !cent->currentState.aiChar ) {
 		int cl;
 		int i, r, g, b;
 
@@ -2684,6 +2684,59 @@ void CG_AddPacketEntities( void ) {
 	// generate and add the entity from the playerstate
 	ps = &cg.predictedPlayerState;
 	BG_PlayerStateToEntityState( ps, &cg.predictedPlayerEntity.currentState, qfalse );
+
+	/* When rendering third person (freecam), enrich the local player
+	   entity state with data that BG_PlayerStateToEntityState omits.
+	   This gives the animation system correct movement information so
+	   crouching, running, walking etc. look natural instead of stiff. */
+	if ( cg.renderingThirdPerson ) {
+		entityState_t *es = &cg.predictedPlayerEntity.currentState;
+		float speed;
+		vec3_t hvel;
+
+		/* Copy player velocity → trDelta so CG_PlayerAngles can
+		   compute body lean / roll from actual movement speed. */
+		VectorCopy( ps->velocity, es->pos.trDelta );
+
+		/* Derive animMovetype from the playerState so the animation
+		   condition system knows whether we're idle/walking/running/
+		   crouching.  The server normally writes this to the entity
+		   directly but it's lost for the local player because the
+		   entity state is reconstructed from playerState. */
+		hvel[0] = ps->velocity[0];
+		hvel[1] = ps->velocity[1];
+		hvel[2] = 0;
+		speed = VectorLength( hvel );
+
+		if ( ps->pm_flags & PMF_DUCKED ) {
+			es->animMovetype = speed > 5 ? ANIM_MT_WALKCR : ANIM_MT_IDLECR;
+		} else if ( ps->pm_flags & PMF_LADDER ) {
+			es->animMovetype = speed > 0 ? ANIM_MT_CLIMBUP : ANIM_MT_IDLE;
+		} else {
+			if ( speed > 127 ) {
+				es->animMovetype = (ps->pm_flags & PMF_BACKWARDS_RUN) ? ANIM_MT_RUNBK : ANIM_MT_RUN;
+			} else if ( speed > 5 ) {
+				es->animMovetype = (ps->pm_flags & PMF_BACKWARDS_RUN) ? ANIM_MT_WALKBK : ANIM_MT_WALK;
+			} else {
+				es->animMovetype = ANIM_MT_IDLE;
+			}
+		}
+
+		/* Ensure EF_CROUCHING is set from PMF_DUCKED.
+		   The server normally sets this in BG_AnimScriptAnimation
+		   by comparing viewheight == crouchViewHeight, but
+		   crouchViewHeight is NOT networked (0 bits in msg.c).
+		   During demo playback the client-side crouchViewHeight
+		   stays at 0, so if any code path re-derives EF_CROUCHING
+		   from those fields the flag would be lost.  Force it here
+		   from the always-correct PMF_DUCKED flag. */
+		if ( ps->pm_flags & PMF_DUCKED ) {
+			es->eFlags |= EF_CROUCHING;
+		} else {
+			es->eFlags &= ~EF_CROUCHING;
+		}
+	}
+
 	CG_AddCEntity( &cg.predictedPlayerEntity );
 
 	// lerp the non-predicted value for lightning gun origins

@@ -35,6 +35,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "cg_local.h"
 
+// Bunny hop globals defined in bg_pmove.c
+extern int bh_movement_integer;
+extern int bh_autojump_integer;
+
 static pmove_t cg_pmove;
 
 static int cg_numSolidEntities;
@@ -246,6 +250,30 @@ Generates cg.predictedPlayerState by interpolating between
 cg.snap->player_state and cg.nextFrame->player_state
 ========================
 */
+/*
+=========================
+CG_HermiteInterp
+
+Cubic Hermite spline interpolation for demo playback smoothing.
+Uses position + velocity data to produce smoother curves than linear lerp,
+especially noticeable at low snapshot rates (sv_fps 20 = 50ms intervals).
+
+H(t) = (2t^3 - 3t^2 + 1)*P0 + (t^3 - 2t^2 + t)*M0
+     + (-2t^3 + 3t^2)*P1     + (t^3 - t^2)*M1
+=========================
+*/
+static float CG_HermiteInterp( float p0, float p1, float v0, float v1, float dt, float t ) {
+	float t2 = t * t;
+	float t3 = t2 * t;
+	float h00 = 2*t3 - 3*t2 + 1;
+	float h10 = t3 - 2*t2 + t;
+	float h01 = -2*t3 + 3*t2;
+	float h11 = t3 - t2;
+	float m0 = v0 * dt;
+	float m1 = v1 * dt;
+	return h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1;
+}
+
 static void CG_InterpolatePlayerState( qboolean grabAngles ) {
 	float f;
 	int i;
@@ -257,6 +285,64 @@ static void CG_InterpolatePlayerState( qboolean grabAngles ) {
 	next = cg.nextSnap;
 
 	*out = cg.snap->ps;
+
+	// During demo playback, weapAnim is not transmitted in the network
+	// protocol (not in playerStateFields), so it stays at 0.  Derive
+	// a suitable animation from weaponstate which IS transmitted.
+	if ( cg.demoPlayback ) {
+		static int lastWeaponState = -1;
+		static int lastWeapon = -1;
+		static int currentToggleBit = 0;
+		int desiredAnim;
+
+		// Map weaponstate to the appropriate weapon animation
+		switch ( out->weaponstate ) {
+		case WEAPON_RAISING:
+		case WEAPON_RAISING_TORELOAD:
+			desiredAnim = WEAP_RAISE;
+			break;
+		case WEAPON_DROPPING:
+		case WEAPON_DROPPING_TORELOAD:
+			desiredAnim = WEAP_DROP;
+			break;
+		case WEAPON_RELOADING:
+			desiredAnim = WEAP_RELOAD1;
+			break;
+		case WEAPON_FIRING:
+		case WEAPON_FIRINGALT:
+			desiredAnim = WEAP_ATTACK1;
+			break;
+		case WEAPON_READY:
+		case WEAPON_READYING:
+		case WEAPON_RELAXING:
+		default:
+			desiredAnim = WEAP_IDLE1;
+			break;
+		}
+
+		// Toggle the bit on state/weapon changes so CG_RunWeapLerpFrame
+		// detects a new animation and resets the lerp frame counter.
+		if ( out->weaponstate != lastWeaponState || out->weapon != lastWeapon ) {
+			currentToggleBit ^= ANIM_TOGGLEBIT;
+			lastWeaponState = out->weaponstate;
+			lastWeapon = out->weapon;
+		}
+
+		// Always set weapAnim - the snapshot copy resets it to 0 each frame.
+		out->weapAnim = currentToggleBit | desiredAnim;
+
+		// Sync weaponSelect with actual weapon from snapshot so that
+		// scope reticles and crosshair drawing work during demo playback.
+		// Without this, cg.weaponSelect stays at its initial value and
+		// never reflects weapon changes recorded in the demo.
+		if ( out->weapon && out->weapon != cg.weaponSelect ) {
+			int prevWeapon = cg.weaponSelect;
+			cg.weaponSelect = out->weapon;
+			cg.weaponSelectTime = cg.time;
+			// Set up scope zoom values when switching to a scoped weapon
+			CG_SetSniperZoom( prevWeapon, out->weapon );
+		}
+	}
 
 	// if we are still allowing local input, short circuit the view angles
 	if ( grabAngles ) {
@@ -286,14 +372,34 @@ static void CG_InterpolatePlayerState( qboolean grabAngles ) {
 	}
 	out->bobCycle = prev->ps.bobCycle + f * ( i - prev->ps.bobCycle );
 
-	for ( i = 0 ; i < 3 ; i++ ) {
-		out->origin[i] = prev->ps.origin[i] + f * ( next->ps.origin[i] - prev->ps.origin[i] );
-		if ( !grabAngles ) {
-			out->viewangles[i] = LerpAngle(
-				prev->ps.viewangles[i], next->ps.viewangles[i], f );
+	if ( cg.demoPlayback ) {
+		// Demo playback: use Hermite interpolation for much smoother movement
+		float dt = ( next->serverTime - prev->serverTime ) * 0.001f;
+		for ( i = 0 ; i < 3 ; i++ ) {
+			out->origin[i] = CG_HermiteInterp(
+				prev->ps.origin[i], next->ps.origin[i],
+				prev->ps.velocity[i], next->ps.velocity[i],
+				dt, f );
+			if ( !grabAngles ) {
+				// Smoothstep for view angles: smoother easing than linear
+				float sf = f * f * ( 3.0f - 2.0f * f );
+				out->viewangles[i] = LerpAngle(
+					prev->ps.viewangles[i], next->ps.viewangles[i], sf );
+			}
+			out->velocity[i] = prev->ps.velocity[i] +
+							   f * ( next->ps.velocity[i] - prev->ps.velocity[i] );
 		}
-		out->velocity[i] = prev->ps.velocity[i] +
-						   f * ( next->ps.velocity[i] - prev->ps.velocity[i] );
+	} else {
+		// Normal gameplay: standard linear interpolation
+		for ( i = 0 ; i < 3 ; i++ ) {
+			out->origin[i] = prev->ps.origin[i] + f * ( next->ps.origin[i] - prev->ps.origin[i] );
+			if ( !grabAngles ) {
+				out->viewangles[i] = LerpAngle(
+					prev->ps.viewangles[i], next->ps.viewangles[i], f );
+			}
+			out->velocity[i] = prev->ps.velocity[i] +
+							   f * ( next->ps.velocity[i] - prev->ps.velocity[i] );
+		}
 	}
 
 }
@@ -615,6 +721,10 @@ void CG_PredictPlayerState( void ) {
 
 	cg_pmove.pmove_fixed = pmove_fixed.integer; // | cg_pmove_fixed.integer;
 	cg_pmove.pmove_msec = pmove_msec.integer;
+
+	// Sync bunny hop settings for client-side prediction
+	bh_movement_integer = bh_movement.integer;
+	bh_autojump_integer = bh_autojump.integer;
 
 //----(SA)	added
 	// restore persistant client-side playerstate variables before doing the pmove
