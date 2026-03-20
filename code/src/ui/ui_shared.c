@@ -86,7 +86,7 @@ float GetScaleForAlign ( qboolean isY, scralign_t align );	// Knightmare added p
 #ifdef CGAME
 #define MEM_POOL_SIZE  128 * 1024
 #else
-#define MEM_POOL_SIZE  1024 * 1024
+#define MEM_POOL_SIZE  2048 * 1024
 #endif
 
 static char memoryPool[MEM_POOL_SIZE];
@@ -2680,6 +2680,19 @@ static void Scroll_ListBox_ThumbFunc( void *p ) {
 	}
 }
 
+// Smart slider formatting: snaps values and reduces decimal noise
+static void Slider_SetCvarValue( const char *cvar, float value, float range ) {
+	if ( range >= 10.0f ) {
+		DC->setCVar( cvar, va( "%d", (int)( value + ( value >= 0 ? 0.5f : -0.5f ) ) ) );
+	} else if ( range >= 2.0f ) {
+		value = (float)( (int)( value * 10.0f + ( value >= 0 ? 0.5f : -0.5f ) ) ) / 10.0f;
+		DC->setCVar( cvar, va( "%.1f", value ) );
+	} else {
+		value = (float)( (int)( value * 100.0f + ( value >= 0 ? 0.5f : -0.5f ) ) ) / 100.0f;
+		DC->setCVar( cvar, va( "%.2f", value ) );
+	}
+}
+
 static void Scroll_Slider_ThumbFunc( void *p ) {
 	float			x, value, cursorx, sw;	//  Knightmare added
 	scrollInfo_t	*si = (scrollInfo_t*)p;
@@ -2706,7 +2719,7 @@ static void Scroll_Slider_ThumbFunc( void *p ) {
 	value /= sw;	// Knightmare changed, was SLIDER_WIDTH
 	value *= ( editDef->maxVal - editDef->minVal );
 	value += editDef->minVal;
-	DC->setCVar( si->item->cvar, va( "%f", value ) );
+	Slider_SetCvarValue( si->item->cvar, value, editDef->maxVal - editDef->minVal );
 }
 
 void Item_StartCapture( itemDef_t *item, int key ) {
@@ -2798,7 +2811,7 @@ qboolean Item_Slider_HandleKey( itemDef_t *item, int key, qboolean down ) {
 					// vm fuckage
 					// value = (((float)(DC->cursorx - x)/ SLIDER_WIDTH) * (editDef->maxVal - editDef->minVal));
 					value += editDef->minVal;
-					DC->setCVar( item->cvar, va( "%f", value ) );
+					Slider_SetCvarValue( item->cvar, value, editDef->maxVal - editDef->minVal );
 					return qtrue;
 				}
 			}
@@ -3729,7 +3742,21 @@ static bind_t g_bindings[] =
 	{"+leanright",       -1,             -1, -1, -1},
 	{"kill",			-1,             -1, -1, -1},	// Knightmare added
 	{"screenshot",       -1,             -1, -1, -1},	// Knightmare added
-	{"screenshotjpeg",   -1,             -1, -1, -1}
+	{"screenshotjpeg",   -1,             -1, -1, -1},
+
+	// Speedrun LiveSplit commands
+	{"livesplit_start",      -1, -1, -1, -1},
+	{"livesplit_reset",      -1, -1, -1, -1},
+	{"livesplit_pause",      -1, -1, -1, -1},
+	{"livesplit_undo",       -1, -1, -1, -1},
+	{"livesplit_skip",       -1, -1, -1, -1},
+
+	// Demo playback commands
+	{"demo_pause",           -1, -1, -1, -1},
+	{"demo_speedup",         -1, -1, -1, -1},
+	{"demo_slowdown",        -1, -1, -1, -1},
+	{"demo_skipforward",     -1, -1, -1, -1},
+	{"demo_skipbackward",    -1, -1, -1, -1}
 };
 
 
@@ -6527,6 +6554,12 @@ qboolean MenuParse_itemDef( itemDef_t *item, int handle ) {
 	menuDef_t *menu = (menuDef_t*)item;
 	if ( menu->itemCount < MAX_MENUITEMS ) {
 		menu->items[menu->itemCount] = UI_Alloc( sizeof( itemDef_t ) );
+		if ( !menu->items[menu->itemCount] ) {
+			if ( DC->Print ) {
+				DC->Print( "MenuParse_itemDef: out of memory, skipping item\n" );
+			}
+			return qfalse;
+		}
 		Item_Init( menu->items[menu->itemCount] );
 		if ( !Item_Parse( handle, menu->items[menu->itemCount] ) ) {
 			return qfalse;

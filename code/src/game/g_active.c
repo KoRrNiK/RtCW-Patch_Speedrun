@@ -1484,6 +1484,9 @@ void ClientThink( int clientNum ) {
 	gentity_t *ent;
 
 	ent = g_entities + clientNum;
+	if ( !ent->client ) {
+		return;
+	}
 	ent->client->pers.oldcmd = ent->client->pers.cmd;
 	trap_GetUsercmd( clientNum, &ent->client->pers.cmd );
 
@@ -1703,6 +1706,15 @@ void ClientEndFrame( gentity_t *ent ) {
 	}
 
 	SendPendingPredictableEvents( &ent->client->ps );
+
+	// ESP: expose health to cgame via constantLight for AI entities
+	// low 16 bits = current health, high 16 bits = max health
+	if ( ent->r.svFlags & SVF_CASTAI ) {
+		int curHP = ent->health > 0 ? ent->health : 0;
+		int maxHP = ent->client->ps.stats[STAT_MAX_HEALTH];
+		if ( maxHP <= 0 ) { maxHP = 100; }
+		ent->s.constantLight = ( curHP & 0xFFFF ) | ( ( maxHP & 0xFFFF ) << 16 );
+	}
 
 	// DHM - Nerve :: Only in single player...
 	// Ridah, if they are using a dangerous weapon, let AI do their avoidance

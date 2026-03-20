@@ -1648,8 +1648,29 @@ void AICast_QueryThink( cast_state_t *cs ) {
 	cast_state_t *ocs;
 	vec3_t vec;
 
+	if ( !cs ) {
+		return;
+	}
+
 	ent = &g_entities[cs->entityNum];
+
+	// validate enemyNum before using it
+	if ( cs->enemyNum < 0 || cs->enemyNum >= MAX_CLIENTS ) {
+		AICast_StateChange( cs, AISTATE_RELAXED );
+		return;
+	}
+
 	ocs = AICast_GetCastState( cs->enemyNum );
+	if ( !ocs ) {
+		AICast_StateChange( cs, AISTATE_RELAXED );
+		return;
+	}
+
+	// validate bs pointer
+	if ( !cs->bs ) {
+		AICast_StateChange( cs, AISTATE_RELAXED );
+		return;
+	}
 
 	// never crouch while in this state (by choice anyway)
 	cs->attackcrouch_time = 0;

@@ -55,6 +55,23 @@ static char sys_cmdline[MAX_STRING_CHARS];
 
 /*
 ==================
+Sys_IsShiftDown / Sys_IsCtrlDown
+
+Query the OS directly for modifier key state.
+More reliable than the engine's keys[] tracking
+(which can miss one of the two physical shift/ctrl keys).
+==================
+*/
+qboolean Sys_IsShiftDown( void ) {
+	return ( GetAsyncKeyState( VK_SHIFT ) & 0x8000 ) ? qtrue : qfalse;
+}
+
+qboolean Sys_IsCtrlDown( void ) {
+	return ( GetAsyncKeyState( VK_CONTROL ) & 0x8000 ) ? qtrue : qfalse;
+}
+
+/*
+==================
 Sys_LowPhysicalMemory()
 ==================
 */

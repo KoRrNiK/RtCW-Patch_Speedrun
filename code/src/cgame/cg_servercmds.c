@@ -247,6 +247,14 @@ static void CG_ParseScreenFade( void ) {
 	float fadealpha;
 	int fadestart, fadeduration;
 
+	// During demo playback, ignore screen fade configstrings.
+	// CS_SCREENFADE from the previous map's mission completion
+	// persists in the new gamestate and would cover the screen
+	// with an opaque black fade overlay.
+	if ( cg.demoPlayback ) {
+		return;
+	}
+
 	info = CG_ConfigString( CS_SCREENFADE );
 	token = COM_Parse( (char **)&info );
 	fadealpha = atof( token );
@@ -269,7 +277,7 @@ CG_ParseFog
 	int		time
 ==============
 */
-static void CG_ParseFog( void ) {
+void CG_ParseFog( void ) {
 	const char  *info;
 	char *token;
 	float ne, fa, r, g, b, density;
@@ -990,6 +998,13 @@ static void CG_ServerCommand( void ) {
 	}
 
 	if ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to begin.
+		if ( cg.demoPlayback ) {
+			// During demo playback there is no pregame menu or player
+			// interaction - skip the visual fade, popup and norender
+			// but keep audio fade so sound restores after map change.
+			trap_S_FadeAllSound( 1.0f, 1000 );  // fade sound up
+			return;
+		}
 		CG_Fade( 0, 0, 0, 255, cg.time, 0 );      // go black
 		trap_UI_Popup( "pregame" );                // start pregame menu
 		trap_Cvar_Set( "cg_norender", "1" );    // don't render the world until the player clicks in and the 'playerstart' func has been called (g_main in G_UpdateCvars() ~ilne 949)

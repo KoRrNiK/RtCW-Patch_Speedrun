@@ -969,7 +969,8 @@ void S_AddLoopingSound( int entityNum, const vec3_t origin, const vec3_t velocit
 	}
 
 	if ( sfxHandle < 0 || sfxHandle >= snd.s_numSfx ) {
-		Com_Error( ERR_DROP, "S_AddLoopingSound: handle %i out of range", sfxHandle );
+		Com_Printf( "^1S_AddLoopingSound: handle %i out of range (max %i) - skipping\n", sfxHandle, snd.s_numSfx );
+		return;
 	}
 
 	sfx = &s_knownSfx[ sfxHandle ];

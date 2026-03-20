@@ -186,6 +186,11 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 		}
 	}
 
+	/* Signal Heinrich's death to the engine (LiveSplit end trigger) */
+	if ( self->aiCharacter == AICHAR_HEINRICH && self->client->ps.pm_type != PM_DEAD ) {
+		trap_Cvar_Set( "g_heinrichDead", "1" );
+	}
+
 	// the zombie should show special effect instead of gibbing
 	if ( self->aiCharacter == AICHAR_ZOMBIE && cs->secondDeadTime ) {
 		if ( cs->secondDeadTime > 1 ) {

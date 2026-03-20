@@ -278,6 +278,14 @@ static void SV_Map_f( void ) {
 	// and thus nuke the arguments of the map command
 	Q_strncpyz( mapname, map, sizeof( mapname ) );
 
+	// LiveSplit: flag natural SP changelevel (spmap) vs manual console map/save load
+	{
+		const char *origCmd = Cmd_Argv( 0 );
+		qboolean isSPCmd    = Q_stricmpn( origCmd, "sp", 2 ) == 0 ? qtrue : qfalse;
+		qboolean isSaveLoad = Cvar_VariableIntegerValue( "savegame_loading" ) ? qtrue : qfalse;
+		Cvar_Set( "sv_spTransition", ( isSPCmd && !isSaveLoad ) ? "1" : "0" );
+	}
+
 	// start up the map
 	SV_SpawnServer( mapname, killBots );
 

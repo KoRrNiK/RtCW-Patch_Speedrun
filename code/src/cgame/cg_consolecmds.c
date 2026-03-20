@@ -459,7 +459,7 @@ static consoleCommand_t commands[] = {
 	{ "mp_QuickMessage", CG_QuickMessage_f },
 	{ "OpenLimboMenu", CG_OpenLimbo_f },
 	{ "CloseLimboMenu", CG_CloseLimbo_f },
-	{ "LimboMessage", CG_LimboMessage_f }
+	{ "LimboMessage", CG_LimboMessage_f },
 	// -NERVE - SMF
 };
 

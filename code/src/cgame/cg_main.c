@@ -43,6 +43,7 @@ displayContextDef_t cgDC;
 int forceModelModificationCount = -1;
 
 void CG_Init( int serverMessageNum, int serverCommandSequence );
+void CG_DemoReset( int serverMessageNum, int serverCommandSequence );
 void CG_Shutdown( void );
 
 
@@ -72,6 +73,9 @@ int vmMain( int command, int arg0, int arg1, int arg2, int arg3, int arg4, int a
 		return 0;
 	case CG_INIT:
 		CG_Init( arg0, arg1 );
+		return 0;
+	case CG_DEMO_RESET:
+		CG_DemoReset( arg0, arg1 );
 		return 0;
 	case CG_SHUTDOWN:
 		CG_Shutdown();
@@ -117,10 +121,17 @@ vmCvar_t cg_shadows;
 vmCvar_t cg_gibs;
 vmCvar_t cg_drawTimer;
 vmCvar_t cg_drawFPS;
+vmCvar_t cg_fpsScale;
+vmCvar_t cg_fpsX;
+vmCvar_t cg_fpsY;
 
 vmCvar_t cg_drawVelocity;
 vmCvar_t cg_velocity_type;
 vmCvar_t cg_velocity_size;
+vmCvar_t cg_velocity_mode;
+vmCvar_t cg_velocity_x;
+vmCvar_t cg_velocity_y;
+vmCvar_t cg_velocity_scale;
 
 vmCvar_t cg_drawSnapshot;
 vmCvar_t cg_draw3dIcons;
@@ -257,6 +268,16 @@ vmCvar_t cg_expectedhunkusage;
 
 vmCvar_t cg_showAIState;
 
+// Bunny hop cvars
+vmCvar_t bh_movement;
+vmCvar_t bh_autojump;
+vmCvar_t cg_drawKeys;
+vmCvar_t cg_drawTriggers;
+vmCvar_t cg_drawEnemies;
+vmCvar_t cg_drawItems;
+vmCvar_t cg_drawPos;
+vmCvar_t cg_drawJumpStats;
+
 vmCvar_t cg_notebook;
 vmCvar_t cg_notebookpages;          // bitflags for the currently accessable pages.  if they wanna cheat, let 'em.  Most won't, or will wait 'til they actually play it.
 
@@ -355,10 +376,17 @@ cvarTable_t cvarTable[] = {
 	{ &cg_drawStatus, "cg_drawStatus", "1", CVAR_ARCHIVE  },
 	{ &cg_drawTimer, "cg_drawTimer", "0", CVAR_ARCHIVE  },
 	{ &cg_drawFPS, "cg_drawFPS", "0", CVAR_ARCHIVE  },
+	{ &cg_fpsScale, "cg_fpsScale", "1.0", CVAR_ARCHIVE  },
+	{ &cg_fpsX, "cg_fpsX", "500", CVAR_ARCHIVE  },
+	{ &cg_fpsY, "cg_fpsY", "0", CVAR_ARCHIVE  },
 	
 	{ &cg_drawVelocity, "cg_drawVelocity", "0", CVAR_ARCHIVE  },
 	{ &cg_velocity_type, "cg_velocity_type", "0", CVAR_ARCHIVE  },
 	{ &cg_velocity_size, "cg_velocity_size", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_mode, "cg_velocity_mode", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_x, "cg_velocity_x", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_y, "cg_velocity_y", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_scale, "cg_velocity_scale", "1.0", CVAR_ARCHIVE  },
 	
 	{ &cg_drawSnapshot, "cg_drawSnapshot", "0", CVAR_ARCHIVE  },
 	{ &cg_draw3dIcons, "cg_draw3dIcons", "1", CVAR_ARCHIVE  },
@@ -455,6 +483,17 @@ cvarTable_t cvarTable[] = {
 
 	{ &pmove_fixed, "pmove_fixed", "0", 0},
 	{ &pmove_msec, "pmove_msec", "8", 0},
+
+	// Bunny hop cvars
+	{ &bh_movement, "bh_movement", "0", CVAR_ARCHIVE },
+	{ &bh_autojump, "bh_autojump", "0", CVAR_ARCHIVE },
+	{ &cg_drawKeys, "cg_drawKeys", "0", CVAR_ARCHIVE },
+	{ &cg_drawTriggers, "cg_drawTriggers", "0", CVAR_ARCHIVE },
+	{ &cg_drawEnemies, "cg_drawEnemies", "0", CVAR_ARCHIVE },
+	{ &cg_drawItems, "cg_drawItems", "0", CVAR_ARCHIVE },
+	{ &cg_drawPos, "cg_drawPos", "0", CVAR_ARCHIVE },
+	{ &cg_drawJumpStats, "cg_drawJumpStats", "0", CVAR_ARCHIVE },
+
 	{ &cg_smallFont, "ui_smallFont", "0.25", CVAR_ARCHIVE},
 	{ &cg_bigFont, "ui_bigFont", "0.4", CVAR_ARCHIVE},
 	{ &cg_hudFiles, "cg_hudFiles", "ui/hud.txt", CVAR_ARCHIVE},
@@ -2391,6 +2430,18 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 
 	CG_RegisterCvars();
 
+	// Force-clear mission stats - this ROM cvar persists across map
+	// changes and demo restarts, causing CG_DrawActive to skip world
+	// rendering when strlen(g_missionStats) > 1.
+	trap_Cvar_Set( "g_missionStats", "0" );
+
+	// Force-clear cg_norender - during demo playback the server-side
+	// AICast_CheckLoadGame sets this to 1 and the "rockandroll" command
+	// reinforces it.  Without a real game module running G_UpdateCvars
+	// to clear it (on playerstart), it stays 1 forever and suppresses
+	// all world rendering.
+	trap_Cvar_Set( "cg_norender", "0" );
+
 	CG_InitConsoleCommands();
 
 	// Knightmare- init max ammo here
@@ -2436,6 +2487,14 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 
 	CG_RegisterGraphics();
 
+	CG_LoadingString( "trigger volumes" );
+
+	CG_InitTriggerVis();
+
+	CG_LoadingString( "enemy ESP" );
+
+	CG_InitEnemyESP();
+
 	CG_LoadingString( "flamechunks" );
 
 	CG_InitFlameChunks();       // RF, register and clear all flamethrower resources
@@ -2462,6 +2521,15 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	// Make sure we have update values (scores)
 	CG_SetConfigValues();
 
+	// Clear screen fade - CS_SCREENFADE from the previous map's
+	// gamestate may contain a "fade to black" from mission completion.
+	// During demo playback this stale fade persists and covers the
+	// entire screen with an opaque black overlay.
+	cgs.scrFadeAlpha = 0.0f;
+	cgs.scrFadeAlphaCurrent = 0.0f;
+	cgs.scrFadeStartTime = 0;
+	cgs.scrFadeDuration = 0;
+
 	CG_StartMusic();
 
 	cg.lightstylesInited = qfalse;
@@ -2469,6 +2537,12 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	CG_LoadingString( "" );
 
 	CG_ShaderStateChanged();
+
+	/* Apply fog from CS_FOGVARS configstring.
+	   During demo playback, after cross-map seeks the gamestate has
+	   the correct CS_FOGVARS but no server command arrives to trigger
+	   CG_ConfigStringModified, so fog is never set. */
+	CG_ParseFog();
 
 	// RF, clear all sounds, so we dont hear anything after level load
 	trap_S_ClearLoopingSounds( 2 );
@@ -2491,6 +2565,64 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 
 /*
 =================
+CG_DemoReset
+
+Lightweight reinitialisation for same-map backward seek during demo
+playback.  Resets snapshot tracking, entity state, local effects, etc.
+
+Critically, we do NOT zero cgs.media / cg_weapons / cg_items and we
+skip all CG_Register* calls, so no shader/model/sound re-registration
+happens.  The renderer and collision-map stay untouched.
+=================
+*/
+void CG_DemoReset( int serverMessageNum, int serverCommandSequence ) {
+	const char *s;
+
+	/* --- state that MUST be zeroed -------------------------------- */
+	memset( &cg, 0, sizeof( cg ) );                 /* snapshot tracking, refdef, etc. */
+	memset( cg_entities, 0, sizeof( cg_entities ) ); /* entity state */
+
+	/* Re-sync processed-snapshot / server-command counters */
+	cgs.processedSnapshotNum  = serverMessageNum;
+	cgs.serverCommandSequence = serverCommandSequence;
+
+	/* Re-parse config strings that CL_ParseGamestate just refreshed */
+	trap_GetGameState( &cgs.gameState );
+	CG_ParseServerinfo();                           /* re-fills cgs.mapname etc. */
+
+	s = CG_ConfigString( CS_LEVEL_START_TIME );
+	cgs.levelStartTime = atoi( s );
+
+	/* Clear mission / render-blocking cvars */
+	trap_Cvar_Set( "g_missionStats", "0" );
+	trap_Cvar_Set( "cg_norender", "0" );
+
+	/* Re-init lightweight subsystems (just memset their pools) */
+	CG_InitLocalEntities();
+	CG_InitMarkPolys();
+
+	/* Clear screen fade from previous map completion */
+	cgs.scrFadeAlpha        = 0.0f;
+	cgs.scrFadeAlphaCurrent = 0.0f;
+	cgs.scrFadeStartTime    = 0;
+	cgs.scrFadeDuration     = 0;
+
+	CG_SetConfigValues();
+
+	/* Clear looping sounds so stale audio doesn't play */
+	trap_S_ClearLoopingSounds( 2 );
+
+	cg.lightstylesInited = qfalse;
+
+	/* Re-apply visual configstrings that were updated during
+	   fast-forward but whose server commands are no longer in
+	   the circular buffer. */
+	CG_ParseFog();
+	CG_ShaderStateChanged();
+}
+
+/*
+=================
 CG_Shutdown
 
 Called before every level change or subsystem restart
@@ -2500,6 +2632,7 @@ void CG_Shutdown( void ) {
 
 	// some mods may need to do cleanup work here,
 	// like closing files or archiving session data
+
 }
 
 

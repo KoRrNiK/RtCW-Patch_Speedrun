@@ -932,15 +932,17 @@ static void SV_InitGameVM( qboolean restart ) {
 	// start the entity parsing at the beginning
 	sv.entityParsePoint = CM_EntityString();
 
-	// use the current msec count for a random seed
-	// init for this gamestate
-	VM_Call( gvm, GAME_INIT, svs.time, Com_Milliseconds(), restart );
-
 	// clear all gentity pointers that might still be set from
-	// a previous level
+	// a previous level - must happen BEFORE GAME_INIT because the
+	// game DLL may call trap_SetConfigstring during init, which
+	// iterates clients and dereferences gentity pointers.
 	for ( i = 0 ; i < sv_maxclients->integer ; i++ ) {
 		svs.clients[i].gentity = NULL;
 	}
+
+	// use the current msec count for a random seed
+	// init for this gamestate
+	VM_Call( gvm, GAME_INIT, svs.time, Com_Milliseconds(), restart );
 }
 
 
@@ -1050,5 +1052,8 @@ SV_GetModelInfo
 ===================
 */
 qboolean SV_GetModelInfo( int clientNum, char *modelName, animModelInfo_t **modelInfo ) {
+	if ( !gvm ) {
+		return qfalse;
+	}
 	return VM_Call( gvm, GAME_GETMODELINFO, clientNum, modelName, modelInfo );
 }

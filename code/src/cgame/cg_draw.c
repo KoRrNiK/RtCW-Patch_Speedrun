@@ -39,6 +39,9 @@ If you have questions concerning this license or the applicable additional terms
 extern displayContextDef_t cgDC;
 menuDef_t *menuScoreboard = NULL;
 
+/* Forward declarations */
+static void CG_drawVelocity( void );
+
 int sortedTeamPlayers[TEAM_MAXOVERLAY];
 int numSortedTeamPlayers;
 
@@ -954,6 +957,16 @@ static float CG_DrawFPS( float y ) {
 	int			fps;
 	static int	previous;
 	int			t, frameTime;
+	float		scale;
+	int			cw, ch, xPos;
+	vec4_t		color;
+
+	scale = cg_fpsScale.value;
+	if ( scale < 0.25f ) scale = 0.25f;
+	if ( scale > 4.0f ) scale = 4.0f;
+	cw = (int)( BIGCHAR_WIDTH * scale );
+	ch = (int)( BIGCHAR_HEIGHT * scale );
+	xPos = (int)cg_fpsX.value;
 
 	// don't use serverTime, because that will be drifting to
 	// correct for internet lag changes, timescales, timedemos, etc
@@ -974,13 +987,15 @@ static float CG_DrawFPS( float y ) {
 		}
 		fps = 1000 * FPS_FRAMES / total;
 
-		s = va( "%ifps", fps );
-		w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+		s = va( "%iFPS", fps );
+		w = CG_DrawStrlen( s ) * cw;
 
-		CG_DrawBigString( UPPERRIGHT_X - w, y + 2, s, 1.0F, ALIGN_TOPRIGHT );
+		color[0] = color[1] = color[2] = 1.0f;
+		color[3] = 1.0f;
+		CG_DrawStringExt2( xPos - w, (int)( y + 2 ), s, color, qfalse, qtrue, cw, ch, 0, ALIGN_TOPRIGHT );
 	}
 
-	return y + BIGCHAR_HEIGHT + 4;
+	return y + ch + 4;
 }
 
 /*
@@ -993,6 +1008,16 @@ static float CG_DrawTimer( float y ) {
 	int		w;
 	int		mins, seconds, tens;
 	int		msec;
+	float	scale;
+	int		cw, ch, xPos;
+	vec4_t	color;
+
+	scale = cg_fpsScale.value;
+	if ( scale < 0.25f ) scale = 0.25f;
+	if ( scale > 4.0f ) scale = 4.0f;
+	cw = (int)( BIGCHAR_WIDTH * scale );
+	ch = (int)( BIGCHAR_HEIGHT * scale );
+	xPos = (int)cg_fpsX.value;
 
 	// NERVE - SMF - draw time remaining in multiplayer
 	if ( cgs.gametype == GT_WOLF ) {
@@ -1009,11 +1034,13 @@ static float CG_DrawTimer( float y ) {
 	seconds -= tens * 10;
 
 	s = va( "%i:%i%i", mins, tens, seconds );
-	w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+	w = CG_DrawStrlen( s ) * cw;
 
-	CG_DrawBigString( UPPERRIGHT_X - w, y + 2, s, 1.0F, ALIGN_TOPRIGHT );
+	color[0] = color[1] = color[2] = 1.0f;
+	color[3] = 1.0f;
+	CG_DrawStringExt2( xPos - w, (int)( y + 2 ), s, color, qfalse, qtrue, cw, ch, 0, ALIGN_TOPRIGHT );
 
-	return y + BIGCHAR_HEIGHT + 4;
+	return y + ch + 4;
 }
 
 
@@ -1202,6 +1229,7 @@ CG_DrawUpperRight
 */
 static void CG_DrawUpperRight( void ) {
 	float y;
+	float fpsY;
 
 	y = 0;
 
@@ -1211,17 +1239,15 @@ static void CG_DrawUpperRight( void ) {
 	if ( cg_drawSnapshot.integer ) {
 		y = CG_DrawSnapshot( y );
 	}
+
+	fpsY = cg_fpsY.value;
 	if ( cg_drawFPS.integer ) {
-		y = CG_DrawFPS( y );
+		fpsY = CG_DrawFPS( fpsY );
 	}
-	if ( cg_drawTimer.integer ) {
-		y = CG_DrawTimer( y );
+	if (cg_drawTimer.integer) {
+		fpsY = CG_DrawTimer( fpsY );
 	}
 
-	if (cg_drawVelocity.integer) {
-		CG_drawVelocity();
-	}
-	
 
 // (SA) disabling drawattacker for the time being
 //	if ( cg_drawAttacker.integer ) {
@@ -1786,6 +1812,11 @@ static void CG_DrawDisconnect( void ) {
 	const char      *s;
 	int w;          // bk010215 - FIXME char message[1024];
 
+	// Never show connection interrupted during demo playback
+	if ( cg.demoPlayback ) {
+		return;
+	}
+
 	// draw the phone jack if we are completely past our buffers
 	cmdNum = trap_GetCurrentCmdNumber() - CMD_BACKUP + 1;
 	trap_GetUserCmd( cmdNum, &cmd );
@@ -1825,6 +1856,11 @@ static void CG_DrawLagometer( void ) {
 	float ax, ay, aw, ah, mid, range;
 	int color;
 	float vscale;
+
+	// Hide lagometer entirely during demo playback (singleplayer, no network needed)
+	if ( cg.demoPlayback ) {
+		return;
+	}
 
 	if ( !cg_lagometer.integer || cgs.localServer ) {
 //	if(0) {
@@ -3364,6 +3400,8 @@ static void CG_ScreenFade( void ) {
 
 
 
+static void CG_DrawKeystrokeOverlay( void );
+
 /*
 =================
 CG_Draw2D
@@ -3446,6 +3484,25 @@ static void CG_Draw2D( void ) {
 
 	// Ridah, draw flash blends now
 	CG_DrawFlashBlend();
+
+	// Keystroke overlay
+	if ( cg_drawKeys.integer ) {
+		CG_DrawKeystrokeOverlay();
+	}
+
+	// Speedometer (always visible when enabled)
+	if ( cg_drawVelocity.integer ) {
+		CG_drawVelocity();
+	}
+
+	// Position/angles HUD
+	CG_DrawPositionHUD();
+
+	// Jump statistics
+	CG_DrawJumpStats();
+
+	// Movement quality bar
+	CG_DrawMovementBar();
 }
 
 /*
@@ -3630,6 +3687,15 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 		cg.refdef.rdflags &= ~RDF_DRAWSKYBOX;
 	}
 
+	// Draw trigger volume visualization (adds polys to scene)
+	CG_DrawTriggerVis();
+
+	// Draw enemy hitbox ESP (adds polys to scene, visible through walls)
+	CG_DrawEnemyESP();
+
+	// Draw item ESP (adds polys to scene, visible through walls)
+	CG_DrawItemESP();
+
 	trap_R_RenderScene( &cg.refdef );
 
 	// restore original viewpoint if running stereo
@@ -3642,6 +3708,169 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 
 	// draw status bar and other floating elements
 	CG_Draw2D();
+
+	// Trigger volume labels (2D text overlay, after render scene)
+	CG_DrawTriggerLabels();
+
+	// Enemy ESP labels (2D text overlay, after render scene)
+	CG_DrawEnemyESPLabels();
+
+	// Item ESP labels (2D text overlay, after render scene)
+	CG_DrawItemESPLabels();
+}
+
+
+/*
+==================
+CG_DrawKeystrokeOverlay
+
+RtCW-themed keystroke overlay with smooth transitions.
+Gray when idle, military green on press.
+Positioned just above the velocity HUD.
+Layout:
+       [W]
+    [A][S][D]
+   [JUMP][DUCK]
+==================
+*/
+#define KEYS_BOX_W		22
+#define KEYS_BOX_H		18
+#define KEYS_GAP		2
+#define KEYS_CHARW		7
+#define KEYS_CHARH		12
+#define KEYS_NUM		6
+#define KEYS_FADE_SPEED	8.0f	// higher = faster transition (units per second)
+
+static float keyAlpha[KEYS_NUM] = { 0, 0, 0, 0, 0, 0 };  // W A S D JUMP DUCK
+
+/* Helper: read a cvar as float in cgame (no trap_Cvar_VariableValue in cgame) */
+static float CG_CvarGetFloat( const char *name ) {
+	char buf[32];
+	trap_Cvar_VariableStringBuffer( name, buf, sizeof( buf ) );
+	return atof( buf );
+}
+
+static void CG_DrawKeystrokeKey( float x, float y, float w, float h,
+								 const char *label, int labelLen, float t,
+								 float opacity, float cW, float cH ) {
+	// t = key press blend (0=idle, 1=pressed), opacity = global alpha multiplier
+	vec4_t bg, border, textCol;
+	float textW, tx, ty;
+
+	// Colors: blend between idle and pressed based on t only
+	bg[0] = 0.04f + t * 0.06f;
+	bg[1] = 0.04f + t * 0.16f;
+	bg[2] = 0.06f;
+	bg[3] = ( 0.70f + t * 0.10f ) * opacity;
+
+	border[0] = 0.20f + t * 0.02f;
+	border[1] = 0.25f + t * 0.13f;
+	border[2] = 0.18f - t * 0.06f;
+	border[3] = ( 0.25f + t * 0.40f ) * opacity;
+
+	textCol[0] = 0.42f + t * 0.43f;
+	textCol[1] = 0.48f + t * 0.47f;
+	textCol[2] = 0.38f + t * 0.42f;
+	textCol[3] = ( 0.50f + t * 0.50f ) * opacity;
+
+	// background
+	CG_FillRect( x, y, w, h, bg, ALIGN_BOTTOM );
+	// border
+	CG_DrawRect( x, y, w, h, 1, border, ALIGN_BOTTOM );
+
+	// centered text, no shadow
+	textW = labelLen * cW;
+	tx = x + ( w - textW ) * 0.5f;
+	ty = y + ( h - cH ) * 0.5f;
+	CG_DrawStringExt( (int)tx, (int)ty, label,
+		textCol, qtrue, qfalse, (int)cW, (int)cH, labelLen, ALIGN_BOTTOM );
+}
+
+static void CG_DrawKeystrokeOverlay( void ) {
+	usercmd_t cmd;
+	int cmdNum;
+	float totalW, baseX, baseY, halfW, y;
+	float dt, ksScale, ksOpacity;
+	float boxW, boxH, gap, charW, charH;
+	qboolean pressed[KEYS_NUM];
+	int i;
+	float ksX, ksY;
+
+	/* Read cvar-driven position/scale/opacity */
+	ksScale   = CG_CvarGetFloat( "ks_scale" );
+	ksOpacity = CG_CvarGetFloat( "ks_opacity" );
+	ksX       = CG_CvarGetFloat( "ks_x" );
+	ksY       = CG_CvarGetFloat( "ks_y" );
+	if ( ksScale < 0.3f ) ksScale = 0.3f;
+	if ( ksScale > 3.0f ) ksScale = 3.0f;
+	if ( ksOpacity <= 0.0f ) return;  /* fully transparent = hidden */
+	if ( ksOpacity > 1.0f ) ksOpacity = 1.0f;
+
+	boxW  = KEYS_BOX_W * ksScale;
+	boxH  = KEYS_BOX_H * ksScale;
+	gap   = KEYS_GAP   * ksScale;
+	charW = KEYS_CHARW  * ksScale;
+	charH = KEYS_CHARH  * ksScale;
+
+	cmdNum = trap_GetCurrentCmdNumber();
+	trap_GetUserCmd( cmdNum, &cmd );
+
+	// Key states: W A S D JUMP DUCK
+	pressed[0] = ( cmd.forwardmove > 0 );                                    // W
+	pressed[1] = ( cmd.rightmove < 0 );                                      // A
+	pressed[2] = ( cmd.forwardmove < 0 );                                    // S
+	pressed[3] = ( cmd.rightmove > 0 );                                      // D
+	pressed[5] = ( cmd.wbuttons & 64 ) ? qtrue : qfalse;                     // DUCK (WBUTTON_CROUCH)
+	pressed[4] = ( cmd.upmove > 0 ) || ( cmd.upmove == 0 && pressed[5] );   // JUMP
+
+	// Smooth transitions: lerp alpha toward target
+	dt = cg.frametime * 0.001f;  // seconds
+	if ( dt > 0.05f ) dt = 0.05f;  // clamp for lag spikes
+	for ( i = 0; i < KEYS_NUM; i++ ) {
+		float target = pressed[i] ? 1.0f : 0.0f;
+		float speed = pressed[i] ? KEYS_FADE_SPEED * 2.0f : KEYS_FADE_SPEED;  // snap ON fast, fade OFF slower
+		if ( keyAlpha[i] < target ) {
+			keyAlpha[i] += speed * dt;
+			if ( keyAlpha[i] > target ) keyAlpha[i] = target;
+		} else if ( keyAlpha[i] > target ) {
+			keyAlpha[i] -= speed * dt;
+			if ( keyAlpha[i] < target ) keyAlpha[i] = target;
+		}
+	}
+
+	// Layout: 3 keys wide + 2 gaps  (scaled)
+	totalW = boxW * 3 + gap * 2;
+	// Position: ks_x=0 means auto-center, ks_y=0 means auto above statusbar
+	if ( ksX > 0.01f ) {
+		baseX = ksX;
+	} else {
+		baseX = ( SCREEN_WIDTH - totalW ) * 0.5f;
+	}
+	if ( ksY > 0.01f ) {
+		baseY = ksY;
+	} else {
+		baseY = STATUSBARHEIGHT - 10 - ( boxH + gap ) * 3;
+	}
+
+	// Row 1: [W]
+	y = baseY;
+	CG_DrawKeystrokeKey( baseX + boxW + gap, y, boxW, boxH, "W", 1, keyAlpha[0], ksOpacity, charW, charH );
+
+	// Row 2: [A] [S] [D]
+	y = baseY + boxH + gap;
+	CG_DrawKeystrokeKey( baseX,                    y, boxW, boxH, "A", 1, keyAlpha[1], ksOpacity, charW, charH );
+	CG_DrawKeystrokeKey( baseX + boxW + gap,       y, boxW, boxH, "S", 1, keyAlpha[2], ksOpacity, charW, charH );
+	CG_DrawKeystrokeKey( baseX + (boxW + gap)*2,   y, boxW, boxH, "D", 1, keyAlpha[3], ksOpacity, charW, charH );
+
+	// Row 3: [JUMP] [DUCK] - centered under ASD row
+	y = baseY + ( boxH + gap ) * 2;
+	halfW = ( totalW - gap ) * 0.5f;
+	{
+		float jdCharW = charW * 0.85f;  /* slightly smaller chars for JUMP/DUCK to center nicer */
+		float jdCharH = charH * 0.85f;
+		CG_DrawKeystrokeKey( baseX,                    y, halfW, boxH, "JUMP", 4, keyAlpha[4], ksOpacity, jdCharW, jdCharH );
+		CG_DrawKeystrokeKey( baseX + halfW + gap,      y, halfW, boxH, "DUCK", 4, keyAlpha[5], ksOpacity, jdCharW, jdCharH );
+	}
 }
 
 
@@ -3650,79 +3879,73 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 CG_Velocity
 ==================
 */
-// KoRrNiK - Added
-static float CG_drawVelocity() {
+// KoRrNiK - Added, cleaned up
+// cg_velocity_mode: 0 = 3D (full), 1 = horizontal only (XY), 2 = vertical only (Z)
+// cg_velocity_type: 0 = bottom, 1 = center
+// cg_velocity_size: 0 = tiny, 1 = small, 2 = big, 3 = giant
+// cg_velocity_x/y: custom position (0 = auto)
+// cg_velocity_scale: text scale multiplier
+static void CG_drawVelocity( void ) {
+	char    *s;
+	int     x, y, font_w, font_h;
+	float   vel;
+	float   scale;
+	vec4_t  hcolor;
 
-	char* s;
-	int		w;
-	int		x;
-	float	vel;
-
-
-	if (!(cg.snap->ps.pm_flags & PMF_LADDER)) {
-		vel = VectorLength(cg.snap->ps.velocity);
-	}
-	else vel = 0;
-
-	s = va("%i", (int)vel);
-
-	w = CG_DrawStrlen(s) * BIGCHAR_WIDTH;
-
-	w = CG_DrawStrlen(s);
-	x = (SCREEN_WIDTH - w) / 2;
-
-	if (!cg_velocity_size.integer || cg_velocity_size.integer == 1) {
-		if (vel > 1000) x -= 16;
-		else if (vel > 100) x -= 11;
-		else if (vel > 10) x -= 8;
-		else x -= 3;
-	}
-	else if (cg_velocity_size.integer == 2) {
-		if (vel > 1000) x -= 31;
-		else if (vel > 100) x -= 23;
-		else if (vel > 10) x -= 17;
-		else x -= 7;
-	}
-	else {
-		if (vel > 1000) x -= 54;
-		else if (vel > 100) x -= 43;
-		else if (vel > 10) x -= 35;
-		else x -= 15;
-	}
-
-	vec3_t hcolor;
-
-	for (int i = 0; i < 4; i++) hcolor[i] = 1.0;
-
-	int font_w = !cg_velocity_size.integer ? TINYCHAR_WIDTH : cg_velocity_size.integer == 1 ? SMALLCHAR_WIDTH : cg_velocity_size.integer == 2 ? BIGCHAR_WIDTH : GIANTCHAR_WIDTH;
-	int font_h = !cg_velocity_size.integer ? TINYCHAR_HEIGHT : cg_velocity_size.integer == 1 ? SMALLCHAR_HEIGHT : cg_velocity_size.integer == 2 ? BIGCHAR_HEIGHT : GIANTCHAR_HEIGHT;
-
-	if (cg_velocity_type.value == 0) CG_DrawStringExt(x, cg_velocity_size.integer >= 3 ? (STATUSBARHEIGHT - 30) : (STATUSBARHEIGHT + 5), s, hcolor, qfalse, qtrue, font_w,font_h,TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_BOTTOM);
-	else CG_DrawStringExt(x, cg_velocity_size.integer >= 3 ? (STATUSBARHEIGHT / 2) + 40 : (STATUSBARHEIGHT / 2) + 30, s, hcolor, qfalse, qtrue, font_w,font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_CENTER);
-
-
-	/*
-	if (cg_velocity_size.integer == 1) {
-
-		if (vel > 1000) x -= 33;
-		else if (vel > 100) x -= 23;
-		else if (vel > 10) x -= 16;
-		else x -= 7;
-
-		if (cg_velocity_type.value == 0) CG_DrawBigString(x, STATUSBARHEIGHT + 5, s, 1.0F, ALIGN_BOTTOM);
-		else CG_DrawBigString(x, (STATUSBARHEIGHT / 2) + 30, s, 1.0F, ALIGN_CENTER);
-
+	if ( cg.snap->ps.pm_flags & PMF_LADDER ) {
+		vel = 0;
+	} else if ( cg_velocity_mode.integer == 1 ) {
+		/* horizontal only (XY) */
+		vec3_t hvel;
+		hvel[0] = cg.snap->ps.velocity[0];
+		hvel[1] = cg.snap->ps.velocity[1];
+		hvel[2] = 0;
+		vel = VectorLength( hvel );
+	} else if ( cg_velocity_mode.integer == 2 ) {
+		/* vertical only (Z) */
+		vel = fabs( cg.snap->ps.velocity[2] );
 	} else {
+		/* 3D (default) */
+		vel = VectorLength( cg.snap->ps.velocity );
+	}
 
-		if (vel > 1000) x -= 16;
-		else if (vel > 100) x -= 11;
-		else if (vel > 10) x -= 8;
-		else x -= 3;
+	s = va( "%i", (int)vel );
 
-		if (cg_velocity_type.value == 0) CG_DrawSmallString(x, STATUSBARHEIGHT + 5, s, 1.0F, ALIGN_BOTTOM);
-		else CG_DrawSmallString(x, (STATUSBARHEIGHT / 2) + 30, s, 1.0F, ALIGN_CENTER);
+	hcolor[0] = 1.0f; hcolor[1] = 1.0f; hcolor[2] = 1.0f; hcolor[3] = 1.0f;
 
-	}*/
-	
+	switch ( cg_velocity_size.integer ) {
+		case 1:  font_w = SMALLCHAR_WIDTH;  font_h = SMALLCHAR_HEIGHT;  break;
+		case 2:  font_w = BIGCHAR_WIDTH;    font_h = BIGCHAR_HEIGHT;    break;
+		case 3:  font_w = GIANTCHAR_WIDTH;  font_h = GIANTCHAR_HEIGHT;  break;
+		default: font_w = TINYCHAR_WIDTH;   font_h = TINYCHAR_HEIGHT;   break;
+	}
 
+	// Apply scale multiplier
+	scale = cg_velocity_scale.value;
+	if ( scale <= 0 ) scale = 1.0f;
+	font_w = (int)( font_w * scale );
+	font_h = (int)( font_h * scale );
+
+	// Custom position or auto
+	if ( cg_velocity_x.integer || cg_velocity_y.integer ) {
+		x = cg_velocity_x.integer;
+		y = cg_velocity_y.integer;
+		CG_DrawStringExt( x, y, s, hcolor, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_CENTER );
+	} else {
+		// Auto-center horizontally
+		int digits = 1;
+		if ( vel >= 1000 ) digits = 4;
+		else if ( vel >= 100 ) digits = 3;
+		else if ( vel >= 10 ) digits = 2;
+
+		x = ( SCREEN_WIDTH / 2 ) - ( digits * font_w / 2 );
+
+		if ( cg_velocity_type.integer == 0 ) {
+			y = font_h >= GIANTCHAR_HEIGHT ? ( STATUSBARHEIGHT - 30 ) : ( STATUSBARHEIGHT + 5 );
+			CG_DrawStringExt( x, y, s, hcolor, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_BOTTOM );
+		} else {
+			y = font_h >= GIANTCHAR_HEIGHT ? ( STATUSBARHEIGHT / 2 ) + 40 : ( STATUSBARHEIGHT / 2 ) + 30;
+			CG_DrawStringExt( x, y, s, hcolor, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_CENTER );
+		}
+	}
 }

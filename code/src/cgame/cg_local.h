@@ -1003,6 +1003,67 @@ typedef struct {
 
 	float rumbleScale;          //RUMBLE FX using new shakeCamera code
 
+	// ---- Speedrun debug: jump statistics ----
+	qboolean    jumpActive;         // currently in the air from a jump
+	float       jumpPrevVelZ;       // previous frame Z velocity (bounce detect)
+	vec3_t      jumpStartPos;       // position at takeoff
+	float       jumpStartSpeed;     // XY speed at takeoff
+	float       jumpMaxSpeed;       // max XY speed during this jump
+	float       jumpMaxHeight;      // max Z reached during jump
+	float       jumpStartZ;         // Z at takeoff
+	int         jumpStartTime;      // time of takeoff
+
+	// last completed jump stats (for display)
+	float       lastJumpHeight;     // height gained
+	float       lastJumpDist;       // horizontal distance
+	float       lastJumpPreSpeed;   // speed at takeoff
+	float       lastJumpMaxSpeed;   // max speed in air
+	float       lastJumpPostSpeed;  // speed at landing
+	int         lastJumpTime;       // when the jump ended (for fade-out)
+	int         lastJumpAirTime;    // ms in air
+
+	// strafe tracking during current jump
+	float       jumpPrevYaw;        // previous frame yaw for delta
+	int         jumpAirFrames;      // total frames in air
+	int         jumpSyncFrames;     // synced strafe frames
+	int         jumpStrafeCount;    // strafe direction changes
+	int         jumpPrevStrafe;     // previous strafe dir (-1/0/+1)
+
+	// last completed jump strafe stats
+	int         lastJumpSyncFrames;
+	int         lastJumpAirFrames;
+	int         lastJumpStrafeCount;
+	int         lastJumpCount;      // running jump counter
+
+	// ---- Bhop chain tracking ----
+	int         bhopChain;          // current chain length (0 = none)
+	int         bhopLandTime;       // time of last landing (for chain window)
+	float       bhopChainDist;      // accumulated horizontal distance
+	float       bhopChainStartSpd;  // speed at start of chain
+	float       bhopChainMaxSpd;    // peak speed during chain
+	int         bhopChainSyncFrames; // accumulated sync frames in chain
+	int         bhopChainAirFrames;  // accumulated air frames in chain
+	int         bhopChainStrafes;   // accumulated strafes in chain
+
+	// last completed bhop chain (for display)
+	int         lastBhopChain;      // chain length
+	float       lastBhopDist;       // total distance
+	float       lastBhopStartSpd;   // entry speed
+	float       lastBhopEndSpd;     // exit speed
+	float       lastBhopMaxSpd;     // peak speed
+	float       lastBhopSyncPct;    // overall sync %
+	int         lastBhopStrafes;    // total strafes
+	int         lastBhopTime;       // when chain ended (for display)
+
+	// ---- Movement quality bar ----
+#define MOVEBAR_SEGMENTS    20
+#define MOVEBAR_INTERVAL    50      // ms per segment
+	float       moveBarQuality[20]; // quality per segment (-1..+1)
+	int         moveBarHead;        // circular buffer write index
+	int         moveBarCount;       // segments filled so far
+	int         moveBarLastTime;    // last segment update time
+	float       moveBarPrevSpeed;   // previous frame XY speed
+
 } cg_t;
 
 #define NUM_FUNNEL_SPRITES  21
@@ -1632,10 +1693,17 @@ extern vmCvar_t cg_shadows;
 extern vmCvar_t cg_gibs;
 extern vmCvar_t cg_drawTimer;
 extern vmCvar_t cg_drawFPS;
+extern vmCvar_t cg_fpsScale;
+extern vmCvar_t cg_fpsX;
+extern vmCvar_t cg_fpsY;
 
 extern vmCvar_t cg_drawVelocity;
 extern vmCvar_t cg_velocity_type;
 extern vmCvar_t cg_velocity_size;
+extern vmCvar_t cg_velocity_mode;
+extern vmCvar_t cg_velocity_x;
+extern vmCvar_t cg_velocity_y;
+extern vmCvar_t cg_velocity_scale;
 
 
 extern vmCvar_t cg_drawSnapshot;
@@ -1740,6 +1808,16 @@ extern vmCvar_t cg_particleLOD;
 extern vmCvar_t cg_smoothClients;
 extern vmCvar_t pmove_fixed;
 extern vmCvar_t pmove_msec;
+
+// Bunny hop cvars
+extern vmCvar_t bh_movement;
+extern vmCvar_t bh_autojump;
+extern vmCvar_t cg_drawKeys;
+extern vmCvar_t cg_drawTriggers;
+extern vmCvar_t cg_drawEnemies;
+extern vmCvar_t cg_drawItems;
+extern vmCvar_t cg_drawPos;
+extern vmCvar_t cg_drawJumpStats;
 
 extern vmCvar_t cg_cameraOrbit;
 extern vmCvar_t cg_cameraOrbitDelay;
@@ -1911,7 +1989,8 @@ void CG_DrawHead( float x, float y, float w, float h, int clientNum, vec3_t head
 void CG_DrawActive( stereoFrame_t stereoView );
 void CG_DrawFlagModel( float x, float y, float w, float h, int team, scralign_t align );	// Knightmare changed
 
-void CG_DrawTeamBackground( int x, int y, int w, int h, float alpha, int team, scralign_t align );	// Knightmare changed
+void CG_DrawTeamBackground( int x, int y, int w, int h, float alpha, int team, scralign_t align );
+
 void CG_OwnerDraw( float x, float y, float w, float h, float text_x, float text_y, int ownerDraw, int ownerDrawFlags, int align, float special, int font, float scale, vec4_t color, qhandle_t shader, int textStyle, scralign_t scralign );	// Knightmare changed
 void CG_Text_Paint( float x, float y, int font, float scale, vec4_t color, const char *text, float adjust, int limit, int style, scralign_t align );   	// Knightmare changed //----(SA)	modified
 int CG_Text_Width( const char *text, int font, float scale, int limit );
@@ -1939,6 +2018,37 @@ void CG_Fade( int r, int g, int b, int a, int time, int duration ); //----(SA)	m
 void CG_CalcShakeCamera();
 void CG_ApplyShakeCamera();
 
+//
+// cg_triggervis.c
+//
+void CG_InitTriggerVis( void );
+void CG_DrawTriggerVis( void );
+void CG_DrawTriggerLabels( void );
+// shared helpers used by cg_esp.c
+qboolean TrigVis_WorldToScreen( vec3_t worldPos, float *sx, float *sy );
+void TrigVis_DrawBox( vec3_t mins, vec3_t maxs, byte fillColor[4],
+					  byte borderColor[4], qhandle_t fillShader,
+					  qhandle_t borderShader );
+extern qhandle_t tvShader;
+extern qhandle_t tvBorderShader;
+
+//
+// cg_esp.c
+//
+void CG_InitEnemyESP( void );
+void CG_DrawEnemyESP( void );
+void CG_DrawEnemyESPLabels( void );
+void CG_DrawItemESP( void );
+void CG_DrawItemESPLabels( void );
+
+//
+// cg_movement.c
+//
+void CG_DrawPositionHUD( void );
+void CG_UpdateJumpStats( void );
+void CG_DrawJumpStats( void );
+void CG_UpdateMovementBar( void );
+void CG_DrawMovementBar( void );
 
 
 //
@@ -2010,6 +2120,7 @@ void CG_WeaponBank_f( void );
 void CG_WeaponSuggest( int weap );
 
 void CG_FinishWeaponChange( int lastweap, int newweap );
+void CG_SetSniperZoom( int lastweap, int newweap );
 
 void CG_RegisterWeapon( int weaponNum );
 void CG_RegisterItemVisuals( int itemNum );
@@ -2224,6 +2335,7 @@ void CG_InitConsoleCommands( void );
 void CG_ExecuteNewServerCommands( int latestSequence );
 void CG_ParseServerinfo( void );
 void CG_SetConfigValues( void );
+void CG_ParseFog( void );
 void CG_ShaderStateChanged( void );
 void CG_SendMoveSpeed( animation_t *animList, int numAnims, char *modelName );
 
