@@ -42,8 +42,9 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #define PRODUCT_NAME	"RTCW"
-#define PRODUCT_VERSION "1.45a"
+#define PRODUCT_VERSION "1.45b"
 #define PRODUCT_DATE __DATE__
+#define SP_VERSION PRODUCT_VERSION
 
 
 #define Q3_VERSION PRODUCT_NAME " " PRODUCT_VERSION
@@ -1318,8 +1319,8 @@ typedef struct playerState_s {
 #define WBUTTON_LEANLEFT    16
 #define WBUTTON_LEANRIGHT   32
 
-// unused
-#define WBUTTON_EXTRA6      64
+// HL1-style bhop: separate crouch flag so duck can be detected independently of upmove
+#define WBUTTON_CROUCH      64
 #define WBUTTON_EXTRA7      128
 //----(SA) end
 

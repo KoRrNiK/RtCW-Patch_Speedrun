@@ -2078,6 +2078,7 @@ void Com_Init( char *commandLine ) {
 	s = va("%s - %s", Q3_VERSION, PRODUCT_DATE);
 
 	com_version = Cvar_Get( "version", s, CVAR_ROM | CVAR_SERVERINFO );
+	Cvar_Get( "sp_version", SP_VERSION, CVAR_ROM | CVAR_SERVERINFO );
 
 	Sys_Init();
 	Netchan_Init( Com_Milliseconds() & 0xffff );    // pick a port value that should be nice and random
