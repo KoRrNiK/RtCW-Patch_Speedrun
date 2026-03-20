@@ -3071,6 +3071,11 @@ void CG_AddViewWeapon(playerState_t* ps) {
 		fovOffset[0] = -0.2 * (cg.fov - 90) * cg.refdef.fov_x / cg.fov;
 	}
 
+	// Left-hand weapon mode: mirror offsets
+	if (cg_drawGun.integer == 2) {
+		fovOffset[1] = -fovOffset[1];
+	}
+
 
 
 	
@@ -3112,6 +3117,11 @@ void CG_AddViewWeapon(playerState_t* ps) {
 		gunoff[1] = cg_gun_y.value;
 		gunoff[2] = cg_gun_z.value;
 
+		// Left-hand weapon mode: mirror gun position and model
+		if (cg_drawGun.integer == 2) {
+			gunoff[1] = -gunoff[1];
+		}
+
 		//----(SA)	removed
 
 		VectorMA(hand.origin, (gunoff[0] + fovOffset[0]), cg.refdef.viewaxis[0], hand.origin);
@@ -3131,6 +3141,14 @@ void CG_AddViewWeapon(playerState_t* ps) {
 
 		hand.hModel = weapon->handsModel;
 		hand.renderfx = RF_DEPTHHACK | RF_FIRST_PERSON | RF_MINLIGHT;   //----(SA)
+
+		// Left-hand weapon mode: mirror the Y axis for model flip
+		// Must be done AFTER renderfx base assignment to preserve RF_LEFTHAND
+		if (cg_drawGun.integer == 2) {
+			VectorNegate(hand.axis[1], hand.axis[1]);
+			hand.nonNormalizedAxes = qtrue;
+			hand.renderfx |= RF_LEFTHAND;
+		}
 
 		// add everything onto the hand
 		CG_AddPlayerWeapon(&hand, ps, &cg.predictedPlayerEntity);

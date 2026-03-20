@@ -124,11 +124,19 @@ void GL_BindMultitexture( image_t *image0, GLuint env0, image_t *image1, GLuint 
 ** GL_Cull
 */
 void GL_Cull( int cullType ) {
+	qboolean mirrored;
+
 	if ( glState.faceCulling == cullType ) {
 		return;
 	}
 
 	glState.faceCulling = cullType;
+
+	mirrored = backEnd.viewParms.isMirror;
+	/* Flip face culling for left-hand weapon model */
+	if ( backEnd.currentEntity && ( backEnd.currentEntity->e.renderfx & RF_LEFTHAND ) ) {
+		mirrored = !mirrored;
+	}
 
 	if ( cullType == CT_TWO_SIDED ) {
 		qglDisable( GL_CULL_FACE );
@@ -137,7 +145,7 @@ void GL_Cull( int cullType ) {
 		qglEnable( GL_CULL_FACE );
 
 		if ( cullType == CT_BACK_SIDED ) {
-			if ( backEnd.viewParms.isMirror ) {
+			if ( mirrored ) {
 				qglCullFace( GL_FRONT );
 			} else
 			{
@@ -145,7 +153,7 @@ void GL_Cull( int cullType ) {
 			}
 		} else
 		{
-			if ( backEnd.viewParms.isMirror ) {
+			if ( mirrored ) {
 				qglCullFace( GL_BACK );
 			} else
 			{
@@ -984,6 +992,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		if ( entityNum != oldEntityNum ) {
 			depthRange = qfalse;
 
+			// invalidate face culling when leaving a left-hand entity
+			if ( backEnd.currentEntity && ( backEnd.currentEntity->e.renderfx & RF_LEFTHAND ) ) {
+				glState.faceCulling = -1;
+			}
+
 			if ( entityNum != ENTITYNUM_WORLD ) {
 				backEnd.currentEntity = &backEnd.refdef.entities[entityNum];
 				backEnd.refdef.floatTime = originalTime - backEnd.currentEntity->e.shaderTime;
@@ -1003,6 +1016,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				if ( backEnd.currentEntity->e.renderfx & RF_DEPTHHACK ) {
 					// hack the depth range to prevent view model from poking into walls
 					depthRange = qtrue;
+				}
+
+				// invalidate face culling so GL_Cull re-evaluates RF_LEFTHAND
+				if ( backEnd.currentEntity->e.renderfx & RF_LEFTHAND ) {
+					glState.faceCulling = -1;
 				}
 			} else {
 				backEnd.currentEntity = &tr.worldEntity;
