@@ -3035,6 +3035,64 @@ static void CreateInternalShaders( void ) {
 	Q_strncpyz( shader.name, "<stencil shadow>", sizeof( shader.name ) );
 	shader.sort = SS_STENCIL_SHADOW;
 	tr.shadowShader = FinishShader();
+
+	// trigger volume fill shader - transparent, two-sided, no depth write
+	// NOTE: must use LIGHTMAP_2D so trap_R_RegisterShader() can find it
+	memset( &shader, 0, sizeof( shader ) );
+	memset( &stages, 0, sizeof( stages ) );
+	Q_strncpyz( shader.name, "triggerVisAlpha", sizeof( shader.name ) );
+	shader.lightmapIndex = LIGHTMAP_2D;
+	shader.cullType = CT_TWO_SIDED;
+	shader.sort = SS_SEE_THROUGH;
+	stages[0].bundle[0].image[0] = tr.whiteImage;
+	stages[0].active = qtrue;
+	stages[0].rgbGen = CGEN_VERTEX;
+	stages[0].alphaGen = AGEN_VERTEX;
+	stages[0].stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
+	FinishShader();
+
+	// trigger border glow shader - additive, two-sided, no depth write, rendered on top
+	memset( &shader, 0, sizeof( shader ) );
+	memset( &stages, 0, sizeof( stages ) );
+	Q_strncpyz( shader.name, "triggerVisBorderGlow", sizeof( shader.name ) );
+	shader.lightmapIndex = LIGHTMAP_2D;
+	shader.cullType = CT_TWO_SIDED;
+	shader.sort = SS_BLEND1;
+	stages[0].bundle[0].image[0] = tr.whiteImage;
+	stages[0].active = qtrue;
+	stages[0].rgbGen = CGEN_VERTEX;
+	stages[0].alphaGen = AGEN_VERTEX;
+	stages[0].stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE;
+	FinishShader();
+
+	// ESP wall glow - additive, two-sided, NO depth test (visible through walls)
+	// Uses entity RGBA for color control from cgame
+	memset( &shader, 0, sizeof( shader ) );
+	memset( &stages, 0, sizeof( stages ) );
+	Q_strncpyz( shader.name, "espBorderGlow", sizeof( shader.name ) );
+	shader.lightmapIndex = LIGHTMAP_2D;
+	shader.cullType = CT_TWO_SIDED;
+	shader.sort = SS_NEAREST;
+	stages[0].bundle[0].image[0] = tr.whiteImage;
+	stages[0].active = qtrue;
+	stages[0].rgbGen = CGEN_ENTITY;
+	stages[0].alphaGen = AGEN_ENTITY;
+	stages[0].stateBits = GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE;
+	FinishShader();
+
+	// ESP visible glow - additive, two-sided, WITH depth test (only visible parts)
+	memset( &shader, 0, sizeof( shader ) );
+	memset( &stages, 0, sizeof( stages ) );
+	Q_strncpyz( shader.name, "espGlowVisible", sizeof( shader.name ) );
+	shader.lightmapIndex = LIGHTMAP_2D;
+	shader.cullType = CT_TWO_SIDED;
+	shader.sort = SS_NEAREST;
+	stages[0].bundle[0].image[0] = tr.whiteImage;
+	stages[0].active = qtrue;
+	stages[0].rgbGen = CGEN_ENTITY;
+	stages[0].alphaGen = AGEN_ENTITY;
+	stages[0].stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE;
+	FinishShader();
 }
 
 static void CreateExternalShaders( void ) {
@@ -3098,6 +3156,25 @@ void R_PurgeShaders( int count ) {
 	sh = (shader_t **)&backupShaders;
 	for ( i = lastPurged; i < numBackupShaders; i++, sh++ ) {
 		if ( *sh ) {
+			// remove from backupHashTable before freeing to avoid dangling pointers
+			{
+				long hash = generateHashValue( ( *sh )->name );
+				shader_t *entry = backupHashTable[hash];
+				shader_t *prev = NULL;
+				while ( entry ) {
+					if ( entry == *sh ) {
+						if ( !prev ) {
+							backupHashTable[hash] = entry->next;
+						} else {
+							prev->next = entry->next;
+						}
+						break;
+					}
+					prev = entry;
+					entry = entry->next;
+				}
+			}
+
 			// free all memory associated with this shader
 			for ( j = 0 ; j < ( *sh )->numUnfoggedPasses ; j++ ) {
 				if ( !( *sh )->stages[j] ) {

@@ -1161,12 +1161,12 @@ void R_Register( void ) {
 
 	// Ridah
 	// show_bug.cgi?id=440
-	// NOTE TTimo: r_cache is disabled by default in SP
-	ri.Cvar_Set( "r_cache", "0" );
-	r_cache = ri.Cvar_Get( "r_cache", "1", CVAR_LATCH );  // leaving it as this for backwards compability. but it caches models and shaders also
-// (SA) disabling cacheshaders
-	ri.Cvar_Set( "r_cacheShaders", "0" );
-	r_cacheShaders = ri.Cvar_Get( "r_cacheShaders", "0", CVAR_LATCH );
+	// Asset caching:  backs up models, shaders and images during
+	// RE_Shutdown so subsequent map loads can restore them from RAM
+	// instead of re-reading from disk.  Originally disabled in SP
+	// "to be safe", but significant speedup for demo map transitions.
+	r_cache = ri.Cvar_Get( "r_cache", "1", CVAR_LATCH );
+	r_cacheShaders = ri.Cvar_Get( "r_cacheShaders", "1", CVAR_LATCH );
 //----(SA)	end
 
 	r_cacheModels = ri.Cvar_Get( "r_cacheModels", "1", CVAR_LATCH );

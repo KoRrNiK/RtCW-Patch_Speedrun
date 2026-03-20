@@ -2153,6 +2153,13 @@ void RE_LoadWorldMap( const char *name ) {
 	skyboxportal = 0;
 
 	if ( tr.worldMapLoaded ) {
+		/* Same-map fast-rewind during demo playback: the renderer was
+		   never torn down, so the world BSP is still fully loaded.
+		   Just return silently - all surfaces, shaders and lightmaps
+		   are still valid. */
+		if ( !strcmp( s_worldData.name, name ) ) {
+			return;
+		}
 		ri.Error( ERR_DROP, "ERROR: attempted to redundantly load world map\n" );
 	}
 
@@ -2217,29 +2224,37 @@ void RE_LoadWorldMap( const char *name ) {
 	}
 
 	// load into heap
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadShaders( &header->lumps[LUMP_SHADERS] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadPlanes( &header->lumps[LUMP_PLANES] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadFogs( &header->lumps[LUMP_FOGS], &header->lumps[LUMP_BRUSHES], &header->lumps[LUMP_BRUSHSIDES] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadSurfaces( &header->lumps[LUMP_SURFACES], &header->lumps[LUMP_DRAWVERTS], &header->lumps[LUMP_DRAWINDEXES] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadMarksurfaces( &header->lumps[LUMP_LEAFSURFACES] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadNodesAndLeafs( &header->lumps[LUMP_NODES], &header->lumps[LUMP_LEAFS] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadSubmodels( &header->lumps[LUMP_MODELS] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadVisibility( &header->lumps[LUMP_VISIBILITY] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadEntities( &header->lumps[LUMP_ENTITIES] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID] );
-	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+	// When loading during demo playback (cl_demoMapLoading 1) skip
+	// the updatescreen calls - each one forces a full frame render
+	// just to show the loading bar, which adds significant overhead.
+	{
+		cvar_t *demoLoad = ri.Cvar_Get( "cl_demoMapLoading", "0", 0 );
+		qboolean showUpdate = !demoLoad->integer;
+
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadShaders( &header->lumps[LUMP_SHADERS] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadPlanes( &header->lumps[LUMP_PLANES] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadFogs( &header->lumps[LUMP_FOGS], &header->lumps[LUMP_BRUSHES], &header->lumps[LUMP_BRUSHSIDES] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadSurfaces( &header->lumps[LUMP_SURFACES], &header->lumps[LUMP_DRAWVERTS], &header->lumps[LUMP_DRAWINDEXES] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadMarksurfaces( &header->lumps[LUMP_LEAFSURFACES] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadNodesAndLeafs( &header->lumps[LUMP_NODES], &header->lumps[LUMP_LEAFS] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadSubmodels( &header->lumps[LUMP_MODELS] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadVisibility( &header->lumps[LUMP_VISIBILITY] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadEntities( &header->lumps[LUMP_ENTITIES] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+		R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID] );
+		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
+	}
 
 	s_worldData.dataSize = (byte *)ri.Hunk_Alloc( 0, h_low ) - startMarker;
 

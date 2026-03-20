@@ -3502,8 +3502,17 @@ qboolean R_TouchImage( image_t *inImage ) {
 	}
 
 	hash = inImage->hash;
+
+	// Safety: if the image was already freed by R_PurgeBackupImages,
+	// the hash field contains garbage from the freed heap block.
+	// A garbage hash used as an array index causes an access violation.
+	if ( hash < 0 || hash >= FILE_HASH_SIZE ) {
+		return qfalse;
+	}
+
 	name = inImage->imgName;
 
+	// look for this image in the backup hash table
 	bImage = backupHashTable[hash];
 	bImagePrev = NULL;
 	while ( bImage ) {
@@ -3537,7 +3546,20 @@ qboolean R_TouchImage( image_t *inImage ) {
 		bImage = bImage->next;
 	}
 
-	return qtrue;
+	// Not in backup - check if already in the current hashTable
+	// (may have been touched by a previous R_TouchImage call).
+	bImage = hashTable[hash];
+	while ( bImage ) {
+		if ( bImage == inImage ) {
+			return qtrue;
+		}
+		bImage = bImage->next;
+	}
+
+	// Image is in neither table - it was purged and freed.
+	// Return qfalse so the calling shader is rebuilt from scratch
+	// instead of using a dangling pointer.
+	return qfalse;
 }
 
 /*
