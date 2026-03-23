@@ -34,6 +34,257 @@ If you have questions concerning this license or the applicable additional terms
 extern int notebookModel;
 //========================
 
+/* =====================================================================
+   Ghost Replay - translucent player model from best-split recording
+   ===================================================================== */
+
+static qboolean  ghost_initialized = qfalse;
+static vmCvar_t  ghost_visible;
+static vmCvar_t  ghost_x, ghost_y, ghost_z;
+static vmCvar_t  ghost_yaw;
+static vmCvar_t  ghost_speed;
+static qhandle_t ghostShader;
+
+/* Persistent animation state for smooth frame cycling */
+static int       ghost_legsAnim  = -1;   /* current anim index */
+static int       ghost_torsoAnim = -1;
+static int       ghost_legsStartTime  = 0;
+static int       ghost_torsoStartTime = 0;
+
+static void CG_InitGhost( void ) {
+	trap_Cvar_Register( &ghost_visible, "ls_ghost_visible", "0", 0 );
+	trap_Cvar_Register( &ghost_x, "ls_ghost_x", "0", 0 );
+	trap_Cvar_Register( &ghost_y, "ls_ghost_y", "0", 0 );
+	trap_Cvar_Register( &ghost_z, "ls_ghost_z", "0", 0 );
+	trap_Cvar_Register( &ghost_yaw, "ls_ghost_yaw", "0", 0 );
+	trap_Cvar_Register( &ghost_speed, "ls_ghost_speed", "0", 0 );
+	ghostShader = trap_R_RegisterShader( "ghostPlayer" );
+	ghost_initialized = qtrue;
+}
+
+/*
+ CG_GhostAnimFrames - resolve animation index to frame/oldframe/backlerp
+ using the same logic as CG_RunLerpFrame but without centity state.
+*/
+static void CG_GhostAnimFrames( clientInfo_t *ci, int animIdx, int *animState,
+								int *startTime, int *outFrame, int *outOldFrame,
+								float *outBacklerp ) {
+	animation_t *anim;
+	int f, elapsed, frameLerp;
+
+	if ( !ci->modelInfo ) {
+		*outFrame = *outOldFrame = 0;
+		*outBacklerp = 0.0f;
+		return;
+	}
+
+	animIdx &= ~ANIM_TOGGLEBIT;
+	if ( animIdx < 0 || animIdx >= ci->modelInfo->numAnimations ) {
+		*outFrame = *outOldFrame = 0;
+		*outBacklerp = 0.0f;
+		return;
+	}
+
+	/* Detect animation change > reset start time */
+	if ( *animState != animIdx ) {
+		*animState = animIdx;
+		*startTime = cg.time;
+	}
+
+	anim = &ci->modelInfo->animations[animIdx];
+	if ( !anim->frameLerp || anim->numFrames <= 0 ) {
+		*outFrame = *outOldFrame = anim->firstFrame;
+		*outBacklerp = 0.0f;
+		return;
+	}
+
+	frameLerp = anim->frameLerp;
+	elapsed = cg.time - *startTime;
+	if ( elapsed < 0 ) elapsed = 0;
+
+	f = elapsed / frameLerp;
+
+	/* Handle looping */
+	if ( f >= anim->numFrames ) {
+		if ( anim->loopFrames ) {
+			f = ( f - anim->numFrames ) % anim->loopFrames
+				+ ( anim->numFrames - anim->loopFrames );
+		} else {
+			f = anim->numFrames - 1;
+		}
+	}
+
+	*outFrame = anim->firstFrame + f;
+
+	/* Compute oldframe (previous frame) for lerp */
+	{
+		int prev = f - 1;
+		if ( prev < 0 ) prev = 0;
+		if ( prev >= anim->numFrames ) {
+			if ( anim->loopFrames ) {
+				prev = ( prev - anim->numFrames ) % anim->loopFrames
+					   + ( anim->numFrames - anim->loopFrames );
+			} else {
+				prev = anim->numFrames - 1;
+			}
+		}
+		*outOldFrame = anim->firstFrame + prev;
+	}
+
+	/* Backlerp: fraction within current frame interval */
+	{
+		int intraFrame = elapsed % frameLerp;
+		*outBacklerp = 1.0f - (float)intraFrame / (float)frameLerp;
+	}
+}
+
+static void CG_AddGhost( void ) {
+	refEntity_t    legs, torso, head;
+	clientInfo_t   *ci;
+	vec3_t         ghostOrigin, lightOrigin;
+	vec3_t         legsAngles, torsoAngles;
+	float          yaw, speed;
+	int            legsAnimIdx, torsoAnimIdx;
+	int            legsFrame, legsOldFrame, torsoFrame, torsoOldFrame;
+	float          legsBacklerp, torsoBacklerp;
+
+	if ( !ghost_initialized ) {
+		CG_InitGhost();
+	}
+
+	trap_Cvar_Update( &ghost_visible );
+	if ( !ghost_visible.integer ) return;
+
+	trap_Cvar_Update( &ghost_x );
+	trap_Cvar_Update( &ghost_y );
+	trap_Cvar_Update( &ghost_z );
+	trap_Cvar_Update( &ghost_yaw );
+	trap_Cvar_Update( &ghost_speed );
+
+	/* Use the local player's model */
+	ci = &cgs.clientinfo[cg.clientNum];
+	if ( !ci->legsModel || !ci->torsoModel || !ci->headModel ) return;
+
+	ghostOrigin[0] = ghost_x.value;
+	ghostOrigin[1] = ghost_y.value;
+	ghostOrigin[2] = ghost_z.value;
+	yaw   = ghost_yaw.value;
+	speed = ghost_speed.value;
+
+	VectorCopy( ghostOrigin, lightOrigin );
+	lightOrigin[2] += 31.0f;
+
+	/* Choose animation based on speed */
+	if ( speed > 20.0f ) {
+		legsAnimIdx  = LEGS_RUN;
+		torsoAnimIdx = TORSO_MOVE;
+	} else {
+		legsAnimIdx  = LEGS_IDLE;
+		torsoAnimIdx = TORSO_STAND;
+	}
+
+	/* Calculate animation frames */
+	CG_GhostAnimFrames( ci, legsAnimIdx, &ghost_legsAnim,
+						&ghost_legsStartTime,
+						&legsFrame, &legsOldFrame, &legsBacklerp );
+	CG_GhostAnimFrames( ci, torsoAnimIdx, &ghost_torsoAnim,
+						&ghost_torsoStartTime,
+						&torsoFrame, &torsoOldFrame, &torsoBacklerp );
+
+	/* ---- LEGS ---- */
+	memset( &legs, 0, sizeof( legs ) );
+	legs.reType      = RT_MODEL;
+	legs.hModel      = ci->legsModel;
+	legs.customSkin  = ci->legsSkin;
+	legs.customShader = ghostShader;
+	legs.renderfx    = RF_NOSHADOW | RF_LIGHTING_ORIGIN;
+
+	legs.shaderRGBA[0] = 80;
+	legs.shaderRGBA[1] = 180;
+	legs.shaderRGBA[2] = 255;
+	legs.shaderRGBA[3] = 60;
+
+	VectorCopy( ghostOrigin, legs.origin );
+	VectorCopy( legs.origin, legs.oldorigin );
+	VectorCopy( lightOrigin, legs.lightingOrigin );
+
+	/* Set up legs yaw rotation */
+	VectorSet( legsAngles, 0, yaw, 0 );
+	AnglesToAxis( legsAngles, legs.axis );
+
+	if ( ci->playermodelScale[0] ) {
+		VectorScale( legs.axis[0], ci->playermodelScale[0], legs.axis[0] );
+		VectorScale( legs.axis[1], ci->playermodelScale[1], legs.axis[1] );
+		VectorScale( legs.axis[2], ci->playermodelScale[2], legs.axis[2] );
+		legs.nonNormalizedAxes = qtrue;
+	}
+
+	legs.frame    = legsFrame;
+	legs.oldframe = legsOldFrame;
+	legs.backlerp = legsBacklerp;
+
+	if ( !ci->isSkeletal ) {
+		trap_R_AddRefEntityToScene( &legs );
+	}
+
+	/* ---- TORSO ---- */
+	memset( &torso, 0, sizeof( torso ) );
+	torso.reType      = RT_MODEL;
+	torso.hModel      = ci->torsoModel;
+	torso.customSkin  = ci->torsoSkin;
+	torso.customShader = ghostShader;
+	torso.renderfx    = RF_NOSHADOW | RF_LIGHTING_ORIGIN;
+
+	torso.shaderRGBA[0] = 80;
+	torso.shaderRGBA[1] = 180;
+	torso.shaderRGBA[2] = 255;
+	torso.shaderRGBA[3] = 60;
+
+	VectorCopy( lightOrigin, torso.lightingOrigin );
+
+	VectorSet( torsoAngles, 0, yaw, 0 );
+	AnglesToAxis( torsoAngles, torso.axis );
+
+	torso.frame    = torsoFrame;
+	torso.oldframe = torsoOldFrame;
+	torso.backlerp = torsoBacklerp;
+
+	if ( !ci->isSkeletal ) {
+		CG_PositionEntityOnTag( &torso, &legs, "tag_torso", 0, NULL );
+		trap_R_AddRefEntityToScene( &torso );
+	} else {
+		/* Skeletal: combined legs+torso */
+		legs.torsoFrame    = torsoFrame;
+		legs.oldTorsoFrame = torsoOldFrame;
+		legs.torsoBacklerp = torsoBacklerp;
+		memcpy( legs.torsoAxis, torso.axis, sizeof( torso.axis ) );
+		trap_R_AddRefEntityToScene( &legs );
+		torso = legs;
+	}
+
+	/* ---- HEAD ---- */
+	memset( &head, 0, sizeof( head ) );
+	head.reType      = RT_MODEL;
+	head.hModel      = ci->headModel;
+	head.customSkin  = ci->headSkin;
+	head.customShader = ghostShader;
+	head.renderfx    = RF_NOSHADOW | RF_LIGHTING_ORIGIN;
+
+	head.shaderRGBA[0] = 80;
+	head.shaderRGBA[1] = 180;
+	head.shaderRGBA[2] = 255;
+	head.shaderRGBA[3] = 60;
+
+	VectorCopy( lightOrigin, head.lightingOrigin );
+
+	head.frame    = 0;
+	head.oldframe = 0;
+	head.backlerp = 0.0f;
+
+	CG_PositionRotatedEntityOnTag( &head, &torso, "tag_head" );
+	trap_R_AddRefEntityToScene( &head );
+}
+
 /*
 =============================================================================
 
@@ -1627,6 +1878,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	// build the render lists
 	if ( !cg.hyperspace ) {
 		CG_AddPacketEntities();         // adter calcViewValues, so predicted player state is correct
+		CG_AddGhost();                  // ghost replay from best split
 		CG_AddMarks();
 
 		DEBUGTIME

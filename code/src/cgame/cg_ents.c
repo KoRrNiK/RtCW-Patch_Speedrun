@@ -2694,7 +2694,7 @@ void CG_AddPacketEntities( void ) {
 		float speed;
 		vec3_t hvel;
 
-		/* Copy player velocity → trDelta so CG_PlayerAngles can
+		/* Copy player velocity > trDelta so CG_PlayerAngles can
 		   compute body lean / roll from actual movement speed. */
 		VectorCopy( ps->velocity, es->pos.trDelta );
 
