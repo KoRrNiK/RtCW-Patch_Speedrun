@@ -762,6 +762,9 @@ Z_Malloc
 */
 void *Z_Malloc( int size ) {
 	void *buf = malloc( size );
+	if ( !buf ) {
+		Com_Error( ERR_FATAL, "Z_Malloc: failed on allocation of %i bytes", size );
+	}
 	Com_Memset( buf, 0, size );
 	return buf;
 }
@@ -2317,9 +2320,7 @@ void Com_Frame( void ) {
 	//
 	// main event loop
 	//
-	if ( com_speeds->integer ) {
-		timeBeforeFirstEvents = Sys_Milliseconds();
-	}
+	timeBeforeFirstEvents = Sys_Milliseconds();
 
 	// we may want to spin here if things are going too fast
 	if ( !com_dedicated->integer && com_maxfps->integer > 0 && !com_timedemo->integer ) {
@@ -2327,13 +2328,44 @@ void Com_Frame( void ) {
 	} else {
 		minMsec = 1;
 	}
-	do {
-		com_frameTime = Com_EventLoop();
-		if ( lastTime > com_frameTime ) {
-			lastTime = com_frameTime;       // possible on first frame
+
+	// Hybrid frame limiter: original do-while loop structure (proven stable)
+	// with Sleep(1) added to save CPU when far from target, and microsecond
+	// precision for the exit condition at high FPS (avoids integer-ms quantization).
+	{
+		static __int64 lastFrameStartUs = 0;
+		__int64 targetUs, nowUs, elapsedUs;
+		qboolean useUsExit;  // use microsecond exit instead of integer ms
+
+		nowUs = Sys_Microseconds();
+		if ( lastFrameStartUs == 0 ) {
+			lastFrameStartUs = nowUs;
 		}
-		msec = com_frameTime - lastTime;
-	} while ( msec < minMsec );
+
+		// Only use microsecond exit for non-dedicated, fps-limited, non-timedemo
+		useUsExit = ( !com_dedicated->integer && com_maxfps->integer > 0 && !com_timedemo->integer );
+		targetUs = useUsExit ? ( 1000000 / com_maxfps->integer ) : 1000;
+
+		do {
+			// Sleep(1) to save CPU when more than 2ms remain
+			if ( useUsExit ) {
+				elapsedUs = Sys_Microseconds() - lastFrameStartUs;
+				if ( ( targetUs - elapsedUs ) > 2000 ) {
+					Sys_Sleep( 1 );
+				}
+			}
+
+			com_frameTime = Com_EventLoop();
+			if ( lastTime > com_frameTime ) {
+				lastTime = com_frameTime;       // possible on first frame
+			}
+			msec = com_frameTime - lastTime;
+		} while ( useUsExit
+			? ( ( Sys_Microseconds() - lastFrameStartUs ) < targetUs )
+			: ( msec < minMsec ) );
+
+		lastFrameStartUs = Sys_Microseconds();
+	}
 	Cbuf_Execute();
 
 	lastTime = com_frameTime;
@@ -2345,9 +2377,7 @@ void Com_Frame( void ) {
 	//
 	// server side
 	//
-	if ( com_speeds->integer ) {
-		timeBeforeServer = Sys_Milliseconds();
-	}
+	timeBeforeServer = Sys_Milliseconds();
 
 	SV_Frame( msec );
 
@@ -2376,9 +2406,7 @@ void Com_Frame( void ) {
 		// run event loop a second time to get server to client packets
 		// without a frame of latency
 		//
-		if ( com_speeds->integer ) {
-			timeBeforeEvents = Sys_Milliseconds();
-		}
+		timeBeforeEvents = Sys_Milliseconds();
 		Com_EventLoop();
 		Cbuf_Execute();
 
@@ -2386,15 +2414,11 @@ void Com_Frame( void ) {
 		//
 		// client side
 		//
-		if ( com_speeds->integer ) {
-			timeBeforeClient = Sys_Milliseconds();
-		}
+		timeBeforeClient = Sys_Milliseconds();
 
 		CL_Frame( msec );
 
-		if ( com_speeds->integer ) {
-			timeAfter = Sys_Milliseconds();
-		}
+		timeAfter = Sys_Milliseconds();
 	}
 
 	//
@@ -2412,6 +2436,12 @@ void Com_Frame( void ) {
 
 		Com_Printf( "frame:%i all:%3i sv:%3i ev:%3i cl:%3i gm:%3i rf:%3i bk:%3i\n",
 					com_frameNumber, all, sv, ev, cl, time_game, time_frontend, time_backend );
+	}
+
+	// Performance profiler: record frame timing
+	if ( !com_dedicated->integer ) {
+		SCR_PerfRecordFrame( timeBeforeFirstEvents, timeBeforeServer,
+							 timeBeforeEvents, timeBeforeClient, timeAfter );
 	}
 
 	//
@@ -2850,7 +2880,12 @@ PrintMatches
 */
 static void PrintMatches( const char *s ) {
 	if ( !Q_stricmpn( s, shortestMatch, strlen( shortestMatch ) ) ) {
-		Com_Printf( "    %s\n", s );
+		char *value = Cvar_VariableString( s );
+		if ( value && value[0] ) {
+			Com_Printf( "    %s = \"%s\"\n", s, value );
+		} else {
+			Com_Printf( "    %s\n", s );
+		}
 	}
 }
 

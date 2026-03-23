@@ -43,20 +43,66 @@ If you have questions concerning this license or the applicable additional terms
 /*
 ================
 Sys_Milliseconds
+
+Uses QueryPerformanceCounter for high-resolution timing.
+Falls back to timeGetTime() if QPC is unavailable.
 ================
 */
+static LARGE_INTEGER sys_qpcFreq;
+static LARGE_INTEGER sys_qpcBase;
+static qboolean sys_qpcValid = qfalse;
 int sys_timeBase;
+
 int Sys_Milliseconds( void ) {
-	int sys_curtime;
 	static qboolean initialized = qfalse;
 
 	if ( !initialized ) {
-		sys_timeBase = timeGetTime();
+		if ( QueryPerformanceFrequency( &sys_qpcFreq ) && sys_qpcFreq.QuadPart > 0 ) {
+			QueryPerformanceCounter( &sys_qpcBase );
+			sys_qpcValid = qtrue;
+		} else {
+			sys_timeBase = timeGetTime();
+		}
 		initialized = qtrue;
 	}
-	sys_curtime = timeGetTime() - sys_timeBase;
 
-	return sys_curtime;
+	if ( sys_qpcValid ) {
+		LARGE_INTEGER now;
+		QueryPerformanceCounter( &now );
+		return (int)( ( now.QuadPart - sys_qpcBase.QuadPart ) * 1000 / sys_qpcFreq.QuadPart );
+	}
+
+	return timeGetTime() - sys_timeBase;
+}
+
+/*
+================
+Sys_Microseconds
+
+Returns time in microseconds since engine start.
+Used for precise frame pacing. Only valid after Sys_Milliseconds has been called.
+================
+*/
+__int64 Sys_Microseconds( void ) {
+	LARGE_INTEGER now;
+	if ( !sys_qpcValid ) {
+		return (__int64)Sys_Milliseconds() * 1000;
+	}
+	QueryPerformanceCounter( &now );
+	return ( now.QuadPart - sys_qpcBase.QuadPart ) * 1000000 / sys_qpcFreq.QuadPart;
+}
+
+/*
+================
+Sys_Sleep
+
+Platform sleep wrapper for frame pacing.
+================
+*/
+void Sys_Sleep( int msec ) {
+	if ( msec > 0 ) {
+		Sleep( msec );
+	}
 }
 
 /*

@@ -741,6 +741,11 @@ extern int time_backend;            // renderer backend time
 extern int com_frameTime;
 extern int com_frameMsec;
 
+// cl_perf.c - performance profiler (called from Com_Frame)
+void SCR_PerfRecordFrame( int tBeforeFirst, int tBeforeServer,
+                         int tBeforeEvents, int tBeforeClient,
+                         int tAfterClient );
+
 extern qboolean com_errorEntered;
 
 extern fileHandle_t com_journalFile;
@@ -969,7 +974,9 @@ qboolean Sys_IsCtrlDown( void );
 
 // Sys_Milliseconds should only be used for profiling purposes,
 // any game related timing information should come from event timestamps
-int     Sys_Milliseconds( void );
+int       Sys_Milliseconds( void );
+__int64   Sys_Microseconds( void );
+void      Sys_Sleep( int msec );
 
 void    Sys_SnapVector( float *v );
 
