@@ -194,16 +194,30 @@ int MSG_ReadBits( msg_t *msg, int bits ) {
 
 	if ( msg->oob ) {
 		if ( bits == 8 ) {
+			if ( msg->readcount + 1 > msg->cursize ) {
+				msg->readcount = msg->cursize + 1;
+				return 0;
+			}
 			value = msg->data[msg->readcount];
 			msg->readcount += 1;
 			msg->bit += 8;
 		} else if ( bits == 16 ) {
-			unsigned short *sp = (unsigned short *)&msg->data[msg->readcount];
+			unsigned short *sp;
+			if ( msg->readcount + 2 > msg->cursize ) {
+				msg->readcount = msg->cursize + 1;
+				return 0;
+			}
+			sp = (unsigned short *)&msg->data[msg->readcount];
 			value = LittleShort( *sp );
 			msg->readcount += 2;
 			msg->bit += 16;
 		} else if ( bits == 32 ) {
-			unsigned int *ip = (unsigned int *)&msg->data[msg->readcount];
+			unsigned int *ip;
+			if ( msg->readcount + 4 > msg->cursize ) {
+				msg->readcount = msg->cursize + 1;
+				return 0;
+			}
+			ip = (unsigned int *)&msg->data[msg->readcount];
 			value = LittleLong( *ip );
 			msg->readcount += 4;
 			msg->bit += 32;
