@@ -1004,7 +1004,12 @@ PrintMatches
 */
 static void PrintMatches( const char *s ) {
 	if ( !Q_stricmpn( s, shortestMatch, strlen( shortestMatch ) ) ) {
-		Com_Printf( "    %s\n", s );
+		char *value = Cvar_VariableString( s );
+		if ( value && value[0] ) {
+			Com_Printf( "    %s = \"%s\"\n", s, value );
+		} else {
+			Com_Printf( "    %s\n", s );
+		}
 	}
 }
 
@@ -1922,6 +1927,13 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 //					if(VM_Call( uivm, UI_GET_ACTIVE_MENU) == UIMENU_HELP)
 //						key = K_ESCAPE;
 ///				}
+
+				/* LiveSplit commands work even while in UI/menu */
+				if ( !Q_strncmp( kb, "livesplit_", 10 ) ) {
+					Cbuf_AddText( kb );
+					Cbuf_AddText( "\n" );
+					return;
+				}
 			}
 		}
 
