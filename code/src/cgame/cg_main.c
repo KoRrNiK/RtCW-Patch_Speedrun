@@ -272,6 +272,16 @@ vmCvar_t cg_showAIState;
 vmCvar_t bh_movement;
 vmCvar_t bh_autojump;
 vmCvar_t cg_drawKeys;
+vmCvar_t ks_mouse;
+vmCvar_t cg_crosshairType;
+vmCvar_t cg_crosshairColorR;
+vmCvar_t cg_crosshairColorG;
+vmCvar_t cg_crosshairColorB;
+vmCvar_t cg_crosshairStroke;
+vmCvar_t cg_crosshairStatic;
+vmCvar_t cg_crosshairGap;
+vmCvar_t cg_crosshairThickness;
+vmCvar_t cg_crosshairSpread;
 vmCvar_t cg_drawTriggers;
 vmCvar_t cg_drawEnemies;
 vmCvar_t cg_drawItems;
@@ -488,9 +498,19 @@ cvarTable_t cvarTable[] = {
 	{ &bh_movement, "bh_movement", "0", CVAR_ARCHIVE },
 	{ &bh_autojump, "bh_autojump", "0", CVAR_ARCHIVE },
 	{ &cg_drawKeys, "cg_drawKeys", "0", CVAR_ARCHIVE },
-	{ &cg_drawTriggers, "cg_drawTriggers", "0", CVAR_ARCHIVE },
-	{ &cg_drawEnemies, "cg_drawEnemies", "0", CVAR_ARCHIVE },
-	{ &cg_drawItems, "cg_drawItems", "0", CVAR_ARCHIVE },
+	{ &ks_mouse, "ks_mouse", "0", CVAR_ARCHIVE },
+	{ &cg_crosshairType, "cg_crosshairType", "0", CVAR_ARCHIVE },
+	{ &cg_crosshairColorR, "cg_crosshairColorR", "1.0", CVAR_ARCHIVE },
+	{ &cg_crosshairColorG, "cg_crosshairColorG", "1.0", CVAR_ARCHIVE },
+	{ &cg_crosshairColorB, "cg_crosshairColorB", "1.0", CVAR_ARCHIVE },
+	{ &cg_crosshairStroke, "cg_crosshairStroke", "1", CVAR_ARCHIVE },
+	{ &cg_crosshairStatic, "cg_crosshairStatic", "0", CVAR_ARCHIVE },
+	{ &cg_crosshairGap, "cg_crosshairGap", "1.0", CVAR_ARCHIVE },
+	{ &cg_crosshairThickness, "cg_crosshairThickness", "1.0", CVAR_ARCHIVE },
+	{ &cg_crosshairSpread, "cg_crosshairSpread", "1.0", CVAR_ARCHIVE },
+	{ &cg_drawTriggers, "cg_drawTriggers", "0", CVAR_ARCHIVE | CVAR_CHEAT },
+	{ &cg_drawEnemies, "cg_drawEnemies", "0", CVAR_ARCHIVE | CVAR_CHEAT },
+	{ &cg_drawItems, "cg_drawItems", "0", CVAR_ARCHIVE | CVAR_CHEAT },
 	{ &cg_drawPos, "cg_drawPos", "0", CVAR_ARCHIVE },
 	{ &cg_drawJumpStats, "cg_drawJumpStats", "0", CVAR_ARCHIVE },
 

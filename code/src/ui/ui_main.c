@@ -2292,16 +2292,230 @@ static void UI_DrawRedBlue( rectDef_t *rect, int font, float scale, vec4_t color
 }
 
 static void UI_DrawCrosshair( rectDef_t *rect, float scale, vec4_t color ) {
-	int ch;
-	ch = ( uiInfo.currentCrosshair % NUM_CROSSHAIRS );
+	int chType;
+	vec4_t hcolor;
+	vec4_t strokeColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+	float drawY, cx, cy, sz, gap, arm, dot;
+	int st;
+	scralign_t align;
 
-	if ( !ch ) {
-		return;
+	/* Read crosshair color from cvars */
+	hcolor[0] = trap_Cvar_VariableValue( "cg_crosshairColorR" );
+	hcolor[1] = trap_Cvar_VariableValue( "cg_crosshairColorG" );
+	hcolor[2] = trap_Cvar_VariableValue( "cg_crosshairColorB" );
+	hcolor[3] = trap_Cvar_VariableValue( "cg_crosshairAlpha" );
+	if ( hcolor[3] < 0.1f ) hcolor[3] = 0.1f; /* ensure visible in preview */
+	strokeColor[3] = hcolor[3];
+
+	chType = (int)trap_Cvar_VariableValue( "cg_crosshairType" );
+	align = rect->scrAlign;
+
+	if ( chType > 0 ) {
+		/* ---- Procedural crosshair preview ---- */
+		float gapMul, thk;
+		drawY = rect->y - rect->h;
+		cx = rect->x + rect->w * 0.5f;
+		cy = drawY + rect->h * 0.5f;
+		sz = rect->w * 0.35f;
+		st = (int)trap_Cvar_VariableValue( "cg_crosshairStroke" );
+		gapMul = trap_Cvar_VariableValue( "cg_crosshairGap" );
+		thk = trap_Cvar_VariableValue( "cg_crosshairThickness" );
+		if ( gapMul < 0.0f ) gapMul = 0.0f;
+		if ( thk < 0.1f ) thk = 0.1f;
+
+		#define UI_CH(rx,ry,rw,rh) \
+			do { \
+				if ( st > 0 ) { \
+					UI_FillRect( (rx)-(st), (ry)-(st), (rw)+2*(st), (rh)+2*(st), strokeColor, align ); \
+				} \
+				UI_FillRect( (rx), (ry), (rw), (rh), hcolor, align ); \
+			} while(0)
+
+		switch ( chType ) {
+		case 1: /* Cross (+) */
+			gap = sz * 0.25f * gapMul;
+			arm = sz - gap;
+			{ float tw = 2.0f * thk;
+			UI_CH( cx - tw*0.5f, cy - sz, tw, arm );
+			UI_CH( cx - tw*0.5f, cy + gap, tw, arm );
+			UI_CH( cx - sz, cy - tw*0.5f, arm, tw );
+			UI_CH( cx + gap, cy - tw*0.5f, arm, tw );
+			}
+			break;
+		case 2: /* Dot */
+			dot = sz * 0.15f * thk;
+			if ( dot < 1.5f ) dot = 1.5f;
+			UI_CH( cx - dot, cy - dot, dot * 2, dot * 2 );
+			break;
+		case 3: /* Circle */
+			{
+				float r = sz * 0.5f;
+				float thick = 2.0f * thk;
+				UI_CH( cx - r * 0.7f, cy - r, r * 1.4f, thick );
+				UI_CH( cx - r * 0.7f, cy + r - thick, r * 1.4f, thick );
+				UI_CH( cx - r, cy - r * 0.7f, thick, r * 1.4f );
+				UI_CH( cx + r - thick, cy - r * 0.7f, thick, r * 1.4f );
+			}
+			break;
+		case 4: /* Cross + Dot */
+			gap = sz * 0.3f * gapMul;
+			arm = sz - gap;
+			dot = sz * 0.12f * thk;
+			if ( dot < 1.0f ) dot = 1.0f;
+			{ float tw = 2.0f * thk;
+			UI_CH( cx - tw*0.5f, cy - sz, tw, arm );
+			UI_CH( cx - tw*0.5f, cy + gap, tw, arm );
+			UI_CH( cx - sz, cy - tw*0.5f, arm, tw );
+			UI_CH( cx + gap, cy - tw*0.5f, arm, tw );
+			UI_CH( cx - dot, cy - dot, dot * 2, dot * 2 );
+			}
+			break;
+		case 5: /* T-shape */
+			gap = sz * 0.25f * gapMul;
+			arm = sz - gap;
+			{ float tw = 2.0f * thk;
+			UI_CH( cx - tw*0.5f, cy - sz, tw, arm );
+			UI_CH( cx - sz, cy - tw*0.5f, arm, tw );
+			UI_CH( cx + gap, cy - tw*0.5f, arm, tw );
+			}
+			break;
+		case 6: /* Small thin cross */
+			gap = sz * 0.15f * gapMul;
+			arm = sz * 0.6f;
+			{ float tw = 1.0f * thk;
+			UI_CH( cx - tw*0.5f, cy - gap - arm, tw, arm );
+			UI_CH( cx - tw*0.5f, cy + gap, tw, arm );
+			UI_CH( cx - gap - arm, cy - tw*0.5f, arm, tw );
+			UI_CH( cx + gap, cy - tw*0.5f, arm, tw );
+			}
+			break;
+		case 7: /* Micro Dot */
+			{ float tw = 1.0f * thk;
+			UI_CH( cx - tw*0.5f, cy - tw*0.5f, tw, tw );
+			}
+			break;
+		case 8: /* Diamond - 4 tick marks at N/S/E/W */
+			{
+				float d = sz * 0.45f * gapMul;
+				float tick = sz * 0.2f;
+				float tw = 2.0f * thk;
+				if ( tick < 2.0f ) tick = 2.0f;
+				UI_CH( cx - tw*0.5f, cy - d - tick, tw, tick );
+				UI_CH( cx - tw*0.5f, cy + d, tw, tick );
+				UI_CH( cx - d - tick, cy - tw*0.5f, tick, tw );
+				UI_CH( cx + d, cy - tw*0.5f, tick, tw );
+			}
+			break;
+		case 9: /* Wide Cross */
+			gap = sz * 0.40f * gapMul;
+			arm = sz - gap;
+			{ float tw = 4.0f * thk;
+			UI_CH( cx - tw*0.5f, cy - sz, tw, arm );
+			UI_CH( cx - tw*0.5f, cy + gap, tw, arm );
+			UI_CH( cx - sz, cy - tw*0.5f, arm, tw );
+			UI_CH( cx + gap, cy - tw*0.5f, arm, tw );
+			}
+			break;
+		case 10: /* Circle + Dot */
+			{
+				float r = sz * 0.5f;
+				float thick = 2.0f * thk;
+				dot = sz * 0.08f * thk;
+				if ( dot < 1.0f ) dot = 1.0f;
+				UI_CH( cx - r * 0.7f, cy - r, r * 1.4f, thick );
+				UI_CH( cx - r * 0.7f, cy + r - thick, r * 1.4f, thick );
+				UI_CH( cx - r, cy - r * 0.7f, thick, r * 1.4f );
+				UI_CH( cx + r - thick, cy - r * 0.7f, thick, r * 1.4f );
+				UI_CH( cx - dot, cy - dot, dot * 2, dot * 2 );
+			}
+			break;
+		case 11: /* Chevron (stepped V) */
+			{
+				float s = sz * 0.14f * thk;
+				float go;
+				if ( s < 2.0f ) s = 2.0f;
+				go = s * gapMul * 0.5f;
+				UI_CH( cx - go - s, cy, s, s );
+				UI_CH( cx - go - 2*s, cy - s, s, s );
+				UI_CH( cx - go - 3*s, cy - 2*s, s, s );
+				UI_CH( cx + go, cy, s, s );
+				UI_CH( cx + go + s, cy - s, s, s );
+				UI_CH( cx + go + 2*s, cy - 2*s, s, s );
+			}
+			break;
+		case 12: /* Corners */
+			{
+				float br = sz * 0.6f * gapMul;
+				float len = sz * 0.3f;
+				float t = 2.0f * thk;
+				UI_CH( cx - br, cy - br, len, t );
+				UI_CH( cx - br, cy - br, t, len );
+				UI_CH( cx + br - len, cy - br, len, t );
+				UI_CH( cx + br - t, cy - br, t, len );
+				UI_CH( cx - br, cy + br - t, len, t );
+				UI_CH( cx - br, cy + br - len, t, len );
+				UI_CH( cx + br - len, cy + br - t, len, t );
+				UI_CH( cx + br - t, cy + br - len, t, len );
+			}
+			break;
+		case 13: /* X-Cross (diagonal dots) */
+			{
+				float s = sz * 0.11f * thk;
+				float g;
+				if ( s < 1.5f ) s = 1.5f;
+				g = s * 0.8f * gapMul;
+				UI_CH( cx - g - 3*s, cy - g - 3*s, s, s );
+				UI_CH( cx - g - 2*s, cy - g - 2*s, s, s );
+				UI_CH( cx + g + 2*s, cy - g - 3*s, s, s );
+				UI_CH( cx + g + s, cy - g - 2*s, s, s );
+				UI_CH( cx - g - 3*s, cy + g + 2*s, s, s );
+				UI_CH( cx - g - 2*s, cy + g + s, s, s );
+				UI_CH( cx + g + 2*s, cy + g + 2*s, s, s );
+				UI_CH( cx + g + s, cy + g + s, s, s );
+			}
+			break;
+		case 14: /* Crosshair Classic */
+			{ float tw = 1.0f * thk;
+			UI_CH( cx - tw*0.5f, cy - sz, tw, sz * 2 );
+			UI_CH( cx - sz, cy - tw*0.5f, sz * 2, tw );
+			}
+			break;
+		default:
+			dot = 2.0f * thk;
+			UI_CH( cx - dot, cy - dot, dot * 2, dot * 2 );
+			break;
+		}
+		#undef UI_CH
+	} else {
+		/* ---- Texture crosshair preview ---- */
+		int ch = ( uiInfo.currentCrosshair % NUM_CROSSHAIRS );
+		if ( !ch ) {
+			return;
+		}
+		trap_R_SetColor( hcolor );
+		UI_DrawHandlePic( rect->x, rect->y - rect->h, rect->w, rect->h, uiInfo.uiDC.Assets.crosshairShader[ch], rect->scrAlign );
+		trap_R_SetColor( NULL );
 	}
+}
 
-	trap_R_SetColor( color );
-	UI_DrawHandlePic( rect->x, rect->y - rect->h, rect->w, rect->h, uiInfo.uiDC.Assets.crosshairShader[ch], rect->scrAlign );
-	trap_R_SetColor( NULL );
+/*
+===============
+UI_DrawCrosshairColor
+===============
+*/
+static void UI_DrawCrosshairColor( rectDef_t *rect ) {
+	vec4_t hcolor;
+	vec4_t border = { 0.5f, 0.5f, 0.5f, 1.0f };
+
+	hcolor[0] = trap_Cvar_VariableValue( "cg_crosshairColorR" );
+	hcolor[1] = trap_Cvar_VariableValue( "cg_crosshairColorG" );
+	hcolor[2] = trap_Cvar_VariableValue( "cg_crosshairColorB" );
+	hcolor[3] = 1.0f;
+
+	/* border */
+	UI_FillRect( rect->x - 1, rect->y - 1, rect->w + 2, rect->h + 2, border, rect->scrAlign );
+	/* fill */
+	UI_FillRect( rect->x, rect->y, rect->w, rect->h, hcolor, rect->scrAlign );
 }
 
 /*
@@ -2717,6 +2931,9 @@ static void UI_OwnerDraw( float x, float y, float w, float h, float text_x, floa
 		break;
 	case UI_CROSSHAIR:
 		UI_DrawCrosshair( &rect, scale, color );
+		break;
+	case UI_CROSSHAIR_COLOR:
+		UI_DrawCrosshairColor( &rect );
 		break;
 	case UI_SELECTEDPLAYER:
 		UI_DrawSelectedPlayer( &rect, font, scale, color, textStyle );
@@ -4696,6 +4913,7 @@ static void UI_RunMenuScript( char **args ) {
 		} else if ( Q_stricmp( name, "playerstart" ) == 0 ) {
 			trap_Cmd_ExecuteText( EXEC_APPEND, "fade 0 0 0 0 3\n" );    // fade screen up
 			trap_Cvar_Set( "g_playerstart", "1" );                 // set cvar which will trigger "playerstart" in script
+			trap_Cvar_Set( "ls_loading", "0" );                    // signal LiveSplit timer to resume
 			Menus_CloseAll();
 			//----(SA)	end
 

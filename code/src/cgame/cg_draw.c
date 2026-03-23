@@ -2377,12 +2377,13 @@ static void CG_DrawCrosshair( void ) {
 		return;
 	}
 
-	// set color based on health
-	if ( cg_crosshairHealth.integer ) {
-		trap_R_SetColor( hcolor );
-	} else {
-		trap_R_SetColor( NULL );
+	// set color based on health or custom RGB (applies to ALL crosshair types)
+	if ( !cg_crosshairHealth.integer ) {
+		hcolor[0] = cg_crosshairColorR.value;
+		hcolor[1] = cg_crosshairColorG.value;
+		hcolor[2] = cg_crosshairColorB.value;
 	}
+	trap_R_SetColor( hcolor );
 
 	w = h = cg_crosshairSize.value;
 /*
@@ -2395,9 +2396,12 @@ static void CG_DrawCrosshair( void ) {
 	}
 */
 	// RF, crosshair size represents aim spread
-	f = (float)cg.snap->ps.aimSpreadScale / 255.0;
-	w *= ( 1 + f * 2.0 );
-	h *= ( 1 + f * 2.0 );
+	if ( !cg_crosshairStatic.integer ) {
+		f = (float)cg.snap->ps.aimSpreadScale / 255.0;
+		f *= cg_crosshairSpread.value;  /* cvar multiplier */
+		w *= ( 1 + f * 2.0 );
+		h *= ( 1 + f * 2.0 );
+	}
 
 	x = cg_crosshairX.integer;
 	y = cg_crosshairY.integer;
@@ -2408,19 +2412,214 @@ static void CG_DrawCrosshair( void ) {
 	x *= cgs.screenXScale;
 	y *= cgs.screenYScale;
 
-//----(SA)	modified
-	if ( friendInSights ) {
-		hShader = cgs.media.crosshairFriendly;
+	/* ========== Procedural crosshair (cg_crosshairType > 0) ========== */
+	if ( cg_crosshairType.integer > 0 && !friendInSights ) {
+		float cx = x + cg.refdef.x + 0.5f * cg.refdef.width;
+		float cy = y + cg.refdef.y + 0.5f * cg.refdef.height;
+		float sz = w * 0.5f;  /* half-size */
+		int   st = cg_crosshairStroke.integer;
+		float gap, arm, dot;
+		int   chType = cg_crosshairType.integer;
+		vec4_t strokeColor = { 0.0f, 0.0f, 0.0f, hcolor[3] };
+		float gapMul = cg_crosshairGap.value;     /* gap multiplier from cvar */
+		float thk = cg_crosshairThickness.value;   /* thickness multiplier from cvar */
+
+		/* Helper: draw a filled rect with optional black stroke behind it */
+		#define CH_RECT(rx,ry,rw,rh) \
+			do { \
+				if ( st > 0 ) { \
+					trap_R_SetColor( strokeColor ); \
+					trap_R_DrawStretchPic( (rx)-(st), (ry)-(st), (rw)+2*(st), (rh)+2*(st), 0,0,1,1, cgs.media.whiteShader ); \
+					trap_R_SetColor( hcolor ); \
+				} \
+				trap_R_DrawStretchPic( (rx), (ry), (rw), (rh), 0,0,1,1, cgs.media.whiteShader ); \
+			} while(0)
+
+		switch ( chType ) {
+		case 1: /* Cross (+) */
+			gap = sz * 0.25f * gapMul;
+			arm = sz - gap;
+			{ float tw = 2.0f * thk;
+			CH_RECT( cx - tw*0.5f, cy - sz, tw, arm );
+			CH_RECT( cx - tw*0.5f, cy + gap, tw, arm );
+			CH_RECT( cx - sz, cy - tw*0.5f, arm, tw );
+			CH_RECT( cx + gap, cy - tw*0.5f, arm, tw );
+			}
+			break;
+
+		case 2: /* Dot */
+			dot = sz * 0.15f * thk;
+			if ( dot < 1.5f ) dot = 1.5f;
+			CH_RECT( cx - dot, cy - dot, dot * 2, dot * 2 );
+			break;
+
+		case 3: /* Circle (approximated with 4 thin arcs) */
+			{
+				float r = sz * 0.5f;
+				float thick = 2.0f * thk;
+				CH_RECT( cx - r * 0.7f, cy - r, r * 1.4f, thick );
+				CH_RECT( cx - r * 0.7f, cy + r - thick, r * 1.4f, thick );
+				CH_RECT( cx - r, cy - r * 0.7f, thick, r * 1.4f );
+				CH_RECT( cx + r - thick, cy - r * 0.7f, thick, r * 1.4f );
+			}
+			break;
+
+		case 4: /* Cross + Dot */
+			gap = sz * 0.3f * gapMul;
+			arm = sz - gap;
+			dot = sz * 0.12f * thk;
+			if ( dot < 1.0f ) dot = 1.0f;
+			{ float tw = 2.0f * thk;
+			CH_RECT( cx - tw*0.5f, cy - sz, tw, arm );
+			CH_RECT( cx - tw*0.5f, cy + gap, tw, arm );
+			CH_RECT( cx - sz, cy - tw*0.5f, arm, tw );
+			CH_RECT( cx + gap, cy - tw*0.5f, arm, tw );
+			CH_RECT( cx - dot, cy - dot, dot * 2, dot * 2 );
+			}
+			break;
+
+		case 5: /* T-shape (no bottom arm) */
+			gap = sz * 0.25f * gapMul;
+			arm = sz - gap;
+			{ float tw = 2.0f * thk;
+			CH_RECT( cx - tw*0.5f, cy - sz, tw, arm );
+			CH_RECT( cx - sz, cy - tw*0.5f, arm, tw );
+			CH_RECT( cx + gap, cy - tw*0.5f, arm, tw );
+			}
+			break;
+
+		case 6: /* Small thin cross */
+			gap = sz * 0.15f * gapMul;
+			arm = sz * 0.6f;
+			{ float tw = 1.0f * thk;
+			CH_RECT( cx - tw*0.5f, cy - gap - arm, tw, arm );
+			CH_RECT( cx - tw*0.5f, cy + gap, tw, arm );
+			CH_RECT( cx - gap - arm, cy - tw*0.5f, arm, tw );
+			CH_RECT( cx + gap, cy - tw*0.5f, arm, tw );
+			}
+			break;
+
+		case 7: /* Micro Dot - tiny 1px center dot */
+			{ float tw = 1.0f * thk;
+			CH_RECT( cx - tw*0.5f, cy - tw*0.5f, tw, tw );
+			}
+			break;
+
+		case 8: /* Diamond - 4 tick marks at N/S/E/W */
+			{
+				float d = sz * 0.45f * gapMul;
+				float tick = sz * 0.2f;
+				float tw = 2.0f * thk;
+				if ( tick < 2.0f ) tick = 2.0f;
+				CH_RECT( cx - tw*0.5f, cy - d - tick, tw, tick );
+				CH_RECT( cx - tw*0.5f, cy + d, tw, tick );
+				CH_RECT( cx - d - tick, cy - tw*0.5f, tick, tw );
+				CH_RECT( cx + d, cy - tw*0.5f, tick, tw );
+			}
+			break;
+
+		case 9: /* Wide Cross - thick arms, big gap (very spread-reactive) */
+			gap = sz * 0.40f * gapMul;
+			arm = sz - gap;
+			{ float tw = 4.0f * thk;
+			CH_RECT( cx - tw*0.5f, cy - sz, tw, arm );
+			CH_RECT( cx - tw*0.5f, cy + gap, tw, arm );
+			CH_RECT( cx - sz, cy - tw*0.5f, arm, tw );
+			CH_RECT( cx + gap, cy - tw*0.5f, arm, tw );
+			}
+			break;
+
+		case 10: /* Circle + Dot */
+			{
+				float r = sz * 0.5f;
+				float thick = 2.0f * thk;
+				dot = sz * 0.08f * thk;
+				if ( dot < 1.0f ) dot = 1.0f;
+				CH_RECT( cx - r * 0.7f, cy - r, r * 1.4f, thick );
+				CH_RECT( cx - r * 0.7f, cy + r - thick, r * 1.4f, thick );
+				CH_RECT( cx - r, cy - r * 0.7f, thick, r * 1.4f );
+				CH_RECT( cx + r - thick, cy - r * 0.7f, thick, r * 1.4f );
+				CH_RECT( cx - dot, cy - dot, dot * 2, dot * 2 );
+			}
+			break;
+
+		case 11: /* Chevron (stepped V shape) */
+			{
+				float s = sz * 0.14f * thk;
+				if ( s < 2.0f ) s = 2.0f;
+				float go = s * gapMul * 0.5f;
+				CH_RECT( cx - go - s, cy, s, s );
+				CH_RECT( cx - go - 2*s, cy - s, s, s );
+				CH_RECT( cx - go - 3*s, cy - 2*s, s, s );
+				CH_RECT( cx + go, cy, s, s );
+				CH_RECT( cx + go + s, cy - s, s, s );
+				CH_RECT( cx + go + 2*s, cy - 2*s, s, s );
+			}
+			break;
+
+		case 12: /* Corners (aim brackets) */
+			{
+				float br = sz * 0.6f * gapMul;
+				float len = sz * 0.3f;
+				float t = 2.0f * thk;
+				CH_RECT( cx - br, cy - br, len, t );
+				CH_RECT( cx - br, cy - br, t, len );
+				CH_RECT( cx + br - len, cy - br, len, t );
+				CH_RECT( cx + br - t, cy - br, t, len );
+				CH_RECT( cx - br, cy + br - t, len, t );
+				CH_RECT( cx - br, cy + br - len, t, len );
+				CH_RECT( cx + br - len, cy + br - t, len, t );
+				CH_RECT( cx + br - t, cy + br - len, t, len );
+			}
+			break;
+
+		case 13: /* X-Cross (diagonal dots forming an X) */
+			{
+				float s = sz * 0.11f * thk;
+				float g = s * 0.8f * gapMul;
+				if ( s < 1.5f ) s = 1.5f;
+				CH_RECT( cx - g - 3*s, cy - g - 3*s, s, s );
+				CH_RECT( cx - g - 2*s, cy - g - 2*s, s, s );
+				CH_RECT( cx + g + 2*s, cy - g - 3*s, s, s );
+				CH_RECT( cx + g + s, cy - g - 2*s, s, s );
+				CH_RECT( cx - g - 3*s, cy + g + 2*s, s, s );
+				CH_RECT( cx - g - 2*s, cy + g + s, s, s );
+				CH_RECT( cx + g + 2*s, cy + g + 2*s, s, s );
+				CH_RECT( cx + g + s, cy + g + s, s, s );
+			}
+			break;
+
+		case 14: /* Crosshair Classic - full lines through center */
+			{ float tw = 1.0f * thk;
+			CH_RECT( cx - tw*0.5f, cy - sz, tw, sz * 2 );
+			CH_RECT( cx - sz, cy - tw*0.5f, sz * 2, tw );
+			}
+			break;
+
+		default: /* fallback: dot */
+			dot = 2.0f * thk;
+			CH_RECT( cx - dot, cy - dot, dot * 2, dot * 2 );
+			break;
+		}
+
+		#undef CH_RECT
+		trap_R_SetColor( NULL );
 	} else {
-		hShader = cgs.media.crosshairShader[ cg_drawCrosshair.integer % NUM_CROSSHAIRS ];
-	}
+		/* ========== Original texture crosshair ========== */
+//----(SA)	modified
+		if ( friendInSights ) {
+			hShader = cgs.media.crosshairFriendly;
+		} else {
+			hShader = cgs.media.crosshairShader[ cg_drawCrosshair.integer % NUM_CROSSHAIRS ];
+		}
 //----(SA)	end
 
-	// NERVE - SMF - modified, fixes crosshair offset in shifted/scaled 3d views
-	// (SA) also breaks scaled view...
-	trap_R_DrawStretchPic(  x + cg.refdef.x + 0.5 * ( cg.refdef.width - w ),
-							y + cg.refdef.y + 0.5 * ( cg.refdef.height - h ),
-							w, h, 0, 0, 1, 1, hShader );
+		// NERVE - SMF - modified, fixes crosshair offset in shifted/scaled 3d views
+		// (SA) also breaks scaled view...
+		trap_R_DrawStretchPic(  x + cg.refdef.x + 0.5 * ( cg.refdef.width - w ),
+								y + cg.refdef.y + 0.5 * ( cg.refdef.height - h ),
+								w, h, 0, 0, 1, 1, hShader );
+	}
 }
 
 
@@ -3726,11 +3925,11 @@ CG_DrawKeystrokeOverlay
 
 RtCW-themed keystroke overlay with smooth transitions.
 Gray when idle, military green on press.
-Positioned just above the velocity HUD.
 Layout:
        [W]
     [A][S][D]
    [JUMP][DUCK]
+   [LMB][dir][RMB]   (when ks_mouse >= 1)
 ==================
 */
 #define KEYS_BOX_W		22
@@ -3738,10 +3937,17 @@ Layout:
 #define KEYS_GAP		2
 #define KEYS_CHARW		7
 #define KEYS_CHARH		12
-#define KEYS_NUM		6
+#define KEYS_NUM		10	// W A S D JUMP DUCK LMB RMB mouseX mouseY
 #define KEYS_FADE_SPEED	8.0f	// higher = faster transition (units per second)
 
-static float keyAlpha[KEYS_NUM] = { 0, 0, 0, 0, 0, 0 };  // W A S D JUMP DUCK
+static float keyAlpha[KEYS_NUM] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+/* Smooth mouse direction accumulator */
+static float mouseDirX = 0.0f;
+static float mouseDirY = 0.0f;
+static float prevViewYaw   = 0.0f;
+static float prevViewPitch = 0.0f;
+static qboolean prevViewInit = qfalse;
 
 /* Helper: read a cvar as float in cgame (no trap_Cvar_VariableValue in cgame) */
 static float CG_CvarGetFloat( const char *name ) {
@@ -3778,22 +3984,61 @@ static void CG_DrawKeystrokeKey( float x, float y, float w, float h,
 	// border
 	CG_DrawRect( x, y, w, h, 1, border, ALIGN_BOTTOM );
 
-	// centered text, no shadow
+	// centered text, no shadow - nudge +1px right and +2px down to fix glyph offset
 	textW = labelLen * cW;
-	tx = x + ( w - textW ) * 0.5f;
-	ty = y + ( h - cH ) * 0.5f;
+	tx = x + ( w - textW ) * 0.5f + 1;
+	ty = y + ( h - cH ) * 0.5f + 2;
 	CG_DrawStringExt( (int)tx, (int)ty, label,
 		textCol, qtrue, qfalse, (int)cW, (int)cH, labelLen, ALIGN_BOTTOM );
+}
+
+static void CG_DrawMouseDirection( float cx, float cy, float radius,
+								   float dirX, float dirY, float opacity ) {
+	vec4_t bg, border, dotCol;
+	float dotR, dx, dy, dist, dotX, dotY;
+	float maxOff;
+
+	/* background circle (drawn as a small box) */
+	bg[0] = 0.04f; bg[1] = 0.04f; bg[2] = 0.06f;
+	bg[3] = 0.70f * opacity;
+	border[0] = 0.20f; border[1] = 0.25f; border[2] = 0.18f;
+	border[3] = 0.25f * opacity;
+
+	CG_FillRect( cx - radius, cy - radius, radius * 2, radius * 2, bg, ALIGN_BOTTOM );
+	CG_DrawRect( cx - radius, cy - radius, radius * 2, radius * 2, 1, border, ALIGN_BOTTOM );
+
+	/* direction dot */
+	dotR = radius * 0.25f;
+	if ( dotR < 1.0f ) dotR = 1.0f;
+	maxOff = radius - dotR - 1;
+
+	dx = dirX;
+	dy = dirY;
+	dist = (float)sqrt( dx * dx + dy * dy );
+	if ( dist > 1.0f ) { dx /= dist; dy /= dist; }
+
+	dotX = cx + dx * maxOff;
+	dotY = cy + dy * maxOff;
+
+	/* dot color: brighter when moving */
+	{
+		float t = dist > 1.0f ? 1.0f : dist;
+		dotCol[0] = 0.42f + t * 0.43f;
+		dotCol[1] = 0.48f + t * 0.47f;
+		dotCol[2] = 0.38f + t * 0.42f;
+		dotCol[3] = ( 0.60f + t * 0.40f ) * opacity;
+	}
+	CG_FillRect( dotX - dotR, dotY - dotR, dotR * 2, dotR * 2, dotCol, ALIGN_BOTTOM );
 }
 
 static void CG_DrawKeystrokeOverlay( void ) {
 	usercmd_t cmd;
 	int cmdNum;
-	float totalW, baseX, baseY, halfW, y;
+	float totalW, totalH, baseX, baseY, halfW, y;
 	float dt, ksScale, ksOpacity;
 	float boxW, boxH, gap, charW, charH;
 	qboolean pressed[KEYS_NUM];
-	int i;
+	int i, ksMouse, numRows;
 	float ksX, ksY;
 
 	/* Read cvar-driven position/scale/opacity */
@@ -3801,10 +4046,13 @@ static void CG_DrawKeystrokeOverlay( void ) {
 	ksOpacity = CG_CvarGetFloat( "ks_opacity" );
 	ksX       = CG_CvarGetFloat( "ks_x" );
 	ksY       = CG_CvarGetFloat( "ks_y" );
+	ksMouse   = ks_mouse.integer;
 	if ( ksScale < 0.3f ) ksScale = 0.3f;
 	if ( ksScale > 3.0f ) ksScale = 3.0f;
 	if ( ksOpacity <= 0.0f ) return;  /* fully transparent = hidden */
 	if ( ksOpacity > 1.0f ) ksOpacity = 1.0f;
+	if ( ksMouse < 0 ) ksMouse = 0;
+	if ( ksMouse > 2 ) ksMouse = 2;
 
 	boxW  = KEYS_BOX_W * ksScale;
 	boxH  = KEYS_BOX_H * ksScale;
@@ -3815,20 +4063,52 @@ static void CG_DrawKeystrokeOverlay( void ) {
 	cmdNum = trap_GetCurrentCmdNumber();
 	trap_GetUserCmd( cmdNum, &cmd );
 
-	// Key states: W A S D JUMP DUCK
+	/* Key states: W A S D JUMP DUCK LMB RMB */
 	pressed[0] = ( cmd.forwardmove > 0 );                                    // W
 	pressed[1] = ( cmd.rightmove < 0 );                                      // A
 	pressed[2] = ( cmd.forwardmove < 0 );                                    // S
 	pressed[3] = ( cmd.rightmove > 0 );                                      // D
-	pressed[5] = ( cmd.wbuttons & 64 ) ? qtrue : qfalse;                     // DUCK (WBUTTON_CROUCH)
+	pressed[5] = ( cmd.wbuttons & WBUTTON_CROUCH ) ? qtrue : qfalse;         // DUCK
 	pressed[4] = ( cmd.upmove > 0 ) || ( cmd.upmove == 0 && pressed[5] );   // JUMP
+	pressed[6] = ( cmd.buttons & BUTTON_ATTACK ) ? qtrue : qfalse;           // LMB
+	pressed[7] = ( cmd.wbuttons & WBUTTON_ATTACK2 ) ? qtrue : qfalse;       // RMB
+	pressed[8] = qfalse;  /* mouse dir X (handled separately) */
+	pressed[9] = qfalse;  /* mouse dir Y (handled separately) */
 
-	// Smooth transitions: lerp alpha toward target
-	dt = cg.frametime * 0.001f;  // seconds
-	if ( dt > 0.05f ) dt = 0.05f;  // clamp for lag spikes
-	for ( i = 0; i < KEYS_NUM; i++ ) {
+	/* Mouse direction tracking via view angle delta */
+	if ( ksMouse >= 2 ) {
+		float curYaw   = cg.refdefViewAngles[YAW];
+		float curPitch = cg.refdefViewAngles[PITCH];
+
+		if ( prevViewInit ) {
+			float dYaw   = AngleSubtract( curYaw, prevViewYaw );
+			float dPitch = curPitch - prevViewPitch;
+
+			/* Accumulate with decay: makes it smooth */
+			mouseDirX = mouseDirX * 0.7f + dYaw * 0.08f;
+			mouseDirY = mouseDirY * 0.7f + dPitch * 0.08f;
+
+			/* Clamp */
+			if ( mouseDirX >  1.0f ) mouseDirX =  1.0f;
+			if ( mouseDirX < -1.0f ) mouseDirX = -1.0f;
+			if ( mouseDirY >  1.0f ) mouseDirY =  1.0f;
+			if ( mouseDirY < -1.0f ) mouseDirY = -1.0f;
+		} else {
+			prevViewInit = qtrue;
+		}
+		prevViewYaw   = curYaw;
+		prevViewPitch = curPitch;
+	} else {
+		mouseDirX *= 0.9f;
+		mouseDirY *= 0.9f;
+	}
+
+	/* Smooth transitions: lerp alpha toward target */
+	dt = cg.frametime * 0.001f;
+	if ( dt > 0.05f ) dt = 0.05f;
+	for ( i = 0; i < 8; i++ ) {	/* only keys 0-7 need alpha fade */
 		float target = pressed[i] ? 1.0f : 0.0f;
-		float speed = pressed[i] ? KEYS_FADE_SPEED * 2.0f : KEYS_FADE_SPEED;  // snap ON fast, fade OFF slower
+		float speed = pressed[i] ? KEYS_FADE_SPEED * 2.0f : KEYS_FADE_SPEED;
 		if ( keyAlpha[i] < target ) {
 			keyAlpha[i] += speed * dt;
 			if ( keyAlpha[i] > target ) keyAlpha[i] = target;
@@ -3838,9 +4118,13 @@ static void CG_DrawKeystrokeOverlay( void ) {
 		}
 	}
 
-	// Layout: 3 keys wide + 2 gaps  (scaled)
+	/* Layout: 3 keys wide + 2 gaps (scaled) */
 	totalW = boxW * 3 + gap * 2;
-	// Position: ks_x=0 means auto-center, ks_y=0 means auto above statusbar
+	numRows = 3;  /* W, ASD, JUMP/DUCK */
+	if ( ksMouse >= 1 ) numRows = 4;  /* + mouse row */
+	totalH = numRows * ( boxH + gap );
+
+	/* Position: ks_x=0 means auto-center, ks_y=0 means auto above statusbar */
 	if ( ksX > 0.01f ) {
 		baseX = ksX;
 	} else {
@@ -3849,27 +4133,57 @@ static void CG_DrawKeystrokeOverlay( void ) {
 	if ( ksY > 0.01f ) {
 		baseY = ksY;
 	} else {
-		baseY = STATUSBARHEIGHT - 10 - ( boxH + gap ) * 3;
+		baseY = STATUSBARHEIGHT - 10 - totalH;
 	}
 
-	// Row 1: [W]
+	/* Row 1: [W] centered */
 	y = baseY;
 	CG_DrawKeystrokeKey( baseX + boxW + gap, y, boxW, boxH, "W", 1, keyAlpha[0], ksOpacity, charW, charH );
 
-	// Row 2: [A] [S] [D]
+	/* Row 2: [A] [S] [D] */
 	y = baseY + boxH + gap;
 	CG_DrawKeystrokeKey( baseX,                    y, boxW, boxH, "A", 1, keyAlpha[1], ksOpacity, charW, charH );
 	CG_DrawKeystrokeKey( baseX + boxW + gap,       y, boxW, boxH, "S", 1, keyAlpha[2], ksOpacity, charW, charH );
 	CG_DrawKeystrokeKey( baseX + (boxW + gap)*2,   y, boxW, boxH, "D", 1, keyAlpha[3], ksOpacity, charW, charH );
 
-	// Row 3: [JUMP] [DUCK] - centered under ASD row
+	/* Row 3: [JUMP] [DUCK] centered under ASD row */
 	y = baseY + ( boxH + gap ) * 2;
 	halfW = ( totalW - gap ) * 0.5f;
 	{
-		float jdCharW = charW * 0.85f;  /* slightly smaller chars for JUMP/DUCK to center nicer */
+		float jdCharW = charW * 0.85f;
 		float jdCharH = charH * 0.85f;
 		CG_DrawKeystrokeKey( baseX,                    y, halfW, boxH, "JUMP", 4, keyAlpha[4], ksOpacity, jdCharW, jdCharH );
 		CG_DrawKeystrokeKey( baseX + halfW + gap,      y, halfW, boxH, "DUCK", 4, keyAlpha[5], ksOpacity, jdCharW, jdCharH );
+	}
+
+	/* Row 4: Mouse row [LMB] [direction] [RMB] */
+	if ( ksMouse >= 1 ) {
+		float mCharW = charW * 0.75f;
+		float mCharH = charH * 0.75f;
+		float dirBoxSz = boxH;  /* square direction indicator */
+		float btnW, mouseRowW, mBaseX;
+
+		y = baseY + ( boxH + gap ) * 3;
+
+		if ( ksMouse >= 2 ) {
+			/* [LMB] [dir] [RMB] - three items centered */
+			btnW = ( totalW - dirBoxSz - gap * 2 ) * 0.5f;
+			mouseRowW = btnW + gap + dirBoxSz + gap + btnW;
+			mBaseX = baseX + ( totalW - mouseRowW ) * 0.5f;
+
+			CG_DrawKeystrokeKey( mBaseX, y, btnW, boxH, "LMB", 3, keyAlpha[6], ksOpacity, mCharW, mCharH );
+			CG_DrawMouseDirection( mBaseX + btnW + gap + dirBoxSz * 0.5f,
+								   y + boxH * 0.5f,
+								   dirBoxSz * 0.5f,
+								   -mouseDirX, mouseDirY, ksOpacity );
+			CG_DrawKeystrokeKey( mBaseX + btnW + gap + dirBoxSz + gap, y,
+								 btnW, boxH, "RMB", 3, keyAlpha[7], ksOpacity, mCharW, mCharH );
+		} else {
+			/* [LMB] [RMB] - two items centered */
+			btnW = halfW;
+			CG_DrawKeystrokeKey( baseX,               y, btnW, boxH, "LMB", 3, keyAlpha[6], ksOpacity, mCharW, mCharH );
+			CG_DrawKeystrokeKey( baseX + btnW + gap,  y, btnW, boxH, "RMB", 3, keyAlpha[7], ksOpacity, mCharW, mCharH );
+		}
 	}
 }
 
