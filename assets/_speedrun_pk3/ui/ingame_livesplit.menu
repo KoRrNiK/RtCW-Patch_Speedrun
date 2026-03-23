@@ -1,0 +1,3069 @@
+#include "ui/menudef.h"
+
+{
+
+menuDef {
+	name "ingame_livesplit"
+	visible 0
+	fullscreen 0
+	outOfBoundsClick
+	rect 60 10 520 470
+	focusColor .75 .95 .55 1
+	style 1
+	border 1
+
+	onopen { hide grpLivesplit ; show lsTimer }
+
+	// ==== Background panel ====
+	itemDef {
+		name window
+		rect 0 0 520 445
+		style WINDOW_STYLE_FILLED
+		border 1
+		bordercolor .22 .38 .12 .45
+		forecolor 1 1 1 1
+		backcolor .04 .04 .06 .94
+		visible 1
+		decoration
+	}
+
+	// ==== Top accent bar ====
+	itemDef {
+		name topbar
+		rect 1 1 518 2
+		style WINDOW_STYLE_FILLED
+		backcolor .25 .65 .18 .55
+		visible 1
+		decoration
+	}
+
+	itemDef {
+		name bottombar
+		rect 1 442 518 2
+		style WINDOW_STYLE_FILLED
+		backcolor .25 .65 .18 .55
+		visible 1
+		decoration
+	}
+
+	// ==== Title bar ====
+	itemDef {
+		name titlebar
+		rect 1 3 518 18
+		style WINDOW_STYLE_FILLED
+		backcolor .06 .08 .04 .80
+		visible 1
+		decoration
+	}
+	itemDef {
+		name windowtitle
+		type ITEM_TYPE_TEXT
+		text "SPEEDRUN SETTINGS"
+		rect 8 5 200 14
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 12
+		textscale .19
+		forecolor .45 .70 .30 .70
+		visible 1
+		decoration
+	}
+
+	// ==== Right-side tab panel background ====
+	itemDef {
+		name tabpanel
+		rect 420 21 99 423
+		style WINDOW_STYLE_FILLED
+		backcolor .06 .08 .04 .65
+		visible 1
+		decoration
+	}
+	itemDef {
+		name tabsepv
+		rect 419 21 1 423
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .35
+		visible 1
+		decoration
+	}
+
+
+// ========================================
+//  TAB BUTTONS (right side, vertical)
+// ========================================
+
+	itemDef {
+		name ctr_timer
+		text "Timer"
+		type 1
+		textscale .20
+		rect 425 28 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .85 .88 .80 .90
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsTimer }
+		mouseEnter { setitemcolor ctr_timer backcolor .15 .28 .10 .65 }
+		mouseExit { setitemcolor ctr_timer backcolor .12 .18 .08 0 }
+	}
+
+	itemDef {
+		name ctr_display
+		text "Display"
+		type 1
+		textscale .20
+		rect 425 47 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .85 .88 .80 .90
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsDisplay }
+		mouseEnter { setitemcolor ctr_display backcolor .15 .28 .10 .65 }
+		mouseExit { setitemcolor ctr_display backcolor .12 .18 .08 0 }
+	}
+
+	itemDef {
+		name ctr_hud
+		text "HUD"
+		type 1
+		textscale .20
+		rect 425 66 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .85 .88 .80 .90
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsHud }
+		mouseEnter { setitemcolor ctr_hud backcolor .15 .28 .10 .65 }
+		mouseExit { setitemcolor ctr_hud backcolor .12 .18 .08 0 }
+	}
+
+	itemDef {
+		name ctr_speedo
+		text "Speedo"
+		type 1
+		textscale .20
+		rect 425 85 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .85 .88 .80 .90
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsSpeedo }
+		mouseEnter { setitemcolor ctr_speedo backcolor .15 .28 .10 .65 }
+		mouseExit { setitemcolor ctr_speedo backcolor .12 .18 .08 0 }
+	}
+
+	itemDef {
+		name ctr_movement
+		text "Movement"
+		type 1
+		textscale .20
+		rect 425 104 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .85 .88 .80 .90
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsMovement }
+		mouseEnter { setitemcolor ctr_movement backcolor .15 .28 .10 .65 }
+		mouseExit { setitemcolor ctr_movement backcolor .12 .18 .08 0 }
+	}
+
+	itemDef {
+		name ctr_view
+		text "View"
+		type 1
+		textscale .20
+		rect 425 123 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .85 .88 .80 .90
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsView }
+		mouseEnter { setitemcolor ctr_view backcolor .15 .28 .10 .65 }
+		mouseExit { setitemcolor ctr_view backcolor .12 .18 .08 0 }
+	}
+
+	itemDef {
+		name ctr_binds
+		text "Binds"
+		type 1
+		textscale .20
+		rect 425 142 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .85 .88 .80 .90
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsBinds }
+		mouseEnter { setitemcolor ctr_binds backcolor .15 .28 .10 .65 }
+		mouseExit { setitemcolor ctr_binds backcolor .12 .18 .08 0 }
+	}
+
+	itemDef {
+		name ctr_help
+		text "Help"
+		type 1
+		textscale .20
+		rect 425 161 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .65 .75 .85 .80
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsHelp }
+		mouseEnter { setitemcolor ctr_help backcolor .10 .15 .22 .65 }
+		mouseExit { setitemcolor ctr_help backcolor .12 .18 .08 0 }
+	}
+
+	itemDef {
+		name ctr_demos
+		text "Demos"
+		type 1
+		textscale .20
+		rect 425 180 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .70 .85 .95 .85
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsDemos ; uiScript LoadDemos }
+		mouseEnter { setitemcolor ctr_demos backcolor .08 .12 .20 .65 }
+		mouseExit { setitemcolor ctr_demos backcolor .12 .18 .08 0 }
+	}
+
+	// --- separator in tabs ---
+	itemDef {
+		name tabsep2
+		rect 430 201 78 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 1
+		decoration
+	}
+
+	itemDef {
+		name ctr_actions
+		text "Actions"
+		type 1
+		textscale .20
+		rect 425 208 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .90 .60 .30 .85
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsActions }
+		mouseEnter { setitemcolor ctr_actions backcolor .20 .15 .05 .65 }
+		mouseExit { setitemcolor ctr_actions backcolor .12 .18 .08 0 }
+	}
+
+	// --- separator before About ---
+	itemDef {
+		name tabsep3
+		rect 430 229 78 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 1
+		decoration
+	}
+
+	itemDef {
+		name ctr_about
+		text "About"
+		type 1
+		textscale .20
+		rect 425 236 88 17
+		textalign 1
+		textalignx 44
+		textaligny 13
+		forecolor .60 .70 .85 .75
+		backcolor .12 .18 .08 0
+		style WINDOW_STYLE_FILLED
+		visible 1
+		action { hide grpLivesplit ; show lsAbout }
+		mouseEnter { setitemcolor ctr_about backcolor .10 .12 .22 .65 }
+		mouseExit { setitemcolor ctr_about backcolor .12 .18 .08 0 }
+	}
+
+
+// ========================================
+//  TAB: Timer
+// ========================================
+
+	// -- Section header --
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Timer Configuration"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 1
+		decoration
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 1
+		decoration
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Enable Timer:"
+		cvar "cg_livesplit"
+		rect 20 48 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Run Mode:"
+		cvar "ls_mode"
+		cvarFloatList { "Full Game" 0 "Mission" 1 "Individual Level" 2 }
+		rect 20 66 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Mission Group:"
+		cvar "ls_mission"
+		cvarFloatList { "1: Ominous Rumors" 1 "2: Vengeance" 2 "3: Deadly Designs" 3 "4: Deathshead" 4 "5: Resurrection" 5 }
+		rect 20 84 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_EDITFIELD
+		text "Map Override:"
+		cvar "ls_map"
+		maxchars 32
+		rect 20 102 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	// -- Visibility Section --
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Element Visibility"
+		rect 12 126 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 1
+		decoration
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		rect 12 138 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 1
+		decoration
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Main Timer:"
+		cvar "ls_showtimer"
+		rect 20 146 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Segment Timer:"
+		cvar "ls_showseg"
+		rect 215 146 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "PB Label:"
+		cvar "ls_showpb"
+		rect 20 164 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Best Label:"
+		cvar "ls_showbest"
+		rect 215 164 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Headers:"
+		cvar "ls_showheader"
+		rect 20 182 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Statistics:"
+		cvar "ls_showstats"
+		rect 215 182 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "RGT:"
+		cvar "ls_showrgt"
+		rect 20 200 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Separators:"
+		cvar "ls_showseps"
+		rect 215 200 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "PB Delta (+/-):"
+		cvar "ls_showdeltas"
+		rect 20 218 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Best Delta (+/-):"
+		cvar "ls_showbestdeltas"
+		rect 215 218 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Attempt Counter:"
+		cvar "ls_showatt"
+		rect 20 236 185 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 80
+		textaligny 11
+		textscale .20
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	// -- Demo Recording Section --
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Demo Recording"
+		rect 12 260 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 1
+		decoration
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		rect 12 272 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 1
+		decoration
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Auto-Record Demos:"
+		cvar "sp_autorecord"
+		rect 20 280 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Automatically records a demo when the timer starts."
+		rect 20 298 390 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 1
+		decoration
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Demos persist across map changes (full run in one file)."
+		rect 20 310 390 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 1
+		decoration
+	}
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Files saved to: demos/speedrun_*.dm_49"
+		rect 20 322 390 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 1
+		decoration
+	}
+
+	// -- Note --
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Note: ^7Mode changes apply on next livesplit_start"
+		rect 12 356 400 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .18
+		forecolor .70 .70 .55 .60
+		visible 1
+		decoration
+	}
+
+
+// ========================================
+//  TAB: Display
+// ========================================
+
+	// -- Section header --
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Split Panel Layout"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Panel Side:"
+		cvar "ls_align"
+		cvarFloatList { "Left" 0 "Right" 1 }
+		rect 20 48 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "X Position:"
+		cvarfloat "ls_x" 8 0 580
+		rect 20 66 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		cvar ls_x
+		rect 290 67 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Y Position:"
+		cvarfloat "ls_y" 80 0 440
+		rect 20 84 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		cvar ls_y
+		rect 290 85 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Width:"
+		cvarfloat "ls_w" 178 80 400
+		rect 20 102 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		cvar ls_w
+		rect 290 103 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Scale:"
+		cvarfloat "ls_scale" 1.0 0.5 2.5
+		rect 20 120 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		cvar ls_scale
+		rect 290 121 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Max Visible Splits:"
+		cvarfloat "ls_maxrows" 0 0 20
+		rect 20 138 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		cvar ls_maxrows
+		rect 290 139 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	// -- Opacity Section --
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Transparency"
+		rect 12 162 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		rect 12 174 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Splits Opacity:"
+		cvarfloat "ls_opacity" 1.0 0 1.0
+		rect 20 182 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		cvar ls_opacity
+		rect 290 183 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Splits (In Menu):"
+		cvarfloat "ls_opacity_ui" 0.2 0 1.0
+		rect 20 200 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		cvar ls_opacity_ui
+		rect 290 201 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Background:"
+		cvarfloat "ls_bgalpha" 0.82 0 1.0
+		rect 20 218 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsDisplay
+		group grpLivesplit
+		cvar ls_bgalpha
+		rect 290 219 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+
+// ========================================
+//  TAB: HUD (Keystroke & Overlays)
+// ========================================
+
+	// -- Keystroke Overlay --
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Keystroke Overlay"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Show Keystrokes:"
+		cvar "cg_drawKeys"
+		rect 20 48 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Keys X Position:"
+		cvarfloat "ks_x" 0 0 600
+		rect 20 66 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		cvar ks_x
+		rect 290 67 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Keys Y Position:"
+		cvarfloat "ks_y" 0 0 460
+		rect 20 84 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		cvar ks_y
+		rect 290 85 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Keys Scale:"
+		cvarfloat "ks_scale" 1.0 0.3 3.0
+		rect 20 102 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		cvar ks_scale
+		rect 290 103 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Keys Opacity:"
+		cvarfloat "ks_opacity" 1.0 0 1.0
+		rect 20 120 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		cvar ks_opacity
+		rect 290 121 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Tip: ^7X/Y = 0 uses automatic centered position"
+		rect 20 140 390 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Mouse Display:"
+		cvar "ks_mouse"
+		cvarFloatList { "Off" 0 "Clicks Only" 1 "Clicks + Direction" 2 }
+		rect 20 154 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	// -- HUD Elements --
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "HUD Elements"
+		rect 12 176 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		rect 12 188 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Show LiveSplit:"
+		cvar "ls_draw"
+		rect 20 196 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Speedometer:"
+		cvar "cg_drawVelocity"
+		rect 20 214 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Position HUD:"
+		cvar "cg_drawPos"
+		rect 20 232 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Jump Statistics:"
+		cvar "cg_drawJumpStats"
+		rect 20 250 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Show FPS:"
+		cvar "cg_drawfps"
+		rect 20 268 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Show Timer:"
+		cvar "cg_drawTimer"
+		rect 20 286 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+// ========================================
+//  TAB: Speedo (Speedometer + FPS/Timer)
+// ========================================
+
+	// -- Speedometer Settings --
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Speedometer Settings"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Mode:"
+		cvar "cg_velocity_mode"
+		cvarFloatList { "3D (Full)" 0 "Horizontal (XY)" 1 "Vertical (Z)" 2 }
+		rect 20 48 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Text Size:"
+		cvar "cg_velocity_size"
+		cvarFloatList { "Tiny" 0 "Small" 1 "Big" 2 "Giant" 3 }
+		rect 20 66 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Position:"
+		cvar "cg_velocity_type"
+		cvarFloatList { "Bottom" 0 "Center" 1 }
+		rect 20 84 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Scale:"
+		cvarfloat "cg_velocity_scale" 1.0 0.25 4.0
+		rect 20 102 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		cvar cg_velocity_scale
+		rect 290 103 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "X Position:"
+		cvarfloat "cg_velocity_x" 0 0 640
+		rect 20 120 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		cvar cg_velocity_x
+		rect 290 121 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Y Position:"
+		cvarfloat "cg_velocity_y" 0 0 480
+		rect 20 138 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		cvar cg_velocity_y
+		rect 290 139 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Tip: ^7X/Y = 0 uses automatic centered position"
+		rect 20 156 390 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+
+	// -- FPS / Timer Settings --
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "FPS / Timer Settings"
+		rect 12 172 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		rect 12 184 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Scale:"
+		cvarfloat "cg_fpsScale" 1.0 0.25 4.0
+		rect 20 192 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		cvar cg_fpsScale
+		rect 290 193 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "X Position:"
+		cvarfloat "cg_fpsX" 500 0 640
+		rect 20 210 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		cvar cg_fpsX
+		rect 290 211 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "Y Position:"
+		cvarfloat "cg_fpsY" 0 0 440
+		rect 20 228 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsSpeedo
+		group grpLivesplit
+		cvar cg_fpsY
+		rect 290 229 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+
+// ========================================
+//  TAB: Movement
+// ========================================
+
+	itemDef {
+		name lsMovement
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Bunny Hop / Physics"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsMovement
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsMovement
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "HL1 Bhop Physics:"
+		cvar "bh_movement"
+		rect 20 48 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsMovement
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Auto Jump (hold space):"
+		cvar "bh_autojump"
+		rect 20 66 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	// -- Info --
+	itemDef {
+		name lsMovement
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3HL1 Physics:^7 No air speed cap, bunny hop acceleration"
+		rect 12 96 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsMovement
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Auto Jump:^7 Hold space to automatically bunny hop"
+		rect 12 108 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+
+
+// ========================================
+//  TAB: View (FOV + FPS)
+// ========================================
+
+	itemDef {
+		name lsView
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Field of View"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsView
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsView
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "FOV Front-Back:"
+		cvarfloat "cg_fov" 90 60 160
+		rect 20 48 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsView
+		group grpLivesplit
+		cvar cg_fov
+		rect 290 49 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsView
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "FOV Down-Up:"
+		cvarfloat "cg_fov_down" 90 60 160
+		rect 20 68 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsView
+		group grpLivesplit
+		cvar cg_fov_down
+		rect 290 69 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsView
+		group grpLivesplit
+		type ITEM_TYPE_SLIDER
+		text "FOV Left-Right:"
+		cvarfloat "cg_fov_lr" 90 0 160
+		rect 20 88 370 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+	itemDef {
+		name lsView
+		group grpLivesplit
+		cvar cg_fov_lr
+		rect 290 89 50 12
+		textscale .19
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 48
+		textaligny 10
+		forecolor .65 .85 .45 .80
+		visible 0
+		decoration
+	}
+
+	// -- Framerate --
+	itemDef {
+		name lsView
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Framerate"
+		rect 12 114 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsView
+		group grpLivesplit
+		rect 12 126 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsView
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Max FPS:"
+		cvar "com_maxfps"
+		cvarFloatList { "^330" 30 "^760" 60 "^583" 83 "^290" 90 "^6125" 125 "^1142" 142 }
+		rect 20 134 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	// -- Weapon --
+	itemDef {
+		name lsView
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Weapon"
+		rect 12 160 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsView
+		group grpLivesplit
+		rect 12 172 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsView
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Weapon Hand:"
+		cvar "cg_drawGun"
+		cvarFloatList { "Hidden" 0 "Right Hand" 1 "Left Hand" 2 }
+		rect 20 180 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+
+// ========================================
+//  TAB: Help
+// ========================================
+
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Console Commands"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^2livesplit_start     ^7- Start a new speedrun"
+		rect 16 48 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .80 .80 .75 .90
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^2livesplit_reset     ^7- Reset the current run"
+		rect 16 60 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .80 .80 .75 .90
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^2livesplit_pause     ^7- Pause / resume the timer"
+		rect 16 72 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .80 .80 .75 .90
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^2livesplit_undo      ^7- Undo the last split"
+		rect 16 84 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .80 .80 .75 .90
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^2livesplit_skip      ^7- Skip the current split"
+		rect 16 96 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .80 .80 .75 .90
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^2livesplit_reset_bests ^7- Clear all PB & best records"
+		rect 16 108 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .80 .80 .75 .90
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^2record <name>       ^7- Record a demo (SP enabled)"
+		rect 16 120 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .80 .80 .75 .90
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^2stoprecord          ^7- Stop recording the demo"
+		rect 16 132 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .80 .80 .75 .90
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Quick Tips"
+		rect 12 154 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		rect 12 166 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7- Splits auto-trigger on map transitions"
+		rect 16 174 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .65 .75
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7- Gold splits show your best-ever segment times"
+		rect 16 186 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .65 .75
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7- ^2Green ^7= ahead of PB, ^1Red ^7= behind PB"
+		rect 16 198 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .65 .75
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7- Panel Side: Right mirrors timer/labels inside panel"
+		rect 16 210 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .65 .75
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7- Saves persist between sessions (per difficulty)"
+		rect 16 222 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .65 .75
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsHelp
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7- Max Splits = 0 means auto (default ~6 visible)"
+		rect 16 234 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .65 .75
+		visible 0
+		decoration
+	}
+
+
+// ========================================
+//  TAB: Binds
+// ========================================
+
+	// Keybind status text (shows "Press a key..." prompt)
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		name keyBindStatus
+		rect 12 28 400 14
+		ownerdraw UI_KEYBINDSTATUS
+		text " "
+		forecolor 1 .75 0 1
+		textscale .20
+		textalignx 0
+		textalign 0
+		textaligny 10
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Speedrun Commands"
+		rect 12 44 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		rect 12 56 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Start Run:"
+		cvar "livesplit_start"
+		rect 20 64 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Reset Run:"
+		cvar "livesplit_reset"
+		rect 20 82 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Pause / Resume:"
+		cvar "livesplit_pause"
+		rect 20 100 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Undo Split:"
+		cvar "livesplit_undo"
+		rect 20 118 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Skip Split:"
+		cvar "livesplit_skip"
+		rect 20 136 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Reset (No Save):"
+		cvar "livesplit_reset_nosave"
+		rect 20 154 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Reset Category:"
+		cvar "livesplit_reset_category"
+		rect 20 172 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Check Settings:"
+		cvar "livesplit_check"
+		rect 20 190 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+
+	// -- Demo Playback Binds --
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Demo Playback"
+		rect 12 214 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .30 .55 .80 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		rect 12 226 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .12 .22 .38 .22
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Pause / Resume:"
+		cvar "demo_pause"
+		rect 20 232 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Speed Up:"
+		cvar "demo_speedup"
+		rect 20 250 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Slow Down:"
+		cvar "demo_slowdown"
+		rect 20 268 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Skip Forward (+5s):"
+		cvar "demo_skipforward"
+		rect 20 286 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_BIND
+		text "Rewind (-5s):"
+		cvar "demo_skipbackward"
+		rect 20 304 380 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .04
+		visible 0
+		mouseenter { show keyBindStatus }
+		mouseexit { hide keyBindStatus }
+	}
+
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Click a row, then press a key to assign it."
+		rect 16 326 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Press BACKSPACE to clear a binding."
+		rect 16 338 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Default demo keys: SPACE=Pause, LEFT/RIGHT=Speed"
+		rect 16 350 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsBinds
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3UP=Skip+5s, DOWN=Rewind-5s, ESC=Stop"
+		rect 16 362 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+
+
+// ========================================
+//  TAB: Actions
+// ========================================
+
+	// -- Run Control --
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Run Control"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	// Start
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type 1
+		text "Start Run"
+		rect 20 52 185 22
+		textalign 1
+		textalignx 92
+		textaligny 16
+		textscale .22
+		style WINDOW_STYLE_FILLED
+		backcolor .10 .20 .06 .50
+		forecolor .85 .95 .80 1
+		border 1
+		bordercolor .22 .38 .12 .45
+		visible 0
+		action { exec "livesplit_start" }
+		mouseEnter { setitemcolor lsActions backcolor .15 .30 .10 .80 }
+		mouseExit { setitemcolor lsActions backcolor .10 .20 .06 .50 }
+	}
+
+	// Pause
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type 1
+		text "Pause"
+		rect 215 52 185 22
+		textalign 1
+		textalignx 92
+		textaligny 16
+		textscale .22
+		style WINDOW_STYLE_FILLED
+		backcolor .10 .20 .06 .50
+		forecolor .85 .95 .80 1
+		border 1
+		bordercolor .22 .38 .12 .45
+		visible 0
+		action { exec "livesplit_pause" }
+		mouseEnter { setitemcolor lsActions backcolor .15 .30 .10 .80 }
+		mouseExit { setitemcolor lsActions backcolor .10 .20 .06 .50 }
+	}
+
+	// Undo
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type 1
+		text "Undo Split"
+		rect 20 82 185 22
+		textalign 1
+		textalignx 92
+		textaligny 16
+		textscale .22
+		style WINDOW_STYLE_FILLED
+		backcolor .10 .20 .06 .50
+		forecolor .85 .95 .80 1
+		border 1
+		bordercolor .22 .38 .12 .45
+		visible 0
+		action { exec "livesplit_undo" }
+		mouseEnter { setitemcolor lsActions backcolor .15 .30 .10 .80 }
+		mouseExit { setitemcolor lsActions backcolor .10 .20 .06 .50 }
+	}
+
+	// Skip
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type 1
+		text "Skip Split"
+		rect 215 82 185 22
+		textalign 1
+		textalignx 92
+		textaligny 16
+		textscale .22
+		style WINDOW_STYLE_FILLED
+		backcolor .10 .20 .06 .50
+		forecolor .85 .95 .80 1
+		border 1
+		bordercolor .22 .38 .12 .45
+		visible 0
+		action { exec "livesplit_skip" }
+		mouseEnter { setitemcolor lsActions backcolor .15 .30 .10 .80 }
+		mouseExit { setitemcolor lsActions backcolor .10 .20 .06 .50 }
+	}
+
+	// -- Reset Section --
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Reset"
+		rect 12 140 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .85 .35 .25 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		rect 12 152 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .50 .15 .10 .22
+		visible 0
+		decoration
+	}
+
+	// Reset Run
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type 1
+		text "Reset Run"
+		rect 30 164 150 18
+		textalign 1
+		textalignx 75
+		textaligny 13
+		textscale .20
+		style WINDOW_STYLE_FILLED
+		backcolor .25 .08 .06 .50
+		forecolor .95 .70 .65 1
+		border 1
+		bordercolor .50 .20 .15 .45
+		visible 0
+		action { exec "livesplit_reset" }
+		mouseEnter { setitemcolor lsActions backcolor .35 .12 .08 .80 }
+		mouseExit { setitemcolor lsActions backcolor .25 .08 .06 .50 }
+	}
+
+	// Reset Best Times
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type 1
+		text "Reset Best Times"
+		rect 230 164 160 18
+		textalign 1
+		textalignx 80
+		textaligny 13
+		textscale .20
+		style WINDOW_STYLE_FILLED
+		backcolor .25 .08 .06 .50
+		forecolor .95 .70 .65 1
+		border 1
+		bordercolor .50 .20 .15 .45
+		visible 0
+		action { exec "livesplit_reset_bests" }
+		mouseEnter { setitemcolor lsActions backcolor .35 .12 .08 .80 }
+		mouseExit { setitemcolor lsActions backcolor .25 .08 .06 .50 }
+	}
+
+	itemDef {
+		name lsActions
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^1Warning: ^7Reset Best Times clears all PB and gold times!"
+		rect 12 190 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .85 .50 .40 .65
+		visible 0
+		decoration
+	}
+
+
+// ========================================
+//  TAB: About
+// ========================================
+
+	// --- Title ---
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "RtCW Speedrun Patch"
+		rect 12 28 300 16
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 14
+		textscale .28
+		forecolor .75 .95 .55 .95
+		visible 0
+		decoration
+	}
+	// --- Version from engine cvar ---
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		cvar sp_version
+		rect 230 32 100 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .55 .75 .40 .70
+		visible 0
+		decoration
+	}
+
+	// --- Subtle separator ---
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		rect 12 46 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .45 .70 .30 .30
+		visible 0
+		decoration
+	}
+
+	// --- Description ---
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "A speedrun patch for Return to Castle Wolfenstein,"
+		rect 16 54 400 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .19
+		forecolor .75 .78 .70 .78
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "based on ^3Knightmare's ^7RtCW Patch ^31.42d^7."
+		rect 16 66 400 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .19
+		forecolor .75 .78 .70 .78
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Features built-in timer, split tracking, movement"
+		rect 16 80 400 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .19
+		forecolor .75 .78 .70 .78
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "tools and quality-of-life features for speedrunning."
+		rect 16 92 400 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .19
+		forecolor .75 .78 .70 .78
+		visible 0
+		decoration
+	}
+
+	// --- Version History ---
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Version History"
+		rect 12 114 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		rect 12 126 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^31.45a  ^8|  ^7Jun 21, 2021  ^8|  ^7First speedrun patch release"
+		rect 16 134 400 11
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 9
+		textscale .18
+		forecolor .70 .72 .65 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^31.45b  ^8|  ^7Mar 16, 2026  ^8|  ^7Major update  ^3(current)"
+		rect 16 147 400 11
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 9
+		textscale .18
+		forecolor .70 .72 .65 .80
+		visible 0
+		decoration
+	}
+
+	// --- Author ---
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Author"
+		rect 12 172 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		rect 12 184 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3KoRrNiK"
+		rect 16 192 400 14
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 12
+		textscale .24
+		forecolor .90 .85 .55 .95
+		visible 0
+		decoration
+	}
+
+	// --- Contact ---
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Contact"
+		rect 12 220 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		rect 12 232 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7Discord:  ^3korrnik"
+		rect 16 240 400 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .19
+		forecolor .75 .78 .70 .85
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7Discord ID:  ^3292279578389643264"
+		rect 16 253 400 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .19
+		forecolor .75 .78 .70 .85
+		visible 0
+		decoration
+	}
+
+	// --- Footer ---
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^8- - - - - - - - - - - - - - - - -"
+		rect 12 280 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .30 .40 .20 .30
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsAbout
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^7Based on Knightmare's Patch 1.42d  ^8|  ^7id Tech 3 engine"
+		rect 16 292 400 10
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 8
+		textscale .17
+		forecolor .55 .58 .50 .50
+		visible 0
+		decoration
+	}
+
+
+// ========================================
+//  TAB: Demos
+// ========================================
+
+	// -- Section header --
+	itemDef {
+		name lsDemos
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "Demo Browser"
+		rect 12 28 200 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .20
+		forecolor .45 .70 .30 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name lsDemos
+		group grpLivesplit
+		rect 12 40 400 1
+		style WINDOW_STYLE_FILLED
+		backcolor .22 .38 .12 .22
+		visible 0
+		decoration
+	}
+
+	// -- Demo list --
+	itemDef {
+		name demolist
+		group grpLivesplit
+		name lsDemos
+		rect 12 46 396 330
+		type ITEM_TYPE_LISTBOX
+		style WINDOW_STYLE_FILLED
+		elementwidth 380
+		elementheight 16
+		textscale .20
+		elementtype LISTBOX_TEXT
+		feeder FEEDER_DEMOS
+		textalign 3
+		textaligny 12
+		forecolor .85 .90 .80 .85
+		backcolor .08 .10 .06 .40
+		outlinecolor .25 .45 .15 .20
+		border 1
+		bordercolor .22 .38 .12 .30
+		visible 0
+		doubleClick { uiScript RunDemo }
+		mouseEnter { setitemcolor demolist bordercolor .45 .70 .30 .60 }
+		mouseExit { setitemcolor demolist bordercolor .22 .38 .12 .30 }
+	}
+
+	// -- Play button --
+	itemDef {
+		name lsDemos
+		group grpLivesplit
+		text "Play Demo"
+		type 1
+		textscale .22
+		style WINDOW_STYLE_FILLED
+		rect 12 384 120 20
+		textalign 1
+		textalignx 60
+		textaligny 15
+		forecolor .85 .95 .75 .90
+		backcolor .15 .28 .10 .50
+		border 1
+		bordercolor .22 .38 .12 .40
+		visible 0
+		action { uiScript RunDemo }
+		mouseEnter { setitemcolor lsDemos backcolor .20 .38 .15 .70 }
+		mouseExit { setitemcolor lsDemos backcolor .15 .28 .10 .50 }
+	}
+
+	// -- Refresh button --
+	itemDef {
+		name lsDemos
+		group grpLivesplit
+		text "Refresh"
+		type 1
+		textscale .22
+		style WINDOW_STYLE_FILLED
+		rect 142 384 100 20
+		textalign 1
+		textalignx 50
+		textaligny 15
+		forecolor .85 .88 .80 .90
+		backcolor .12 .15 .08 .50
+		border 1
+		bordercolor .22 .38 .12 .40
+		visible 0
+		action { uiScript LoadDemos }
+		mouseEnter { setitemcolor lsDemos backcolor .18 .22 .12 .70 }
+		mouseExit { setitemcolor lsDemos backcolor .12 .15 .08 .50 }
+	}
+
+	// -- Selected demo info --
+	itemDef {
+		name lsDemos
+		group grpLivesplit
+		type ITEM_TYPE_TEXT
+		text "^3Double-click ^7or select and press ^3Play Demo ^7to watch"
+		rect 12 410 400 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .17
+		forecolor .70 .70 .55 .55
+		visible 0
+		decoration
+	}
+
+}
+
+}

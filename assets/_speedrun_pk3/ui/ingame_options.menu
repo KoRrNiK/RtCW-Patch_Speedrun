@@ -56,8 +56,7 @@ itemDef {
 	type 1
 	textscale .23
 	group grpControlbutton
-//	rect 50 10 100 12
-	rect 92 10 100 12
+	rect 20 10 120 12
 	textalign 1
 	textalignx 50
 	textaligny 10
@@ -285,7 +284,297 @@ itemDef {
 //////////////////////
 
 
+	itemDef {
 
+	// only show this in this menu if "r_ignorehwgamma" is not set.  if it's set, it will require a
+	// vid_restart, so the option shows in the system->graphics location
+
+		cvarTest "r_ignorehwgamma"
+		showcvar { "0" }
+
+		name performance
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Brightness:"
+		cvarfloat "r_gamma" 1.3 .5 3
+		rect 82 170 290 12
+      	textalign ITEM_ALIGN_RIGHT
+      	textalignx 142
+      	textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+      	forecolor 1 1 1 1
+      	visible 0 
+    }	
+
+
+
+
+
+/////////////////
+// Crosshair
+/////////////////
+
+itemDef {
+	name ctr_crosshair
+	text "Crosshair"
+	type 1
+	textscale .23
+	group grpControlbutton
+	rect 160 10 120 12
+	textalign 1
+	textalignx 60
+	textaligny 10
+	forecolor 1 1 1 1
+	backcolor .1 .1 .1 0
+	visible 1
+	action { hide grpOptions ; show crosshair }
+	mouseEnter { setitemcolor ctr_crosshair backcolor .1 .37 .1 1 }
+	mouseExit { setitemcolor ctr_crosshair backcolor .37 .1 .1 1 }
+}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_MULTI
+		text "Crosshair Type:"
+		cvar "cg_crosshairType"
+		cvarFloatList { "Texture" 0 "Cross" 1 "Dot" 2 "Circle" 3 "Cross+Dot" 4 "T-shape" 5 "Thin Cross" 6 "Micro Dot" 7 "Diamond" 8 "Wide Cross" 9 "Circle+Dot" 10 "Chevron" 11 "Corners" 12 "X-Cross" 13 "Classic" 14 }
+		rect 82 28 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Size:"
+		cvarfloat "cg_crosshairSize" 24 4 96
+		rect 82 41 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Gap:"
+		cvarfloat "cg_crosshairGap" 1 0 3
+		rect 82 54 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Thickness:"
+		cvarfloat "cg_crosshairThickness" 1 0.2 4
+		rect 82 67 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Spread:"
+		cvarfloat "cg_crosshairSpread" 1 0 3
+		rect 82 80 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Alpha:"
+		cvarfloat "cg_crosshairAlpha" .6 .1 1
+		rect 82 93 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Color Red:"
+		cvarfloat "cg_crosshairColorR" 1 0 1
+		rect 82 110 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 .3 .3 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Color Green:"
+		cvarfloat "cg_crosshairColorG" 1 0 1
+		rect 82 123 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor .3 1 .3 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_SLIDER
+		text "Color Blue:"
+		cvarfloat "cg_crosshairColorB" 1 0 1
+		rect 82 136 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor .3 .3 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_MULTI
+		text "Outline:"
+		cvar "cg_crosshairStroke"
+		cvarFloatList { "Off" 0 "Thin" 1 "Medium" 2 "Thick" 3 }
+		rect 82 153 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_YESNO
+		text "Static:"
+		cvar "cg_crosshairStatic"
+		rect 82 166 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		type ITEM_TYPE_YESNO
+		text "Health Coloring:"
+		cvar "cg_crosshairHealth"
+		rect 82 179 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		rect 82 196 44 44
+		ownerdraw UI_CROSSHAIR
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 0
+		textaligny 50
+		style WINDOW_STYLE_FILLED
+		backcolor .1 .1 .1 .5
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		text "Color:"
+		rect 140 210 40 12
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 10
+		textscale .2
+		forecolor .8 .8 .8 1
+		visible 0
+		decoration
+	}
+
+	itemDef {
+		name crosshair
+		group grpOptions
+		rect 180 210 24 12
+		ownerdraw 264
+		visible 0
+	}
 
 
 /////////////////
@@ -298,9 +587,9 @@ itemDef {
 	type 1
 	textscale .23
 	group grpControlbutton
-	rect 270 10 100 12
+	rect 310 10 120 12
 	textalign 1
-	textalignx 50
+	textalignx 60
 	textaligny 10
 	forecolor 1 1 1 1
 	backcolor .1 .1 .1 0 
@@ -329,17 +618,12 @@ itemDef {
 		visible 0
 	}
 
-
-
-
-	
 	itemDef {
 		name view
 		group grpOptions
-		type ITEM_TYPE_MULTI				
-		text "Crosshair Size:"
-		cvar "cg_crosshairsize"
-		cvarFloatList { "Small" 24 "Medium" 32 "Large" 48 "Huge" 64 "Tiny" 12 }
+		type ITEM_TYPE_SLIDER
+		text "HUD Alpha:"
+		cvarfloat "cg_hudAlpha" .6 .1 1
 		rect 82 45 290 12
       	textalign ITEM_ALIGN_RIGHT
       	textalignx 142
@@ -351,51 +635,13 @@ itemDef {
       	visible 0
     		}
 
-
-	itemDef {
-		name view
-		group grpOptions
-		type ITEM_TYPE_SLIDER
-		text "Crosshair Alpha:"
-		cvarfloat "cg_crosshairAlpha" .6 .1 1
-		rect 82 65 290 12
-      	textalign ITEM_ALIGN_RIGHT
-      	textalignx 142
-      	textaligny 10
-		textscale .23
-		style WINDOW_STYLE_FILLED
-		backcolor 1 1 1 .07        
-      	forecolor 1 1 1 1
-      	visible 0
-    		}
-
-
-
-	itemDef {
-		name view
-		group grpOptions
-		type ITEM_TYPE_SLIDER
-		text "HUD Alpha:"
-		cvarfloat "cg_hudAlpha" .6 .1 1
-		rect 82 85 290 12
-      	textalign ITEM_ALIGN_RIGHT
-      	textalignx 142
-      	textaligny 10
-		textscale .23
-		style WINDOW_STYLE_FILLED
-		backcolor 1 1 1 .07        
-      	forecolor 1 1 1 1
-      	visible 0
-    		}
-
-
 	itemDef {
 		name view
 		group grpOptions
 		type ITEM_TYPE_SLIDER
 		text "Screen Size:"
 		cvarfloat "cg_viewsize" 100 30 100
-		rect 82 105 290 12
+		rect 82 60 290 12
       	textalign ITEM_ALIGN_RIGHT
       	textalignx 142
       	textaligny 10
@@ -405,33 +651,6 @@ itemDef {
       	forecolor 1 1 1 1
       	visible 0
     		}
-
-	// this \/ is actually lower than the crosshair stuff physically,
-	// but up here for reference to other sliders
-
-	itemDef {
-
-	// only show this in this menu if "r_ignorehwgamma" is not set.  if it's set, it will require a
-	// vid_restart, so the option shows in the system->graphics location
-
-		cvarTest "r_ignorehwgamma"
-		showcvar { "0" }
-
-		name performance
-		group grpOptions
-		type ITEM_TYPE_SLIDER
-		text "Brightness:"
-		cvarfloat "r_gamma" 1.3 .5 3
-		rect 82 170 290 12
-      	textalign ITEM_ALIGN_RIGHT
-      	textalignx 142
-      	textaligny 10
-		textscale .23
-		style WINDOW_STYLE_FILLED
-		backcolor 1 1 1 .07
-      	forecolor 1 1 1 1
-      	visible 0 
-    }	
 
 	itemDef {
 		name view
@@ -439,7 +658,7 @@ itemDef {
 		type ITEM_TYPE_SLIDER
 		text "Field of View D-U:"
 		cvarfloat "cg_fov_down" 90 60 160
-		rect 82 125 290 12
+		rect 82 80 290 12
       	textalign ITEM_ALIGN_RIGHT
       	textalignx 142
       	textaligny 10
@@ -454,7 +673,7 @@ itemDef {
 		name view
 		group grpOptions
 		cvar cg_fov_down 
-		rect 332 136 290 12
+		rect 332 91 290 12
 		textfont UI_FONT_NORMAL
 		textstyle ITEM_TEXTSTYLE_SHADOWED
 		textscale .25
@@ -472,7 +691,7 @@ itemDef {
 		type ITEM_TYPE_SLIDER
 		text "Field of View F-B:"
 		cvarfloat "cg_fov" 90 60 160
-		rect 82 145 290 12
+		rect 82 100 290 12
       	textalign ITEM_ALIGN_RIGHT
       	textalignx 142
       	textaligny 10
@@ -487,7 +706,7 @@ itemDef {
 		name view
 		group grpOptions
 		cvar cg_fov 
-		rect 332 156 290 12
+		rect 332 111 290 12
 		textfont UI_FONT_NORMAL
 		textstyle ITEM_TEXTSTYLE_SHADOWED
 		textscale .25
@@ -505,7 +724,7 @@ itemDef {
 		type ITEM_TYPE_SLIDER
 		text "Field of View L-R:"
 		cvarfloat "cg_fov_lr" 90 0 160
-		rect 82 165 290 12
+		rect 82 120 290 12
       	textalign ITEM_ALIGN_RIGHT
       	textalignx 142
       	textaligny 10
@@ -520,7 +739,7 @@ itemDef {
 		name view
 		group grpOptions
 		cvar cg_fov_lr 
-		rect 332 176 290 12
+		rect 332 131 290 12
 		textfont UI_FONT_NORMAL
 		textstyle ITEM_TEXTSTYLE_SHADOWED
 		textscale .25
@@ -539,7 +758,7 @@ itemDef {
 		text "Max FPS:"
 		cvar "com_maxfps"
 		cvarFloatList { "^330 FPS" 30 "^760 FPS" 60 "^583 FPS" 83 "^290 FPS" 90 "^6125 FPS" 125 "^1142 FPS" 142 }
-		rect 140 190 232 12
+		rect 140 145 232 12
       	textalign ITEM_ALIGN_RIGHT
       	textalignx 142
       	textaligny 10
@@ -549,74 +768,6 @@ itemDef {
       	forecolor 1 1 1 1
       	visible 0
     }
-	
-	itemDef {
-		name view
-		group grpOptions
-		type ITEM_TYPE_YESNO
-		text "Show FPS:"
-		cvar "cg_drawfps"
-		rect 140 210 232 12
-		textalign ITEM_ALIGN_RIGHT
-		textalignx 142
-		textaligny 10
-		textscale .23
-		style WINDOW_STYLE_FILLED
-		backcolor 1 1 1 .07
-		forecolor 1 1 1 1
-		visible 0
-	}
-	
-	itemDef {
-		name view
-		group grpOptions
-		type ITEM_TYPE_YESNO
-		text "Show Timer:"
-		cvar "cg_drawTimer"
-		rect 140 230 232 12
-		textalign ITEM_ALIGN_RIGHT
-		textalignx 142
-		textaligny 10
-		textscale .23
-		style WINDOW_STYLE_FILLED
-		backcolor 1 1 1 .07
-		forecolor 1 1 1 1
-		visible 0 
-	}
-	
-	itemDef {
-		name view
-		group grpOptions
-		type ITEM_TYPE_YESNO
-		text "Show Velocity:"
-		cvar "cg_drawVelocity"
-		rect 82 250 290 12
-		textalign ITEM_ALIGN_RIGHT
-		textalignx 142
-		textaligny 10
-		textscale .23
-		style WINDOW_STYLE_FILLED
-		backcolor 1 1 1 .07
-		forecolor 1 1 1 1
-		visible 0 
-	}
-	
-
-	
-
-	itemDef {
-		name view				
-		group grpOptions
-		rect 82 190 50 50
-		ownerdraw UI_CROSSHAIR
-		textalign ITEM_ALIGN_RIGHT
-		textalignx 0 
-		textaligny 50  
-		style WINDOW_STYLE_FILLED
-		backcolor 1 1 1 .07      
-		forecolor 1 1 1 1
-		visible 0
-   		}
 
 	}
 

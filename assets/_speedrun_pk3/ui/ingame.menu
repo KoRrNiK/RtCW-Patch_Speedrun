@@ -116,7 +116,7 @@ itemDef {
 	type 1
 	textfont UI_FONT_NORMAL
 
-	rect 36 90 58 20
+	rect 18 90 58 20
 	textstyle 6
 	textalign 1	
 	textalignx 29      
@@ -136,7 +136,7 @@ itemDef {
 	type 1
 	textfont UI_FONT_NORMAL
 
-	rect 126 90 58 20
+	rect 98 90 58 20
 	textstyle 6
 	textalign 1	
 	textalignx 29      
@@ -158,7 +158,7 @@ itemDef {
 	type 1
 	textfont UI_FONT_NORMAL
 
-	rect 232 90 58 20
+	rect 178 90 58 20
 	textstyle 6
 	textalign 1	
 	textalignx 29      
@@ -178,7 +178,7 @@ itemDef {
 	type 1
 	textfont UI_FONT_NORMAL
 
-	rect 350 90 58 20
+	rect 268 90 58 20
 	textstyle 6
 	textalign 1	
 	textalignx 29      
@@ -198,7 +198,7 @@ itemDef {
 	type 1
 	textfont UI_FONT_NORMAL
 
-	rect 454 90 58 20
+	rect 358 90 58 20
 	textstyle 6
 	textalign 1	
 	textalignx 29      
@@ -213,12 +213,32 @@ itemDef {
 	}
 
 itemDef {
+	name speedrun
+	text "SPEEDRUN"
+	type 1
+	textfont UI_FONT_NORMAL
+
+	rect 448 90 64 20
+	textstyle 6
+	textalign 1	
+	textalignx 32      
+	textaligny 14
+	textscale .23
+	forecolor .8 .8 .8 1
+	backcolor .4 .4 .4 .6 
+	visible 1 
+	action { open ingame_livesplit }
+	mouseEnter { setitemcolor speedrun backcolor .15 .1 .1 .7 }
+	mouseExit { setitemcolor speedrun backcolor .4 .4 .4 .6  }
+	}
+
+itemDef {
 	name leave
 	text "EXIT"
 	type 1
 	textfont UI_FONT_NORMAL
 
-	rect 548 90 58 20
+	rect 544 90 58 20
 	textstyle 6
 	textalign 1	
 	textalignx 29      

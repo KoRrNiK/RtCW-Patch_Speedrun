@@ -1,0 +1,18 @@
+# IDE / config
+.vs/
+*.user
+
+# Build output
+code/src/Debug/
+code/src/Debug_x64/
+code/src/bin/
+code/src/*/Debug/
+code/src/*/Debug_x64/
+code/src/*/bin/
+
+# Binary artifacts (keep source pk3 folder tracked)
+code/src/_speedrun_pk3/
+*.pk3
+
+# Binaries we don't want to track
+code/src/extractfuncs/extractfuncs.exe

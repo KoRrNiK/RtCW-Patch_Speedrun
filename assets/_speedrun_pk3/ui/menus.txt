@@ -21,6 +21,7 @@
 	loadMenu { "ui/play.menu" }			// (mx) added
 	loadMenu { "ui/chapter.menu" }			// added korrnik
 	loadMenu { "ui/load.menu" }			// (mx) added
+	loadMenu { "ui/setup_livesplit.menu" }		// speedrun settings
 	loadMenu { "ui/briefing.menu" }		//----(SA)	added
 
 
