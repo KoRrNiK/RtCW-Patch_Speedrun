@@ -1398,7 +1398,20 @@ void Cmd_Activate_f( gentity_t *ent ) {
 
 	if (traceEnt->classname && Q_stricmp(traceEnt->classname, "trigger_hurt") == 0) {
 		// ignore trigger_hurt so it's possible to pickup chalice (-1472 -3472 284) at the end of map crypt2
-		trap_Trace(&tr, tr.endpos, NULL, NULL, end, tr.entityNum, (CONTENTS_SOLID | CONTENTS_BODY | CONTENTS_CORPSE | CONTENTS_TRIGGER));
+		// but limit the remaining trace distance so we don't extend activation range through trigger_hurt volumes
+		vec3_t remainEnd;
+		float remainDist;
+
+		remainDist = 96.0f * (1.0f - tr.fraction);
+		if (remainDist < 1.0f) {
+			return;	// trigger_hurt was at the very end of our range, nothing beyond it
+		}
+		// clamp remaining distance so we don't activate things much farther than normal
+		if (remainDist > 32.0f) {
+			remainDist = 32.0f;
+		}
+		VectorMA(tr.endpos, remainDist, forward, remainEnd);
+		trap_Trace(&tr, tr.endpos, NULL, NULL, remainEnd, tr.entityNum, (CONTENTS_SOLID | CONTENTS_BODY | CONTENTS_CORPSE | CONTENTS_TRIGGER));
 
 		// muzzle and trigger_hurt are in player bbox?
 		if (tr.entityNum == ent->s.number) {

@@ -324,7 +324,7 @@ cvarTable_t gameCvarTable[] = {
 
 
 	{ &g_playerStart, "g_playerStart", "0", CVAR_ROM, 0, qfalse  },
-	{ &g_triggerLog, "g_triggerLog", "0", CVAR_ARCHIVE, 0, qfalse  },
+	{ &g_triggerLog, "g_triggerLog", "0", CVAR_ARCHIVE | CVAR_CHEAT, 0, qfalse  },
 
 	{ &g_maxclients, "sv_maxclients", "8", CVAR_SERVERINFO | CVAR_LATCH | CVAR_ARCHIVE, 0, qfalse  },
 	{ &g_maxGameClients, "g_maxGameClients", "0", CVAR_SERVERINFO | CVAR_LATCH | CVAR_ARCHIVE, 0, qfalse  },
@@ -648,12 +648,26 @@ void G_CheckForCursorHints( gentity_t *ent ) {
 
 	if (traceEnt->classname && Q_stricmp(traceEnt->classname, "trigger_hurt") == 0) {
 		// ignore trigger_hurt so it's possible to pickup chalice (-1472 -3472 284) at the end of map crypt2
-		trap_Trace(tr, tr->endpos, NULL, NULL, end, tr->entityNum, trace_contents);
+		// but limit remaining trace to prevent extending hint range through trigger_hurt volumes
+		vec3_t remainEnd;
+		float maxDist = zooming ? CH_MAX_DIST_ZOOM : CH_MAX_DIST;
+		float remainDist = maxDist * (1.0f - tr->fraction);
 
-		// muzzle and trigger_hurt are in player bbox?
-		if (tr->entityNum == ps->clientNum) {
+		if (remainDist < 1.0f) {
 			tr->entityNum = ENTITYNUM_NONE;
 			tr->fraction = 1;
+		} else {
+			if (remainDist > 32.0f) {
+				remainDist = 32.0f;
+			}
+			VectorMA(tr->endpos, remainDist, forward, remainEnd);
+			trap_Trace(tr, tr->endpos, NULL, NULL, remainEnd, tr->entityNum, trace_contents);
+
+			// muzzle and trigger_hurt are in player bbox?
+			if (tr->entityNum == ps->clientNum) {
+				tr->entityNum = ENTITYNUM_NONE;
+				tr->fraction = 1;
+			}
 		}
 	}
 
