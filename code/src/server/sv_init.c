@@ -280,7 +280,7 @@ void SV_FreeReliableCommandsForClient( client_t *cl ) {
 	Z_Free( cl->reliableCommands.commandLengths );
 	Z_Free( cl->reliableCommands.commands );
 	//
-	Com_Memset( &cl->reliableCommands, 0, sizeof( cl->reliableCommands.bufSize ) );
+	Com_Memset( &cl->reliableCommands, 0, sizeof( cl->reliableCommands ) );
 }
 
 /*
@@ -917,7 +917,7 @@ void SV_Init( void ) {
 	sv_allowAnonymous = Cvar_Get( "sv_allowAnonymous", "0", CVAR_SERVERINFO );
 
 	// systeminfo
-	Cvar_Get( "sv_cheats", "0", CVAR_SYSTEMINFO | CVAR_ROM );
+	Cvar_Get( "sv_cheats", "0", CVAR_SYSTEMINFO );
 	sv_serverid = Cvar_Get( "sv_serverid", "0", CVAR_SYSTEMINFO | CVAR_ROM );
 //----(SA) VERY VERY TEMPORARY!!!!!!!!!!!
 //----(SA) this is so Activision can test milestones with
