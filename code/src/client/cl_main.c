@@ -773,7 +773,7 @@ void CL_DemoSkipBackward_f( void ) {
 		clc.demoFastRewind = qtrue;
 
 		/* Read the gamestate message.
-		   CL_ParseGamestate → CL_ClearState (zeros cl) → repopulates
+		   CL_ParseGamestate > CL_ClearState (zeros cl) > repopulates
 		   baselines & configstrings.  With demoFastRewind it calls
 		   VM_Call(cgvm, CG_INIT) to reinitialise cgame state (resets
 		   snapshot numbers, entity data, etc.) WITHOUT destroying the
@@ -3913,6 +3913,7 @@ void CL_Init( void ) {
 	SCR_Init();
 
 	SCR_LiveSplitInit();
+	SCR_UpdateInit();
 
 	Cbuf_Execute();
 
@@ -3940,6 +3941,7 @@ void CL_Shutdown( void ) {
 	recursive = qtrue;
 
 	SCR_LiveSplitShutdown();
+	SCR_UpdateShutdown();
 
 	CL_Disconnect( qtrue );
 

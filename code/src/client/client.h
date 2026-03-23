@@ -562,6 +562,24 @@ void    SCR_FillRect( float x, float y, float width, float height,
 void    SCR_LiveSplitInit( void );
 void    SCR_LiveSplitShutdown( void );
 void    SCR_LiveSplitDraw( void );
+
+//
+// cl_update.c
+//
+void    SCR_UpdateInit( void );
+void    SCR_UpdateShutdown( void );
+void    SCR_UpdateDraw( void );
+
+//
+// cl_perf.c
+//
+void    SCR_PerfInit( void );
+void    SCR_PerfShutdown( void );
+void    SCR_PerfDraw( void );
+void    SCR_PerfRecordFrame( int tBeforeFirst, int tBeforeServer,
+                             int tBeforeEvents, int tBeforeClient,
+                             int tAfterClient );
+
 void    SCR_DrawPic( float x, float y, float width, float height, qhandle_t hShader );
 void    SCR_DrawNamedPic( float x, float y, float width, float height, const char *picname );
 

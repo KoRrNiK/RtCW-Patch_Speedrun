@@ -659,6 +659,32 @@ void SCR_DrawDemoRecording( void ) {
 
 /*
 =================
+SCR_DrawSvCheats
+
+Shows "sv_cheats 1" warning below the REC indicator (if recording)
+or at the top-left corner if not recording.
+=================
+*/
+void SCR_DrawSvCheats( void ) {
+	int x, y;
+	vec4_t cheatColor = { 1.0f, 0.85f, 0.0f, 0.90f };
+	vec4_t shadow     = { 0.0f, 0.0f,  0.0f, 0.35f };
+
+	if ( !Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+		return;
+	}
+
+	x = 6;
+	/* Place below REC if recording, otherwise at the top */
+	y = clc.demorecording ? 16 : 4;
+
+	SCR_DrawStringExt( x + 1, y + 1, 3, "sv_cheats 1", shadow, qtrue );
+	SCR_DrawStringExt( x, y, 3, "sv_cheats 1", cheatColor, qtrue );
+}
+
+
+/*
+=================
 SCR_DrawDemoPlayback
 
 Layout:
@@ -1107,6 +1133,8 @@ void SCR_Init( void )
 	scr_surroundright = Cvar_Get ("scr_surroundright", "0.666666666667", CVAR_ARCHIVE);		// right placement of HUD/menu elements on center screen in triple-wide video modes
 	// end Knightmare
 
+	SCR_PerfInit();
+
 	scr_initialized = qtrue;
 }
 
@@ -1190,6 +1218,7 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 		case CA_ACTIVE:
 			CL_CGameRendering( stereoFrame );
 			SCR_DrawDemoRecording();
+			SCR_DrawSvCheats();
 			SCR_DrawDemoPlayback();
 			break;
 		}
@@ -1211,6 +1240,12 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 
 	// LiveSplit overlay - always on top, visible in all states
 	SCR_LiveSplitDraw();
+
+	// Update notification overlay
+	SCR_UpdateDraw();
+
+	// Performance profiler overlay
+	SCR_PerfDraw();
 }
 
 /*
