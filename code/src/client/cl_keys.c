@@ -1702,7 +1702,16 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 					key == K_SPACE ||
 					key == K_ENTER ) && down ) {
 				if ( down ) {
-					CL_AddReliableCommand( "cameraInterrupt" );
+					// Debounce: only allow one cameraInterrupt per 500ms.
+					// Rapid inputs (e.g. scrollwheel bound to these keys)
+					// can queue multiple map-change commands, causing
+					// "VM_Create on cgame failed" during transitions.
+					static int lastCameraInterrupt = 0;
+					int now = Sys_Milliseconds();
+					if ( now - lastCameraInterrupt > 500 ) {
+						lastCameraInterrupt = now;
+						CL_AddReliableCommand( "cameraInterrupt" );
+					}
 				}
 				return;
 			}

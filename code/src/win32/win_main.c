@@ -664,6 +664,8 @@ void * QDECL Sys_LoadDll( const char *name, int( QDECL **entryPoint ) ( int, ...
 		if ( libHandle ) {
 			goto found_dll;
 		}
+		Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n",
+					 filename, GetLastError() );
 	}
 
 	basepath = Cvar_VariableString( "fs_basepath" );
@@ -674,12 +676,31 @@ void * QDECL Sys_LoadDll( const char *name, int( QDECL **entryPoint ) ( int, ...
 	libHandle = LoadLibrary( fn );
 
 	if ( !libHandle ) {
+		Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n",
+					 fn, GetLastError() );
+
+		// Also try basepath/Main directly (fallback if fs_game is empty)
+		if ( !gamedir[0] ) {
+			fn = FS_BuildOSPath( basepath, "Main", filename );
+			libHandle = LoadLibrary( fn );
+			if ( libHandle ) {
+				goto found_dll;
+			}
+			Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n",
+						 fn, GetLastError() );
+		}
+
 		if ( cdpath[0] ) {
 			fn = FS_BuildOSPath( cdpath, gamedir, filename );
 			libHandle = LoadLibrary( fn );
+			if ( !libHandle ) {
+				Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n",
+							 fn, GetLastError() );
+			}
 		}
 
 		if ( !libHandle ) {
+			Com_Printf( "^1Sys_LoadDll(%s): all search paths exhausted\n", name );
 			return NULL;
 		}
 	}

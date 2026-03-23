@@ -1003,6 +1003,16 @@ void CL_InitCGame( void ) {
 	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
 //	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, Cvar_VariableValue( "vm_cgame" ) );
 	if ( !cgvm ) {
+		// Retry once after a short delay.
+		// On rapid map transitions (e.g. cutscene skip), the previous
+		// FreeLibrary may not have fully released the DLL by the time
+		// LoadLibrary is called again.  A brief pause lets Windows
+		// finish the unload before we retry.
+		Com_Printf( "^3WARNING: VM_Create on cgame failed, retrying...\n" );
+		Sys_Sleep( 100 );
+		cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
+	}
+	if ( !cgvm ) {
 		Com_Error( ERR_DROP, "VM_Create on cgame failed" );
 	}
 	cls.state = CA_LOADING;
