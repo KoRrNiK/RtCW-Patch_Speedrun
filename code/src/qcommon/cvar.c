@@ -336,6 +336,18 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 	cvar_modifiedFlags |= var->flags;
 
 	if ( !force ) {
+		/* sv_cheats confirmation prompt */
+		if ( !Q_stricmp( var_name, "sv_cheats" ) && atoi( value ) != 0 && var->integer == 0 ) {
+			static qboolean svCheatsPending = qfalse;
+			if ( !svCheatsPending ) {
+				svCheatsPending = qtrue;
+				Com_Printf( "^3WARNING: Enabling sv_cheats will invalidate your speedrun.\n" );
+				Com_Printf( "^3Type 'sv_cheats 1' again to confirm.\n" );
+				return var;
+			}
+			svCheatsPending = qfalse;
+		}
+
 		if ( var->flags & CVAR_ROM ) {
 			Com_Printf( "%s is read only.\n", var_name );
 			return var;
@@ -761,7 +773,7 @@ void Cvar_Restart_f( void ) {
 			}
 			// clear the var completely, since we
 			// can't remove the index from the list
-			memset( var, 0, sizeof( var ) );
+			memset( var, 0, sizeof( *var ) );
 			continue;
 		}
 
@@ -895,7 +907,7 @@ Reads in all archived cvars
 ============
 */
 void Cvar_Init( void ) {
-	cvar_cheats = Cvar_Get( "sv_cheats", "0", CVAR_ROM | CVAR_SYSTEMINFO );
+	cvar_cheats = Cvar_Get( "sv_cheats", "0", CVAR_SYSTEMINFO );
 
 	Cmd_AddCommand( "toggle", Cvar_Toggle_f );
 	Cmd_AddCommand( "set", Cvar_Set_f );
