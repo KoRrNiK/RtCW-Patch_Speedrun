@@ -1778,6 +1778,54 @@ R_DebugPolygon
 void R_DebugPolygon( int color, int numPoints, float *points ) {
 	int i;
 
+	// Clip brush colors: 8-10 = see through walls, 11-13 = depth-tested (hidden behind walls)
+	if ( color >= 8 && color <= 13 ) {
+		int baseColor = ( color >= 11 ) ? color - 3 : color;  // normalize to 8-10
+		qboolean depthTest = ( color >= 11 ) ? qtrue : qfalse;
+
+		if ( depthTest ) {
+			GL_State( GLS_DEPTHMASK_TRUE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+		} else {
+			GL_State( GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+		}
+
+		switch ( baseColor ) {
+		case 8:  qglColor4f( 1.0f, 0.2f, 0.0f, 0.25f ); break;  // playerclip: orange
+		case 9:  qglColor4f( 0.0f, 0.4f, 1.0f, 0.25f ); break;  // monsterclip: blue
+		case 10: qglColor4f( 0.8f, 0.0f, 1.0f, 0.25f ); break;  // clipshot: purple
+		}
+
+		qglBegin( GL_POLYGON );
+		for ( i = 0 ; i < numPoints ; i++ ) {
+			qglVertex3fv( points + i * 3 );
+		}
+		qglEnd();
+
+		// draw wireframe outline with matching solid color
+		if ( depthTest ) {
+			GL_State( GLS_POLYMODE_LINE | GLS_DEPTHMASK_TRUE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+		} else {
+			GL_State( GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+		}
+		if ( !depthTest ) {
+			qglDepthRange( 0, 0 );
+		}
+		switch ( baseColor ) {
+		case 8:  qglColor4f( 1.0f, 0.3f, 0.0f, 0.8f ); break;
+		case 9:  qglColor4f( 0.0f, 0.5f, 1.0f, 0.8f ); break;
+		case 10: qglColor4f( 0.9f, 0.0f, 1.0f, 0.8f ); break;
+		}
+		qglBegin( GL_POLYGON );
+		for ( i = 0 ; i < numPoints ; i++ ) {
+			qglVertex3fv( points + i * 3 );
+		}
+		qglEnd();
+		if ( !depthTest ) {
+			qglDepthRange( 0, 1 );
+		}
+		return;
+	}
+
 	GL_State( GLS_DEPTHMASK_TRUE | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
 
 	// draw solid shade
@@ -1809,7 +1857,12 @@ Visualization aid for movement clipping debugging
 ====================
 */
 void R_DebugGraphics( void ) {
-	if ( !r_debugSurface->integer ) {
+	if ( !r_debugSurface->integer && !r_drawClips->integer ) {
+		return;
+	}
+
+	// Don't draw debug graphics during UI model rendering or when no world is loaded
+	if ( !tr.world ) {
 		return;
 	}
 

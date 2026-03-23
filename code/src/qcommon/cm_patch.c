@@ -1616,6 +1616,97 @@ DEBUGGING
 
 /*
 ==================
+CM_DrawClipBrushes
+
+Draws clip brush polygons for collision visualization.
+Mode 1 = playerclip only, 2 = all clip types.
+==================
+*/
+#ifndef BSPC
+static void CM_DrawClipBrushes( void ( *drawPoly )( int color, int numPoints, float *points ), int mode ) {
+	int i, j, k;
+	cbrush_t *brush;
+	winding_t *w;
+	int color;
+	int contents_mask;
+	int colorBase;  // 8 = see through walls, 11 = depth-tested
+
+	if ( !cm.numBrushes || !cm.brushes ) {
+		return;
+	}
+
+	// Modes 1-2: see through walls (colors 8-10)
+	// Modes 3-4: depth-tested / hidden behind walls (colors 11-13)
+	if ( mode <= 2 ) {
+		colorBase = 8;
+	} else {
+		colorBase = 11;
+	}
+
+	if ( mode == 1 || mode == 3 ) {
+		contents_mask = CONTENTS_PLAYERCLIP;
+	} else {
+		contents_mask = CONTENTS_PLAYERCLIP | CONTENTS_MONSTERCLIP | CONTENTS_CLIPSHOT;
+	}
+
+	for ( i = 0; i < cm.numBrushes; i++ ) {
+		brush = &cm.brushes[i];
+
+		if ( !( brush->contents & contents_mask ) ) {
+			continue;
+		}
+
+		if ( brush->numsides <= 0 || !brush->sides ) {
+			continue;
+		}
+
+		// Color by content type (8-10 = see through walls, 11-13 = depth tested)
+		if ( brush->contents & CONTENTS_PLAYERCLIP ) {
+			color = colorBase;       // orange
+		} else if ( brush->contents & CONTENTS_MONSTERCLIP ) {
+			color = colorBase + 1;   // blue
+		} else {
+			color = colorBase + 2;   // purple
+		}
+
+		// For each side of the brush, generate and draw a polygon
+		for ( j = 0; j < brush->numsides; j++ ) {
+			cplane_t *plane = brush->sides[j].plane;
+
+			if ( !plane ) {
+				continue;
+			}
+
+			// Create a large winding on this side's plane
+			w = BaseWindingForPlane( plane->normal, plane->dist );
+			if ( !w ) {
+				continue;
+			}
+
+			// Clip the winding by all other brush sides (keep interior)
+			for ( k = 0; k < brush->numsides && w; k++ ) {
+				vec3_t negNormal;
+				if ( k == j ) {
+					continue;
+				}
+				if ( !brush->sides[k].plane ) {
+					continue;
+				}
+				VectorNegate( brush->sides[k].plane->normal, negNormal );
+				ChopWindingInPlace( &w, negNormal, -brush->sides[k].plane->dist, 0.1f );
+			}
+
+			if ( w ) {
+				drawPoly( color, w->numpoints, w->p[0] );
+				FreeWinding( w );
+			}
+		}
+	}
+}
+#endif
+
+/*
+==================
 CM_DrawDebugSurface
 
 Called from the renderer
@@ -1629,6 +1720,7 @@ void CM_DrawDebugSurface( void ( *drawPoly )( int color, int numPoints, float *p
 	static cvar_t   *cv;
 #ifndef BSPC
 	static cvar_t   *cv2;
+	static cvar_t   *cv_drawClips;
 #endif
 	const patchCollide_t    *pc;
 	facet_t         *facet;
@@ -1643,6 +1735,14 @@ void CM_DrawDebugSurface( void ( *drawPoly )( int color, int numPoints, float *p
 #ifndef BSPC
 	if ( !cv2 ) {
 		cv2 = Cvar_Get( "r_debugSurface", "0", 0 );
+	}
+	if ( !cv_drawClips ) {
+		cv_drawClips = Cvar_Get( "r_drawClips", "0", 0 );
+	}
+
+	// Draw clip brushes if enabled
+	if ( cv_drawClips->integer ) {
+		CM_DrawClipBrushes( drawPoly, cv_drawClips->integer );
 	}
 
 	if ( cv2->integer != 1 ) {

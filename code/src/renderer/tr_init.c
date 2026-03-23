@@ -171,6 +171,7 @@ cvar_t  *r_overBrightBits;
 cvar_t  *r_mapOverBrightBits;
 
 cvar_t  *r_debugSurface;
+cvar_t  *r_drawClips;
 cvar_t  *r_simpleMipMaps;
 
 cvar_t  *r_showImages;
@@ -1204,6 +1205,7 @@ void R_Register( void ) {
 	r_verbose = ri.Cvar_Get( "r_verbose", "0", CVAR_CHEAT );
 	r_logFile = ri.Cvar_Get( "r_logFile", "0", CVAR_CHEAT );
 	r_debugSurface = ri.Cvar_Get( "r_debugSurface", "0", CVAR_CHEAT );
+	r_drawClips = ri.Cvar_Get( "r_drawClips", "0", CVAR_CHEAT );  // 1-2=see through walls, 3-4=depth tested
 	r_nobind = ri.Cvar_Get( "r_nobind", "0", CVAR_CHEAT );
 	r_showtris = ri.Cvar_Get( "r_showtris", "0", CVAR_CHEAT );
 	r_showsky = ri.Cvar_Get( "r_showsky", "0", CVAR_CHEAT );
