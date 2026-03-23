@@ -50,6 +50,8 @@ typedef struct
 
 	qboolean cdsFullscreen;
 
+	DEVMODE dm;             // stored fullscreen display settings for Alt-Tab restore
+
 	FILE *log_fp;
 } glwstate_t;
 
