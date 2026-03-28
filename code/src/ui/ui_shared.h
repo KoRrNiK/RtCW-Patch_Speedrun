@@ -42,7 +42,7 @@ If you have questions concerning this license or the applicable additional terms
 #define MAX_MENUDEFFILE 4096
 #define MAX_MENUFILE 32768
 #define MAX_MENUS 64
-#define MAX_MENUITEMS 256
+#define MAX_MENUITEMS 512
 #define MAX_COLOR_RANGES 10
 #define MAX_OPEN_MENUS 16
 
@@ -205,6 +205,7 @@ typedef struct editFieldDef_s {
 	int maxChars;                   // for edit fields
 	int maxPaintChars;              // for edit fields
 	int paintOffset;                //
+	int selAnchor;                  // text selection anchor (-1 = no selection)
 } editFieldDef_t;
 
 #define MAX_MULTI_CVARS 128	// Knightmare - increased from 32 to support longer video mode lists
@@ -472,6 +473,8 @@ menuDef_t *Menus_ActivateByName( const char *p );
 void Menu_Reset();
 qboolean Menus_AnyFullScreenVisible();
 void  Menus_Activate( menuDef_t *menu );
+extern menuDef_t *menuStack[];
+extern int openMenuCount;
 
 displayContextDef_t *Display_GetContext();
 void        *Display_CaptureItem( int x, int y );

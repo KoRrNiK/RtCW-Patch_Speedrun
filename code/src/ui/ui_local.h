@@ -916,6 +916,13 @@ typedef struct {
 	int spawnCount;
 	// -NERVE - SMF
 
+	/* color picker state */
+	float cpickH, cpickS, cpickV, cpickA;	/* current HSV + alpha */
+	int   cpickMode;						/* 0 = crosshair (separate R/G/B cvars), 1 = LS (string "R G B A") */
+	char  cpickCvar[64];					/* cvar name being edited (empty = picker closed) */
+	int   cpickDragMode;					/* 0 = none, 1 = wheel, 2 = vbar, 3 = abar */
+	char  cpickOrigColor[64];				/* saved original cvar value for cancel */
+
 }   uiInfo_t;
 
 extern uiInfo_t uiInfo;

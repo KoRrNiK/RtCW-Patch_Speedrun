@@ -2437,24 +2437,47 @@ qboolean Item_Multi_HandleKey( itemDef_t *item, int key )
 
 qboolean Item_TextField_HandleKey( itemDef_t *item, int key ) {
 	char buff[1024];
-	int len;
+	int len, realLen;
 	itemDef_t *newItem = NULL;
 	editFieldDef_t *editPtr = (editFieldDef_t*)item->typeData;
+	qboolean shiftDown = trap_Key_IsDown( K_SHIFT );
 
 	if ( item->cvar ) {
 
 		memset( buff, 0, sizeof( buff ) );
 		DC->getCVarString( item->cvar, buff, sizeof( buff ) );
-		len = strlen( buff );
+		realLen = strlen( buff );
+		len = realLen;
 		if ( editPtr->maxChars && len > editPtr->maxChars ) {
 			len = editPtr->maxChars;
 		}
 		if ( key & K_CHAR_FLAG ) {
 			key &= ~K_CHAR_FLAG;
 
+			/* Ctrl+A = select all */
+			if ( key == 'a' - 'a' + 1 ) {
+				editPtr->selAnchor = 0;
+				item->cursorPos = len;
+				if ( editPtr->maxPaintChars && item->cursorPos > editPtr->maxPaintChars ) {
+					editPtr->paintOffset = item->cursorPos - editPtr->maxPaintChars;
+				}
+				return qtrue;
+			}
 
 			if ( key == 'h' - 'a' + 1 ) {      // ctrl-h is backspace
-				if ( item->cursorPos > 0 ) {
+				/* delete selection if active */
+				if ( editPtr->selAnchor >= 0 && editPtr->selAnchor != item->cursorPos ) {
+					int selMin = editPtr->selAnchor < item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+					int selMax = editPtr->selAnchor > item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+					memmove( &buff[selMin], &buff[selMax], realLen + 1 - selMax );
+					realLen -= ( selMax - selMin );
+					len = realLen;
+					item->cursorPos = selMin;
+					editPtr->selAnchor = selMin;
+					if ( item->cursorPos < editPtr->paintOffset ) {
+						editPtr->paintOffset = item->cursorPos;
+					}
+				} else if ( item->cursorPos > 0 ) {
 					memmove( &buff[item->cursorPos - 1], &buff[item->cursorPos], len + 1 - item->cursorPos );
 					item->cursorPos--;
 					if ( item->cursorPos < editPtr->paintOffset ) {
@@ -2486,6 +2509,20 @@ qboolean Item_TextField_HandleKey( itemDef_t *item, int key ) {
 				}
 			}
 
+			/* if there is a selection, delete it first */
+			if ( editPtr->selAnchor >= 0 && editPtr->selAnchor != item->cursorPos ) {
+				int selMin = editPtr->selAnchor < item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+				int selMax = editPtr->selAnchor > item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+				memmove( &buff[selMin], &buff[selMax], realLen + 1 - selMax );
+				realLen -= ( selMax - selMin );
+				len = realLen;
+				item->cursorPos = selMin;
+				editPtr->selAnchor = selMin;
+				if ( item->cursorPos < editPtr->paintOffset ) {
+					editPtr->paintOffset = item->cursorPos;
+				}
+			}
+
 			if ( !DC->getOverstrikeMode() ) {
 				if ( ( len == MAX_EDITFIELD - 1 ) || ( editPtr->maxChars && len >= editPtr->maxChars ) ) {
 					return qtrue;
@@ -2507,11 +2544,25 @@ qboolean Item_TextField_HandleKey( itemDef_t *item, int key ) {
 					editPtr->paintOffset++;
 				}
 			}
+			editPtr->selAnchor = item->cursorPos;	/* clear selection after typing */
 
 		} else {
 
 			if ( key == K_DEL || key == K_KP_DEL ) {
-				if ( item->cursorPos < len ) {
+				/* delete selection if active */
+				if ( editPtr->selAnchor >= 0 && editPtr->selAnchor != item->cursorPos ) {
+					int selMin = editPtr->selAnchor < item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+					int selMax = editPtr->selAnchor > item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+					memmove( &buff[selMin], &buff[selMax], realLen + 1 - selMax );
+					realLen -= ( selMax - selMin );
+					len = realLen;
+					item->cursorPos = selMin;
+					editPtr->selAnchor = selMin;
+					if ( item->cursorPos < editPtr->paintOffset ) {
+						editPtr->paintOffset = item->cursorPos;
+					}
+					DC->setCVar( item->cvar, buff );
+				} else if ( item->cursorPos < len ) {
 					memmove( buff + item->cursorPos, buff + item->cursorPos + 1, len - item->cursorPos );
 					DC->setCVar( item->cvar, buff );
 				}
@@ -2519,13 +2570,14 @@ qboolean Item_TextField_HandleKey( itemDef_t *item, int key ) {
 			}
 
 			if ( key == K_RIGHTARROW || key == K_KP_RIGHTARROW ) {
-				if ( editPtr->maxPaintChars && item->cursorPos >= editPtr->maxPaintChars && item->cursorPos < len ) {
-					item->cursorPos++;
-					editPtr->paintOffset++;
-					return qtrue;
-				}
 				if ( item->cursorPos < len ) {
 					item->cursorPos++;
+					if ( editPtr->maxPaintChars && item->cursorPos > editPtr->paintOffset + editPtr->maxPaintChars ) {
+						editPtr->paintOffset++;
+					}
+				}
+				if ( !shiftDown ) {
+					editPtr->selAnchor = item->cursorPos;
 				}
 				return qtrue;
 			}
@@ -2537,25 +2589,60 @@ qboolean Item_TextField_HandleKey( itemDef_t *item, int key ) {
 				if ( item->cursorPos < editPtr->paintOffset ) {
 					editPtr->paintOffset--;
 				}
+				if ( !shiftDown ) {
+					editPtr->selAnchor = item->cursorPos;
+				}
 				return qtrue;
 			}
 
-			if ( key == K_HOME || key == K_KP_HOME ) { // || ( tolower(key) == 'a' && trap_Key_IsDown( K_CTRL ) ) ) {
+			if ( key == K_HOME || key == K_KP_HOME ) {
 				item->cursorPos = 0;
 				editPtr->paintOffset = 0;
+				if ( !shiftDown ) {
+					editPtr->selAnchor = 0;
+				}
 				return qtrue;
 			}
 
-			if ( key == K_END || key == K_KP_END ) { // ( tolower(key) == 'e' && trap_Key_IsDown( K_CTRL ) ) ) {
+			if ( key == K_END || key == K_KP_END ) {
 				item->cursorPos = len;
-				if ( item->cursorPos > editPtr->maxPaintChars ) {
+				if ( editPtr->maxPaintChars && item->cursorPos > editPtr->maxPaintChars ) {
 					editPtr->paintOffset = len - editPtr->maxPaintChars;
+				}
+				if ( !shiftDown ) {
+					editPtr->selAnchor = item->cursorPos;
 				}
 				return qtrue;
 			}
 
 			if ( key == K_INS || key == K_KP_INS ) {
 				DC->setOverstrikeMode( !DC->getOverstrikeMode() );
+				return qtrue;
+			}
+
+			if ( key == K_BACKSPACE ) {
+				/* delete selection if active */
+				if ( editPtr->selAnchor >= 0 && editPtr->selAnchor != item->cursorPos ) {
+					int selMin = editPtr->selAnchor < item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+					int selMax = editPtr->selAnchor > item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+					memmove( &buff[selMin], &buff[selMax], realLen + 1 - selMax );
+					realLen -= ( selMax - selMin );
+					len = realLen;
+					item->cursorPos = selMin;
+					editPtr->selAnchor = selMin;
+					if ( item->cursorPos < editPtr->paintOffset ) {
+						editPtr->paintOffset = item->cursorPos;
+					}
+					DC->setCVar( item->cvar, buff );
+				} else if ( item->cursorPos > 0 ) {
+					memmove( &buff[item->cursorPos - 1], &buff[item->cursorPos], len + 1 - item->cursorPos );
+					item->cursorPos--;
+					editPtr->selAnchor = item->cursorPos;
+					if ( item->cursorPos < editPtr->paintOffset ) {
+						editPtr->paintOffset--;
+					}
+					DC->setCVar( item->cvar, buff );
+				}
 				return qtrue;
 			}
 		}
@@ -3073,16 +3160,56 @@ void Menu_HandleKey( menuDef_t *menu, int key, qboolean down ) {
 	}
 
 	if ( g_editingField && down ) {
-		if ( !Item_TextField_HandleKey( g_editItem, key ) ) {
+		if ( key == K_MOUSE1 || key == K_MOUSE2 || key == K_MOUSE3 ) {
+			/* if click is on the same edit field, reposition cursor */
+			if ( g_editItem && Rect_ContainsPoint( &g_editItem->window.rect, DC->cursorx, DC->cursory ) &&
+				 ( g_editItem->type == ITEM_TYPE_EDITFIELD || g_editItem->type == ITEM_TYPE_NUMERICFIELD || g_editItem->type == ITEM_TYPE_VALIDFILEFIELD ) ) {
+				editFieldDef_t *editPtr = (editFieldDef_t *)g_editItem->typeData;
+				char buff[1024];
+				int bLen, bestPos;
+				int offset;
+				float textStartX, clickRelX, cumW;
+
+				buff[0] = '\0';
+				if ( g_editItem->cvar ) {
+					DC->getCVarString( g_editItem->cvar, buff, sizeof( buff ) );
+				}
+				bLen = strlen( buff );
+
+				offset = ( g_editItem->text && *g_editItem->text ) ? 8 : 0;
+				textStartX = g_editItem->textRect.x + g_editItem->textRect.w + offset;
+				clickRelX = (float)DC->cursorx - textStartX;
+
+				bestPos = editPtr->paintOffset;
+				cumW = 0.0f;
+				for ( i = editPtr->paintOffset; i < bLen; i++ ) {
+					char tmp[2];
+					float charW;
+					if ( editPtr->maxPaintChars && i >= editPtr->paintOffset + editPtr->maxPaintChars ) {
+						break;
+					}
+					tmp[0] = buff[i]; tmp[1] = '\0';
+					charW = (float)DC->textWidth( tmp, g_editItem->font, g_editItem->textscale, 0 );
+					if ( clickRelX < cumW + charW * 0.5f ) {
+						break;
+					}
+					cumW += charW;
+					bestPos = i + 1;
+				}
+				g_editItem->cursorPos = bestPos;
+				editPtr->selAnchor = bestPos;
+				inHandler = qfalse;
+				return;
+			}
+			/* click outside the field - exit editing */
+			g_editingField = qfalse;
+			g_editItem = NULL;
+			Display_MouseMove( NULL, DC->cursorx, DC->cursory );
+		} else if ( !Item_TextField_HandleKey( g_editItem, key ) ) {
 			g_editingField = qfalse;
 			g_editItem = NULL;
 			inHandler = qfalse;
 			return;
-		} else if ( key == K_MOUSE1 || key == K_MOUSE2 || key == K_MOUSE3 ) {
-			g_editingField = qfalse;
-			g_editItem = NULL;
-			Display_MouseMove( NULL, DC->cursorx, DC->cursory );
-//		} else if (key == K_TAB || key == K_UPARROW || key == K_DOWNARROW) {
 		} else {
 			return;
 		}
@@ -3184,7 +3311,43 @@ void Menu_HandleKey( menuDef_t *menu, int key, qboolean down ) {
 				}
 			} else if ( item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_NUMERICFIELD || item->type == ITEM_TYPE_VALIDFILEFIELD ) {
 				if ( Rect_ContainsPoint( &item->window.rect, DC->cursorx, DC->cursory ) ) {
-					item->cursorPos = 0;
+					/* click-to-position: place cursor where the user clicked */
+					{
+						editFieldDef_t *editPtr = (editFieldDef_t *)item->typeData;
+						char buff[1024];
+						int len, i, bestPos;
+						int offset;
+						float textStartX, clickRelX, cumW;
+
+						buff[0] = '\0';
+						if ( item->cvar ) {
+							DC->getCVarString( item->cvar, buff, sizeof( buff ) );
+						}
+						len = strlen( buff );
+
+						offset = ( item->text && *item->text ) ? 8 : 0;
+						textStartX = item->textRect.x + item->textRect.w + offset;
+						clickRelX = (float)DC->cursorx - textStartX;
+
+						bestPos = editPtr->paintOffset;
+						cumW = 0.0f;
+						for ( i = editPtr->paintOffset; i < len; i++ ) {
+							char tmp[2];
+							float charW;
+							if ( editPtr->maxPaintChars && i >= editPtr->paintOffset + editPtr->maxPaintChars ) {
+								break;
+							}
+							tmp[0] = buff[i]; tmp[1] = '\0';
+							charW = (float)DC->textWidth( tmp, item->font, item->textscale, 0 );
+							if ( clickRelX < cumW + charW * 0.5f ) {
+								break;
+							}
+							cumW += charW;
+							bestPos = i + 1;
+						}
+						item->cursorPos = bestPos;
+						editPtr->selAnchor = bestPos;	/* reset selection on plain click */
+					}
 					g_editingField = qtrue;
 					g_editItem = item;
 					DC->setOverstrikeMode( qtrue );
@@ -3223,7 +3386,19 @@ void Menu_HandleKey( menuDef_t *menu, int key, qboolean down ) {
 	case K_MOUSE3:
 		if ( item ) {
 			if ( item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_NUMERICFIELD || item->type == ITEM_TYPE_VALIDFILEFIELD ) {
-				item->cursorPos = 0;
+				/* place cursor at the end of text */
+				{
+					char buff2[1024];
+					editFieldDef_t *editPtr2 = (editFieldDef_t *)item->typeData;
+					buff2[0] = '\0';
+					if ( item->cvar ) {
+						DC->getCVarString( item->cvar, buff2, sizeof( buff2 ) );
+					}
+					item->cursorPos = strlen( buff2 );
+					if ( editPtr2->maxPaintChars && item->cursorPos > editPtr2->maxPaintChars ) {
+						editPtr2->paintOffset = item->cursorPos - editPtr2->maxPaintChars;
+					}
+				}
 				g_editingField = qtrue;
 				g_editItem = item;
 				DC->setOverstrikeMode( qtrue );
@@ -3549,6 +3724,41 @@ void Item_TextField_Paint( itemDef_t *item ) {
 	}
 
 	offset = ( item->text && *item->text ) ? 8 : 0;
+
+	/* Draw selection highlight if active */
+	if ( editPtr->selAnchor >= 0 && editPtr->selAnchor != item->cursorPos &&
+		 ( item->window.flags & WINDOW_HASFOCUS ) && g_editingField ) {
+		int selMin = editPtr->selAnchor < item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+		int selMax = editPtr->selAnchor > item->cursorPos ? editPtr->selAnchor : item->cursorPos;
+		int visMin = selMin - editPtr->paintOffset;
+		int visMax = selMax - editPtr->paintOffset;
+		float textX = item->textRect.x + item->textRect.w + offset;
+		vec4_t selColor = { 0.30f, 0.55f, 0.80f, 0.45f };
+
+		if ( visMin < 0 ) visMin = 0;
+		if ( editPtr->maxPaintChars && visMax > editPtr->maxPaintChars ) {
+			visMax = editPtr->maxPaintChars;
+		}
+		if ( visMin < visMax ) {
+			char tmp[1024];
+			float xStart, xEnd, lineH;
+
+			/* measure text up to visMin */
+			Q_strncpyz( tmp, buff + editPtr->paintOffset, visMin + 1 );
+			xStart = (float)DC->textWidth( tmp, item->font, item->textscale, 0 );
+
+			/* measure text up to visMax */
+			Q_strncpyz( tmp, buff + editPtr->paintOffset, visMax + 1 );
+			xEnd = (float)DC->textWidth( tmp, item->font, item->textscale, 0 );
+
+			lineH = (float)DC->textHeight( "A", item->font, item->textscale, 0 );
+
+			DC->fillRect( textX + xStart, item->textRect.y - lineH + 2,
+						  xEnd - xStart, lineH + 2,
+						  selColor, item->textRect.scrAlign );
+		}
+	}
+
 	if ( item->window.flags & WINDOW_HASFOCUS && g_editingField ) {
 		char cursor = DC->getOverstrikeMode() ? '_' : '|';
 		DC->drawTextWithCursor( item->textRect.x + item->textRect.w + offset, item->textRect.y, item->font, item->textscale, newColor, buff + editPtr->paintOffset, item->cursorPos - editPtr->paintOffset, cursor, editPtr->maxPaintChars, item->textStyle, item->textRect.scrAlign );
@@ -5196,6 +5406,7 @@ void Item_ValidateTypeData( itemDef_t *item ) {
 	} else if ( item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_NUMERICFIELD || item->type == ITEM_TYPE_VALIDFILEFIELD || item->type == ITEM_TYPE_YESNO || item->type == ITEM_TYPE_BIND || item->type == ITEM_TYPE_SLIDER || item->type == ITEM_TYPE_TEXT ) {
 		item->typeData = UI_Alloc( sizeof( editFieldDef_t ) );
 		memset( item->typeData, 0, sizeof( editFieldDef_t ) );
+		( (editFieldDef_t *) item->typeData )->selAnchor = -1;
 		if ( item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_VALIDFILEFIELD ) {
 			if ( !( (editFieldDef_t *) item->typeData )->maxPaintChars ) {
 				( (editFieldDef_t *) item->typeData )->maxPaintChars = MAX_EDITFIELD;

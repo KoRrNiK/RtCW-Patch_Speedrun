@@ -39,6 +39,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "ui_local.h"
+#include <math.h>
 
 uiInfo_t uiInfo;
 
@@ -183,6 +184,7 @@ void _UI_KeyEvent( int key, qboolean down );
 void _UI_MouseEvent( int dx, int dy );
 void _UI_Refresh( int realtime );
 qboolean _UI_IsFullscreen( void );
+static void UI_DrawColorPicker( void );
 #if defined( __MACOS__ )
 #pragma export on
 #endif
@@ -731,6 +733,11 @@ void _UI_Refresh( int realtime ) {
 		UI_BuildServerStatus( qfalse );
 		// refresh find player list
 		UI_BuildFindPlayerList( qfalse );
+	}
+
+	/* ---- Color picker overlay ---- */
+	if ( uiInfo.cpickCvar[0] != '\0' ) {
+		UI_DrawColorPicker();
 	}
 
 	// draw cursor
@@ -2500,6 +2507,577 @@ static void UI_DrawCrosshair( rectDef_t *rect, float scale, vec4_t color ) {
 
 /*
 ===============
+Color picker helpers
+===============
+*/
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+static void UI_HSVtoRGB( float h, float s, float v, float *r, float *g, float *b ) {
+	float c, x, m, hp;
+	int hi;
+
+	c = v * s;
+	hp = h / 60.0f;
+	hi = (int)hp;
+	x = c * ( 1.0f - fabsf( fmodf( hp, 2.0f ) - 1.0f ) );
+	m = v - c;
+
+	switch ( hi % 6 ) {
+	case 0: *r = c; *g = x; *b = 0; break;
+	case 1: *r = x; *g = c; *b = 0; break;
+	case 2: *r = 0; *g = c; *b = x; break;
+	case 3: *r = 0; *g = x; *b = c; break;
+	case 4: *r = x; *g = 0; *b = c; break;
+	default: *r = c; *g = 0; *b = x; break;
+	}
+	*r += m;
+	*g += m;
+	*b += m;
+}
+
+static void UI_RGBtoHSV( float r, float g, float b, float *h, float *s, float *v ) {
+	float cmax, cmin, d;
+
+	cmax = r > g ? ( r > b ? r : b ) : ( g > b ? g : b );
+	cmin = r < g ? ( r < b ? r : b ) : ( g < b ? g : b );
+	d = cmax - cmin;
+	*v = cmax;
+
+	if ( cmax < 0.001f ) {
+		*s = 0.0f;
+		*h = 0.0f;
+		return;
+	}
+	*s = d / cmax;
+	if ( d < 0.001f ) {
+		*h = 0.0f;
+		return;
+	}
+
+	if ( cmax == r ) {
+		*h = 60.0f * fmodf( ( g - b ) / d + 6.0f, 6.0f );
+	} else if ( cmax == g ) {
+		*h = 60.0f * ( ( b - r ) / d + 2.0f );
+	} else {
+		*h = 60.0f * ( ( r - g ) / d + 4.0f );
+	}
+}
+
+/* Color picker panel position (absolute screen coords, centered) */
+#define CPICK_PX            200		/* panel X */
+#define CPICK_PY            120		/* panel Y */
+#define CPICK_PW            200		/* panel width */
+#define CPICK_PH            210		/* panel height */
+
+/* Layout constants (relative to panel origin) */
+#define CPICK_WHEEL_CX      80		/* wheel center X offset */
+#define CPICK_WHEEL_CY      85		/* wheel center Y offset */
+#define CPICK_WHEEL_R       58		/* wheel radius */
+#define CPICK_VBAR_X        155		/* value bar X offset */
+#define CPICK_VBAR_Y        27		/* value bar Y offset */
+#define CPICK_VBAR_W        14		/* value bar width */
+#define CPICK_VBAR_H        116		/* value bar height */
+#define CPICK_ABAR_X        14		/* alpha bar X offset */
+#define CPICK_ABAR_Y        155		/* alpha bar Y offset */
+#define CPICK_ABAR_W        155		/* alpha bar width */
+#define CPICK_ABAR_H        14		/* alpha bar height */
+#define CPICK_PREV_X        14		/* preview square X offset */
+#define CPICK_PREV_Y        180		/* preview square Y offset */
+#define CPICK_PREV_W        30		/* preview width */
+#define CPICK_PREV_H        18		/* preview height */
+#define CPICK_STEP          3		/* pixel step for wheel rendering */
+
+/*
+===============
+UI_CpickWriteColor
+  Writes the current picker HSV+A back to the target cvar(s).
+===============
+*/
+static void UI_CpickWriteColor( void ) {
+	float r, g, b;
+	UI_HSVtoRGB( uiInfo.cpickH, uiInfo.cpickS, uiInfo.cpickV, &r, &g, &b );
+
+	if ( uiInfo.cpickMode == 0 ) {
+		/* crosshair: separate float cvars 0.0-1.0 */
+		trap_Cvar_Set( "cg_crosshairColorR", va( "%f", r ) );
+		trap_Cvar_Set( "cg_crosshairColorG", va( "%f", g ) );
+		trap_Cvar_Set( "cg_crosshairColorB", va( "%f", b ) );
+		trap_Cvar_Set( "cg_crosshairAlpha", va( "%f", uiInfo.cpickA ) );
+	} else {
+		/* livesplit: single string cvar "R G B A" with RGB 0-255, A 0.0-1.0 */
+		trap_Cvar_Set( uiInfo.cpickCvar,
+			va( "%.0f %.0f %.0f %.2f", r * 255.0f, g * 255.0f, b * 255.0f, uiInfo.cpickA ) );
+	}
+}
+
+/*
+===============
+UI_CpickReadColor
+  Reads current color from the target cvar(s) into picker HSV+A.
+===============
+*/
+static void UI_CpickReadColor( void ) {
+	float r, g, b, a;
+
+	if ( uiInfo.cpickMode == 0 ) {
+		r = trap_Cvar_VariableValue( "cg_crosshairColorR" );
+		g = trap_Cvar_VariableValue( "cg_crosshairColorG" );
+		b = trap_Cvar_VariableValue( "cg_crosshairColorB" );
+		a = trap_Cvar_VariableValue( "cg_crosshairAlpha" );
+	} else {
+		char buf[64];
+		trap_Cvar_VariableStringBuffer( uiInfo.cpickCvar, buf, sizeof( buf ) );
+		if ( sscanf( buf, "%f %f %f %f", &r, &g, &b, &a ) >= 3 ) {
+			r /= 255.0f; g /= 255.0f; b /= 255.0f;
+		} else {
+			r = g = b = 1.0f; a = 1.0f;
+		}
+	}
+
+	if ( r < 0 ) r = 0; if ( r > 1 ) r = 1;
+	if ( g < 0 ) g = 0; if ( g > 1 ) g = 1;
+	if ( b < 0 ) b = 0; if ( b > 1 ) b = 1;
+	if ( a < 0 ) a = 0; if ( a > 1 ) a = 1;
+
+	UI_RGBtoHSV( r, g, b, &uiInfo.cpickH, &uiInfo.cpickS, &uiInfo.cpickV );
+	uiInfo.cpickA = a;
+}
+
+/*
+===============
+UI_CpickOpenForCvar
+  Called when a color preview square is clicked.
+  Sets up picker state and opens the popup menu.
+===============
+*/
+static void UI_CpickOpenForCvar( const char *cvarName, int mode ) {
+	Q_strncpyz( uiInfo.cpickCvar, cvarName, sizeof( uiInfo.cpickCvar ) );
+	uiInfo.cpickMode = mode;
+	uiInfo.cpickDragMode = 0;
+	/* Save original color so we can restore on cancel */
+	if ( mode == 0 ) {
+		float cr = trap_Cvar_VariableValue( "cg_crosshairColorR" );
+		float cg = trap_Cvar_VariableValue( "cg_crosshairColorG" );
+		float cb = trap_Cvar_VariableValue( "cg_crosshairColorB" );
+		float ca = trap_Cvar_VariableValue( "cg_crosshairAlpha" );
+		Com_sprintf( uiInfo.cpickOrigColor, sizeof( uiInfo.cpickOrigColor ),
+			"%f %f %f %f", cr, cg, cb, ca );
+	} else {
+		trap_Cvar_VariableStringBuffer( cvarName, uiInfo.cpickOrigColor, sizeof( uiInfo.cpickOrigColor ) );
+	}
+	UI_CpickReadColor();
+}
+
+/*
+===============
+UI_CpickClose
+  Closes the color picker popup and restores focus to the parent menu.
+===============
+*/
+static void UI_CpickClose( qboolean cancel ) {
+	uiInfo.cpickDragMode = 0;
+
+	/* If cancelling, restore original cvar value */
+	if ( cancel && uiInfo.cpickOrigColor[0] != '\0' ) {
+		if ( uiInfo.cpickMode == 0 ) {
+			float cr, cg, cb, ca;
+			if ( sscanf( uiInfo.cpickOrigColor, "%f %f %f %f", &cr, &cg, &cb, &ca ) >= 3 ) {
+				trap_Cvar_Set( "cg_crosshairColorR", va( "%f", cr ) );
+				trap_Cvar_Set( "cg_crosshairColorG", va( "%f", cg ) );
+				trap_Cvar_Set( "cg_crosshairColorB", va( "%f", cb ) );
+				trap_Cvar_Set( "cg_crosshairAlpha", va( "%f", ca ) );
+			}
+		} else {
+			trap_Cvar_Set( uiInfo.cpickCvar, uiInfo.cpickOrigColor );
+		}
+	}
+
+	/* Mark picker as closed - this is the ONLY thing that matters */
+	uiInfo.cpickCvar[0] = '\0';
+	uiInfo.cpickOrigColor[0] = '\0';
+}
+
+/*
+===============
+UI_DrawColorPicker
+  Renders the circular HSV color wheel, value bar, alpha bar, and preview.
+===============
+*/
+/*
+===============
+UI_CpickCursorToVirtual
+  Converts screen-pixel cursor coords to 640x480 virtual coords
+  using the same ALIGN_CENTER mapping that UI_FillRect uses.
+===============
+*/
+static void UI_CpickCursorToVirtual( float *outX, float *outY ) {
+	*outX = ( (float)DC->cursorx - 0.5f * DC->glconfig.vidWidth  ) / DC->minscale + 320.0f;
+	*outY = ( (float)DC->cursory - 0.5f * DC->glconfig.vidHeight ) / DC->minscale + 240.0f;
+}
+
+/*
+===============
+UI_CpickDragUpdate
+  Called every frame from the draw function.
+  If mouse is held (cpickDragMode != 0), update the color.
+===============
+*/
+static void UI_CpickDragUpdate( void ) {
+	float mx, my;
+
+	if ( uiInfo.cpickDragMode == 0 ) {
+		return;
+	}
+
+	UI_CpickCursorToVirtual( &mx, &my );
+
+	if ( uiInfo.cpickDragMode == 1 ) {
+		/* wheel */
+		float cx = (float)CPICK_PX + CPICK_WHEEL_CX;
+		float cy = (float)CPICK_PY + CPICK_WHEEL_CY;
+		float rr = (float)CPICK_WHEEL_R;
+		float dx = mx - cx;
+		float dy = my - cy;
+		float dist = sqrtf( dx * dx + dy * dy );
+
+		uiInfo.cpickH = (float)( atan2( dy, dx ) * 180.0 / M_PI ) + 180.0f;
+		uiInfo.cpickS = dist / rr;
+		if ( uiInfo.cpickS > 1.0f ) uiInfo.cpickS = 1.0f;
+		UI_CpickWriteColor();
+	} else if ( uiInfo.cpickDragMode == 2 ) {
+		/* value bar */
+		float vy = (float)CPICK_PY + CPICK_VBAR_Y;
+		uiInfo.cpickV = 1.0f - ( my - vy ) / (float)CPICK_VBAR_H;
+		if ( uiInfo.cpickV < 0.0f ) uiInfo.cpickV = 0.0f;
+		if ( uiInfo.cpickV > 1.0f ) uiInfo.cpickV = 1.0f;
+		UI_CpickWriteColor();
+	} else if ( uiInfo.cpickDragMode == 3 ) {
+		/* alpha bar */
+		float ax = (float)CPICK_PX + CPICK_ABAR_X;
+		uiInfo.cpickA = ( mx - ax ) / (float)CPICK_ABAR_W;
+		if ( uiInfo.cpickA < 0.0f ) uiInfo.cpickA = 0.0f;
+		if ( uiInfo.cpickA > 1.0f ) uiInfo.cpickA = 1.0f;
+		UI_CpickWriteColor();
+	}
+}
+
+static void UI_DrawColorPicker( void ) {
+	float ox = (float)CPICK_PX;
+	float oy = (float)CPICK_PY;
+	float cx = ox + CPICK_WHEEL_CX;
+	float cy = oy + CPICK_WHEEL_CY;
+	float rr = (float)CPICK_WHEEL_R;
+	int ix, iy;
+	float dx, dy, dist, hue, sat;
+	float cr, cg, cb;
+	vec4_t col;
+	vec4_t border = { 0.5f, 0.5f, 0.5f, 0.8f };
+	vec4_t panelBg = { 0.06f, 0.06f, 0.08f, 0.95f };
+	vec4_t panelBorder = { 0.25f, 0.40f, 0.18f, 0.8f };
+	vec4_t white = { 1.0f, 1.0f, 1.0f, 1.0f };
+	vec4_t black = { 0.0f, 0.0f, 0.0f, 1.0f };
+	vec4_t textCol = { 0.85f, 0.90f, 0.80f, 0.90f };
+	vec4_t dimText = { 0.55f, 0.60f, 0.50f, 0.70f };
+	scralign_t sa = ALIGN_CENTER;
+
+	/* Continuous drag update */
+	UI_CpickDragUpdate();
+
+	/* Panel background */
+	UI_FillRect( ox - 4, oy - 4, (float)CPICK_PW + 8, (float)CPICK_PH + 8, panelBorder, sa );
+	UI_FillRect( ox - 2, oy - 2, (float)CPICK_PW + 4, (float)CPICK_PH + 4, panelBg, sa );
+
+	/* Title */
+	DC->drawText( ox + 50, oy + 12, 0, 0.20f, textCol, "Color Picker", 0, 0, 0, sa );
+
+	/* ---- Circular HSV wheel ---- */
+	for ( iy = -(int)rr; iy <= (int)rr; iy += CPICK_STEP ) {
+		for ( ix = -(int)rr; ix <= (int)rr; ix += CPICK_STEP ) {
+			dx = (float)ix;
+			dy = (float)iy;
+			dist = sqrtf( dx * dx + dy * dy );
+			if ( dist > rr ) {
+				continue;
+			}
+
+			hue = (float)( atan2( dy, dx ) * 180.0 / M_PI ) + 180.0f;
+			sat = dist / rr;
+
+			UI_HSVtoRGB( hue, sat, uiInfo.cpickV, &cr, &cg, &cb );
+			col[0] = cr; col[1] = cg; col[2] = cb; col[3] = 1.0f;
+
+			UI_FillRect( cx + dx, cy + dy, (float)CPICK_STEP, (float)CPICK_STEP, col, sa );
+		}
+	}
+
+	/* Wheel selection indicator: small circle at current H+S position */
+	{
+		float selAngle = ( uiInfo.cpickH - 180.0f ) * (float)( M_PI / 180.0 );
+		float selR = uiInfo.cpickS * rr;
+		float sx = cx + cosf( selAngle ) * selR;
+		float sy = cy + sinf( selAngle ) * selR;
+		vec4_t marker = { 1.0f, 1.0f, 1.0f, 0.9f };
+		vec4_t markerIn = { 0.0f, 0.0f, 0.0f, 0.7f };
+
+		UI_FillRect( sx - 3, sy - 3, 7, 7, marker, sa );
+		UI_FillRect( sx - 2, sy - 2, 5, 5, markerIn, sa );
+	}
+
+	/* ---- Value / Brightness bar ---- */
+	{
+		float vx = ox + CPICK_VBAR_X;
+		float vy = oy + CPICK_VBAR_Y;
+		float vh = (float)CPICK_VBAR_H;
+		int yi;
+
+		/* border */
+		UI_FillRect( vx - 1, vy - 1, CPICK_VBAR_W + 2, CPICK_VBAR_H + 2, border, sa );
+
+		for ( yi = 0; yi < CPICK_VBAR_H; yi += 2 ) {
+			float v = 1.0f - ( (float)yi / vh );
+			UI_HSVtoRGB( uiInfo.cpickH, uiInfo.cpickS, v, &cr, &cg, &cb );
+			col[0] = cr; col[1] = cg; col[2] = cb; col[3] = 1.0f;
+			UI_FillRect( vx, vy + yi, (float)CPICK_VBAR_W, 2, col, sa );
+		}
+
+		/* value indicator */
+		{
+			float indY = vy + ( 1.0f - uiInfo.cpickV ) * vh;
+			UI_FillRect( vx - 2, indY - 1, CPICK_VBAR_W + 4, 3, white, sa );
+			UI_FillRect( vx - 1, indY, CPICK_VBAR_W + 2, 1, black, sa );
+		}
+
+		DC->drawText( vx, vy - 4, 0, 0.15f, dimText, "V", 0, 0, 0, sa );
+	}
+
+	/* ---- Alpha bar ---- */
+	{
+		float ax = ox + CPICK_ABAR_X;
+		float ay = oy + CPICK_ABAR_Y;
+		float aw = (float)CPICK_ABAR_W;
+		int xi;
+
+		/* checkerboard background for alpha */
+		for ( xi = 0; xi < CPICK_ABAR_W; xi += 6 ) {
+			vec4_t ck;
+			float cval = ( ( xi / 6 ) % 2 == 0 ) ? 0.3f : 0.5f;
+			ck[0] = ck[1] = ck[2] = cval; ck[3] = 1.0f;
+			UI_FillRect( ax + xi, ay, 6, (float)CPICK_ABAR_H, ck, sa );
+		}
+
+		/* alpha gradient overlay */
+		UI_HSVtoRGB( uiInfo.cpickH, uiInfo.cpickS, uiInfo.cpickV, &cr, &cg, &cb );
+		for ( xi = 0; xi < CPICK_ABAR_W; xi += 3 ) {
+			float a = (float)xi / aw;
+			col[0] = cr; col[1] = cg; col[2] = cb; col[3] = a;
+			UI_FillRect( ax + xi, ay, 3, (float)CPICK_ABAR_H, col, sa );
+		}
+
+		/* border */
+		UI_DrawRect( ax - 1, ay - 1, CPICK_ABAR_W + 2, CPICK_ABAR_H + 2, border, sa );
+
+		/* alpha indicator */
+		{
+			float indX = ax + uiInfo.cpickA * aw;
+			UI_FillRect( indX - 1, ay - 2, 3, CPICK_ABAR_H + 4, white, sa );
+			UI_FillRect( indX, ay - 1, 1, CPICK_ABAR_H + 2, black, sa );
+		}
+
+		DC->drawText( ax, ay + CPICK_ABAR_H + 10, 0, 0.15f, dimText, "Alpha", 0, 0, 0, sa );
+	}
+
+	/* ---- Preview square ---- */
+	{
+		float px = ox + CPICK_PREV_X + 42;
+		float py = oy + CPICK_PREV_Y;
+
+		UI_HSVtoRGB( uiInfo.cpickH, uiInfo.cpickS, uiInfo.cpickV, &cr, &cg, &cb );
+
+		/* checkerboard behind preview for alpha vis */
+		{
+			vec4_t ck1 = { 0.3f, 0.3f, 0.3f, 1.0f };
+			vec4_t ck2 = { 0.5f, 0.5f, 0.5f, 1.0f };
+			int pxi;
+			for ( pxi = 0; pxi < CPICK_PREV_W; pxi += 6 ) {
+				UI_FillRect( px + pxi, py, 6, (float)CPICK_PREV_H,
+					( ( pxi / 6 ) % 2 == 0 ) ? ck1 : ck2, sa );
+			}
+		}
+
+		col[0] = cr; col[1] = cg; col[2] = cb; col[3] = uiInfo.cpickA;
+		UI_FillRect( px - 1, py - 1, CPICK_PREV_W + 2, CPICK_PREV_H + 2, border, sa );
+		UI_FillRect( px, py, (float)CPICK_PREV_W, (float)CPICK_PREV_H, col, sa );
+
+		DC->drawText( px - 38, py + 12, 0, 0.15f, dimText, "Preview:", 0, 0, 0, sa );
+	}
+
+	/* ---- RGB readout ---- */
+	{
+		float tx = ox + CPICK_PREV_X + 80;
+		float ty = oy + CPICK_PREV_Y + 8;
+
+		UI_HSVtoRGB( uiInfo.cpickH, uiInfo.cpickS, uiInfo.cpickV, &cr, &cg, &cb );
+		DC->drawText( tx, ty, 0, 0.15f, dimText,
+			va( "R:%d G:%d B:%d A:%.0f%%",
+				(int)( cr * 255.0f + 0.5f ),
+				(int)( cg * 255.0f + 0.5f ),
+				(int)( cb * 255.0f + 0.5f ),
+				uiInfo.cpickA * 100.0f ),
+			0, 0, 0, sa );
+	}
+
+	/* ---- Close [X] button ---- */
+	{
+		float bx = ox + (float)CPICK_PW - 16;
+		float by = oy + 2;
+		vec4_t xBg  = { 0.35f, 0.12f, 0.12f, 0.85f };
+		vec4_t xBgH = { 0.55f, 0.18f, 0.18f, 0.95f };
+		vec4_t xFg  = { 1.0f, 0.85f, 0.85f, 0.95f };
+		float vmx, vmy;
+		qboolean hover;
+
+		UI_CpickCursorToVirtual( &vmx, &vmy );
+		hover = ( vmx >= bx && vmx <= bx + 14 && vmy >= by && vmy <= by + 12 ) ? qtrue : qfalse;
+
+		UI_FillRect( bx, by, 14, 12, hover ? xBgH : xBg, sa );
+		UI_DrawRect( bx, by, 14, 12, border, sa );
+		DC->drawText( bx + 3, by + 10, 0, 0.18f, xFg, "X", 0, 0, 0, sa );
+	}
+}
+
+/*
+===============
+UI_ColorPicker_HandleKey
+  Processes mouse clicks on the color picker regions.
+  Returns qtrue if the event was handled.
+===============
+*/
+static qboolean UI_ColorPicker_HandleKey( rectDef_t *rect, int key ) {
+	float ox, oy, cx, cy, rr;
+	float mx, my, dx, dy, dist;
+
+	if ( key != K_MOUSE1 && key != K_MOUSE2 && key != K_ESCAPE ) {
+		return qfalse;
+	}
+
+	/* right-click or ESC cancels (reverts to original color) */
+	if ( key == K_MOUSE2 || key == K_ESCAPE ) {
+		UI_CpickClose( qtrue );
+		return qtrue;
+	}
+
+	ox = (float)CPICK_PX;
+	oy = (float)CPICK_PY;
+	cx = ox + CPICK_WHEEL_CX;
+	cy = oy + CPICK_WHEEL_CY;
+	rr = (float)CPICK_WHEEL_R;
+	/* Convert cursor from screen pixels to 640x480 virtual coords (ALIGN_CENTER) */
+	UI_CpickCursorToVirtual( &mx, &my );
+
+	/* Check close [X] button */
+	{
+		float bx = ox + (float)CPICK_PW - 16;
+		float by = oy + 2;
+		if ( mx >= bx && mx <= bx + 14 && my >= by && my <= by + 12 ) {
+			UI_CpickClose( qfalse );
+			return qtrue;
+		}
+	}
+
+	/* Check wheel region */
+	dx = mx - cx;
+	dy = my - cy;
+	dist = sqrtf( dx * dx + dy * dy );
+	if ( dist <= rr ) {
+		uiInfo.cpickH = (float)( atan2( dy, dx ) * 180.0 / M_PI ) + 180.0f;
+		uiInfo.cpickS = dist / rr;
+		if ( uiInfo.cpickS > 1.0f ) uiInfo.cpickS = 1.0f;
+		uiInfo.cpickDragMode = 1;
+		UI_CpickWriteColor();
+		return qtrue;
+	}
+
+	/* Check value bar */
+	{
+		float vx = ox + CPICK_VBAR_X;
+		float vy = oy + CPICK_VBAR_Y;
+		if ( mx >= vx && mx <= vx + CPICK_VBAR_W &&
+			 my >= vy && my <= vy + CPICK_VBAR_H ) {
+			uiInfo.cpickV = 1.0f - ( my - vy ) / (float)CPICK_VBAR_H;
+			if ( uiInfo.cpickV < 0.0f ) uiInfo.cpickV = 0.0f;
+			if ( uiInfo.cpickV > 1.0f ) uiInfo.cpickV = 1.0f;
+			uiInfo.cpickDragMode = 2;
+			UI_CpickWriteColor();
+			return qtrue;
+		}
+	}
+
+	/* Check alpha bar */
+	{
+		float ax = ox + CPICK_ABAR_X;
+		float ay = oy + CPICK_ABAR_Y;
+		if ( mx >= ax && mx <= ax + CPICK_ABAR_W &&
+			 my >= ay && my <= ay + CPICK_ABAR_H ) {
+			uiInfo.cpickA = ( mx - ax ) / (float)CPICK_ABAR_W;
+			if ( uiInfo.cpickA < 0.0f ) uiInfo.cpickA = 0.0f;
+			if ( uiInfo.cpickA > 1.0f ) uiInfo.cpickA = 1.0f;
+			uiInfo.cpickDragMode = 3;
+			UI_CpickWriteColor();
+			return qtrue;
+		}
+	}
+
+	/* Click outside interactive areas - close (confirm) */
+	UI_CpickClose( qfalse );
+	return qtrue;
+}
+
+/*
+===============
+UI_ColorPreview_HandleKey
+  Opens the color picker when a color preview square is clicked.
+===============
+*/
+static qboolean UI_ColorPreview_HandleKey( int ownerDraw, int key ) {
+	if ( key != K_MOUSE1 ) {
+		return qfalse;
+	}
+
+	switch ( ownerDraw ) {
+	/* Crosshair color */
+	case UI_CROSSHAIR_COLOR:
+		UI_CpickOpenForCvar( "cg_crosshairColor", 0 );
+		return qtrue;
+	/* LiveSplit colors */
+	case UI_LS_CLR_AHEAD:       UI_CpickOpenForCvar( "ls_clr_ahead", 1 );      return qtrue;
+	case UI_LS_CLR_BEHIND:      UI_CpickOpenForCvar( "ls_clr_behind", 1 );     return qtrue;
+	case UI_LS_CLR_GOLD:        UI_CpickOpenForCvar( "ls_clr_gold", 1 );       return qtrue;
+	case UI_LS_CLR_HEADER:      UI_CpickOpenForCvar( "ls_clr_header", 1 );     return qtrue;
+	case UI_LS_CLR_TIMER:       UI_CpickOpenForCvar( "ls_clr_timer", 1 );      return qtrue;
+	case UI_LS_CLR_TEXT:        UI_CpickOpenForCvar( "ls_clr_text", 1 );       return qtrue;
+	case UI_LS_CLR_BG:          UI_CpickOpenForCvar( "ls_clr_bg", 1 );         return qtrue;
+	case UI_LS_CLR_BORDER:      UI_CpickOpenForCvar( "ls_clr_border", 1 );     return qtrue;
+	case UI_LS_CLR_MAPNAME:     UI_CpickOpenForCvar( "ls_clr_mapname", 1 );    return qtrue;
+	case UI_LS_CLR_CURRENT:     UI_CpickOpenForCvar( "ls_clr_current", 1 );    return qtrue;
+	case UI_LS_CLR_COMPLETED:   UI_CpickOpenForCvar( "ls_clr_completed", 1 );  return qtrue;
+	case UI_LS_CLR_FUTURE:      UI_CpickOpenForCvar( "ls_clr_future", 1 );     return qtrue;
+	case UI_LS_CLR_DIM:         UI_CpickOpenForCvar( "ls_clr_dim", 1 );        return qtrue;
+	case UI_LS_CLR_SEGTIMER:    UI_CpickOpenForCvar( "ls_clr_segtimer", 1 );   return qtrue;
+	case UI_LS_CLR_PAUSED:      UI_CpickOpenForCvar( "ls_clr_paused", 1 );     return qtrue;
+	case UI_LS_CLR_SEP:         UI_CpickOpenForCvar( "ls_clr_sep", 1 );        return qtrue;
+	case UI_LS_CLR_HIGHLIGHT:   UI_CpickOpenForCvar( "ls_clr_highlight", 1 );  return qtrue;
+	case UI_LS_CLR_LABEL:       UI_CpickOpenForCvar( "ls_clr_label", 1 );      return qtrue;
+	default:
+		return qfalse;
+	}
+}
+
+
+/*
+===============
 UI_DrawCrosshairColor
 ===============
 */
@@ -2515,6 +3093,50 @@ static void UI_DrawCrosshairColor( rectDef_t *rect ) {
 	/* border */
 	UI_FillRect( rect->x - 1, rect->y - 1, rect->w + 2, rect->h + 2, border, rect->scrAlign );
 	/* fill */
+	UI_FillRect( rect->x, rect->y, rect->w, rect->h, hcolor, rect->scrAlign );
+}
+
+/*
+===============
+UI_DrawLsColorPreview
+  Reads a LiveSplit color cvar ("R G B A" where RGB=0-255, A=0.0-1.0)
+  and draws a filled color preview rectangle with a border.
+  Falls back to defR/defG/defB/defA if the cvar is empty.
+===============
+*/
+static void UI_DrawLsColorPreview( rectDef_t *rect, const char *cvarName,
+								   float defR, float defG, float defB, float defA ) {
+	vec4_t hcolor;
+	vec4_t border = { 0.5f, 0.5f, 0.5f, 0.8f };
+	char buf[64];
+	float r, g, b, a;
+
+	trap_Cvar_VariableStringBuffer( cvarName, buf, sizeof( buf ) );
+	if ( buf[0] && sscanf( buf, "%f %f %f %f", &r, &g, &b, &a ) == 4 ) {
+		hcolor[0] = r / 255.0f;
+		hcolor[1] = g / 255.0f;
+		hcolor[2] = b / 255.0f;
+		hcolor[3] = a;
+	} else if ( buf[0] && sscanf( buf, "%f %f %f", &r, &g, &b ) == 3 ) {
+		hcolor[0] = r / 255.0f;
+		hcolor[1] = g / 255.0f;
+		hcolor[2] = b / 255.0f;
+		hcolor[3] = 1.0f;
+	} else {
+		hcolor[0] = defR;
+		hcolor[1] = defG;
+		hcolor[2] = defB;
+		hcolor[3] = defA;
+	}
+
+	/* clamp */
+	if ( hcolor[0] < 0.0f ) hcolor[0] = 0.0f; if ( hcolor[0] > 1.0f ) hcolor[0] = 1.0f;
+	if ( hcolor[1] < 0.0f ) hcolor[1] = 0.0f; if ( hcolor[1] > 1.0f ) hcolor[1] = 1.0f;
+	if ( hcolor[2] < 0.0f ) hcolor[2] = 0.0f; if ( hcolor[2] > 1.0f ) hcolor[2] = 1.0f;
+	if ( hcolor[3] < 0.1f ) hcolor[3] = 0.1f; if ( hcolor[3] > 1.0f ) hcolor[3] = 1.0f;
+
+	/* draw border + fill */
+	UI_FillRect( rect->x - 1, rect->y - 1, rect->w + 2, rect->h + 2, border, rect->scrAlign );
 	UI_FillRect( rect->x, rect->y, rect->w, rect->h, hcolor, rect->scrAlign );
 }
 
@@ -2935,6 +3557,67 @@ static void UI_OwnerDraw( float x, float y, float w, float h, float text_x, floa
 	case UI_CROSSHAIR_COLOR:
 		UI_DrawCrosshairColor( &rect );
 		break;
+
+	/* LiveSplit color previews */
+	case UI_LS_CLR_AHEAD:
+		UI_DrawLsColorPreview( &rect, "ls_clr_ahead",     0.25f, 0.85f, 0.25f, 1.0f );
+		break;
+	case UI_LS_CLR_BEHIND:
+		UI_DrawLsColorPreview( &rect, "ls_clr_behind",    0.85f, 0.25f, 0.25f, 1.0f );
+		break;
+	case UI_LS_CLR_GOLD:
+		UI_DrawLsColorPreview( &rect, "ls_clr_gold",      1.00f, 0.85f, 0.20f, 1.0f );
+		break;
+	case UI_LS_CLR_HEADER:
+		UI_DrawLsColorPreview( &rect, "ls_clr_header",    0.35f, 0.75f, 0.20f, 1.0f );
+		break;
+	case UI_LS_CLR_TIMER:
+		UI_DrawLsColorPreview( &rect, "ls_clr_timer",     0.85f, 0.95f, 0.80f, 1.0f );
+		break;
+	case UI_LS_CLR_TEXT:
+		UI_DrawLsColorPreview( &rect, "ls_clr_text",      0.85f, 0.88f, 0.85f, 0.9f );
+		break;
+	case UI_LS_CLR_BG:
+		UI_DrawLsColorPreview( &rect, "ls_clr_bg",        0.04f, 0.04f, 0.06f, 0.82f );
+		break;
+	case UI_LS_CLR_BORDER:
+		UI_DrawLsColorPreview( &rect, "ls_clr_border",    0.20f, 0.35f, 0.15f, 0.8f );
+		break;
+	case UI_LS_CLR_MAPNAME:
+		UI_DrawLsColorPreview( &rect, "ls_clr_mapname",   0.55f, 0.62f, 0.50f, 0.85f );
+		break;
+	case UI_LS_CLR_CURRENT:
+		UI_DrawLsColorPreview( &rect, "ls_clr_current",   1.00f, 1.00f, 0.60f, 1.0f );
+		break;
+	case UI_LS_CLR_COMPLETED:
+		UI_DrawLsColorPreview( &rect, "ls_clr_completed", 0.72f, 0.72f, 0.72f, 0.8f );
+		break;
+	case UI_LS_CLR_FUTURE:
+		UI_DrawLsColorPreview( &rect, "ls_clr_future",    0.36f, 0.36f, 0.40f, 0.48f );
+		break;
+	case UI_LS_CLR_DIM:
+		UI_DrawLsColorPreview( &rect, "ls_clr_dim",       0.48f, 0.48f, 0.50f, 0.52f );
+		break;
+	case UI_LS_CLR_SEGTIMER:
+		UI_DrawLsColorPreview( &rect, "ls_clr_segtimer",  0.62f, 0.65f, 0.62f, 0.82f );
+		break;
+	case UI_LS_CLR_PAUSED:
+		UI_DrawLsColorPreview( &rect, "ls_clr_paused",    0.90f, 0.70f, 0.20f, 1.0f );
+		break;
+	case UI_LS_CLR_SEP:
+		UI_DrawLsColorPreview( &rect, "ls_clr_sep",       0.22f, 0.38f, 0.12f, 0.18f );
+		break;
+	case UI_LS_CLR_HIGHLIGHT:
+		UI_DrawLsColorPreview( &rect, "ls_clr_highlight", 0.10f, 0.20f, 0.06f, 0.32f );
+		break;
+	case UI_LS_CLR_LABEL:
+		UI_DrawLsColorPreview( &rect, "ls_clr_label",     0.42f, 0.48f, 0.38f, 0.62f );
+		break;
+
+	case UI_COLOR_PICKER:
+		/* Picker is now drawn directly from _UI_Refresh, not via ownerdraw */
+		break;
+
 	case UI_SELECTEDPLAYER:
 		UI_DrawSelectedPlayer( &rect, font, scale, color, textStyle );
 		break;
@@ -3589,6 +4272,36 @@ static qboolean UI_OwnerDrawHandleKey( int ownerDraw, int flags, float *special,
 	case UI_SELECTEDPLAYER:
 		UI_SelectedPlayer_HandleKey( flags, special, key );
 		break;
+
+	/* Color picker: open on click */
+	case UI_CROSSHAIR_COLOR:
+	case UI_LS_CLR_AHEAD:
+	case UI_LS_CLR_BEHIND:
+	case UI_LS_CLR_GOLD:
+	case UI_LS_CLR_HEADER:
+	case UI_LS_CLR_TIMER:
+	case UI_LS_CLR_TEXT:
+	case UI_LS_CLR_BG:
+	case UI_LS_CLR_BORDER:
+	case UI_LS_CLR_MAPNAME:
+	case UI_LS_CLR_CURRENT:
+	case UI_LS_CLR_COMPLETED:
+	case UI_LS_CLR_FUTURE:
+	case UI_LS_CLR_DIM:
+	case UI_LS_CLR_SEGTIMER:
+	case UI_LS_CLR_PAUSED:
+	case UI_LS_CLR_SEP:
+	case UI_LS_CLR_HIGHLIGHT:
+	case UI_LS_CLR_LABEL:
+		return UI_ColorPreview_HandleKey( ownerDraw, key );
+
+	/* Color picker wheel interaction */
+	case UI_COLOR_PICKER:
+	{
+		/* Picker input is handled directly in _UI_KeyEvent, not via ownerdraw */
+		return qfalse;
+	}
+
 	default:
 		break;
 	}
@@ -6938,6 +7651,26 @@ UI_KeyEvent
 */
 void _UI_KeyEvent( int key, qboolean down ) {
 
+	/* Stop color picker drag on mouse release */
+	if ( !down && key == K_MOUSE1 && uiInfo.cpickDragMode != 0 ) {
+		uiInfo.cpickDragMode = 0;
+	}
+
+	/* ---- Color picker intercept ----
+	   When the picker is open, handle ALL input here so we
+	   don't depend on the menu focus system at all.          */
+	if ( uiInfo.cpickCvar[0] != '\0' ) {
+		if ( down ) {
+			if ( key == K_ESCAPE || key == K_MOUSE2 ) {
+				UI_CpickClose( qtrue );
+			} else if ( key == K_MOUSE1 ) {
+				rectDef_t dummy = {0};
+				UI_ColorPicker_HandleKey( &dummy, key );
+			}
+		}
+		return; /* eat all keys while picker is open */
+	}
+
 	if ( Menu_Count() > 0 ) {
 		menuDef_t *menu = Menu_GetFocused();
 		if ( menu ) {
@@ -6984,9 +7717,11 @@ void _UI_MouseEvent( int dx, int dy ) {
 	}
 
 	if ( Menu_Count() > 0 ) {
-		//menuDef_t *menu = Menu_GetFocused();
-		//Menu_HandleMouseMove(menu, uiInfo.uiDC.cursorx, uiInfo.uiDC.cursory);
-		Display_MouseMove( NULL, uiInfo.uiDC.cursorx, uiInfo.uiDC.cursory );
+		/* If the color picker is open, skip mouse focus handling
+		   entirely so underlying menu items don't get focus/sounds */
+		if ( uiInfo.cpickCvar[0] == '\0' ) {
+			Display_MouseMove( NULL, uiInfo.uiDC.cursorx, uiInfo.uiDC.cursory );
+		}
 	}
 }
 
