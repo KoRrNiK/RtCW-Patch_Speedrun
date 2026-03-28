@@ -1112,6 +1112,7 @@ extern cvar_t  *r_showcluster;
 
 extern cvar_t   *r_mode;                // video mode
 extern cvar_t   *r_fullscreen;
+extern cvar_t   *r_borderless;
 extern cvar_t   *r_gamma;
 extern cvar_t   *r_displayRefresh;      // optional display refresh option
 extern cvar_t   *r_ignorehwgamma;       // overrides hardware gamma capabilities
@@ -1190,6 +1191,7 @@ extern cvar_t  *r_overBrightBits;
 extern cvar_t  *r_mapOverBrightBits;
 
 extern cvar_t  *r_drawClips;
+extern cvar_t  *r_clipOpacity;
 extern cvar_t  *r_debugSurface;
 extern cvar_t  *r_simpleMipMaps;
 
@@ -1643,7 +1645,7 @@ RENDERER BACK END COMMAND QUEUE
 =============================================================
 */
 
-#define MAX_RENDER_COMMANDS 0x40000
+#define MAX_RENDER_COMMANDS 0x80000
 
 typedef struct {
 	byte cmds[MAX_RENDER_COMMANDS];

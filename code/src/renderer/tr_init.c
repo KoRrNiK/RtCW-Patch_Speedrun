@@ -162,6 +162,7 @@ cvar_t  *r_subdivisions;
 cvar_t  *r_lodCurveError;
 
 cvar_t  *r_fullscreen;
+cvar_t  *r_borderless;
 
 cvar_t  *r_customwidth;
 cvar_t  *r_customheight;
@@ -172,6 +173,7 @@ cvar_t  *r_mapOverBrightBits;
 
 cvar_t  *r_debugSurface;
 cvar_t  *r_drawClips;
+cvar_t  *r_clipOpacity;
 cvar_t  *r_simpleMipMaps;
 
 cvar_t  *r_showImages;
@@ -1083,6 +1085,7 @@ void R_Register( void ) {
 	r_ignorehwgamma = ri.Cvar_Get( "r_ignorehwgamma", "0", CVAR_ARCHIVE | CVAR_LATCH );		// Knightmare- HW gamma enabled by default ----(SA) changed this to default to '1' for Drew
 	r_mode = ri.Cvar_Get( "r_mode", "3", CVAR_ARCHIVE | CVAR_LATCH );
 	r_fullscreen = ri.Cvar_Get( "r_fullscreen", "1", CVAR_ARCHIVE | CVAR_LATCH );
+	r_borderless = ri.Cvar_Get( "r_borderless", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_customwidth = ri.Cvar_Get( "r_customwidth", "1600", CVAR_ARCHIVE | CVAR_LATCH );
 	r_customheight = ri.Cvar_Get( "r_customheight", "1024", CVAR_ARCHIVE | CVAR_LATCH );
 	r_customaspect = ri.Cvar_Get( "r_customaspect", "1", CVAR_ARCHIVE | CVAR_LATCH );
@@ -1164,10 +1167,9 @@ void R_Register( void ) {
 	// show_bug.cgi?id=440
 	// Asset caching:  backs up models, shaders and images during
 	// RE_Shutdown so subsequent map loads can restore them from RAM
-	// instead of re-reading from disk.  Originally disabled in SP
-	// "to be safe", but significant speedup for demo map transitions.
-	r_cache = ri.Cvar_Get( "r_cache", "1", CVAR_LATCH );
-	r_cacheShaders = ri.Cvar_Get( "r_cacheShaders", "1", CVAR_LATCH );
+	// instead of re-reading from disk.  Disabled for now (causes issues).
+	r_cache = ri.Cvar_Get( "r_cache", "0", CVAR_LATCH );
+	r_cacheShaders = ri.Cvar_Get( "r_cacheShaders", "0", CVAR_LATCH );
 //----(SA)	end
 
 	r_cacheModels = ri.Cvar_Get( "r_cacheModels", "1", CVAR_LATCH );
@@ -1206,6 +1208,7 @@ void R_Register( void ) {
 	r_logFile = ri.Cvar_Get( "r_logFile", "0", CVAR_CHEAT );
 	r_debugSurface = ri.Cvar_Get( "r_debugSurface", "0", CVAR_CHEAT );
 	r_drawClips = ri.Cvar_Get( "r_drawClips", "0", CVAR_CHEAT );  // 1-2=see through walls, 3-4=depth tested
+	r_clipOpacity = ri.Cvar_Get( "r_clipOpacity", "80", CVAR_ARCHIVE );  // 0..255
 	r_nobind = ri.Cvar_Get( "r_nobind", "0", CVAR_CHEAT );
 	r_showtris = ri.Cvar_Get( "r_showtris", "0", CVAR_CHEAT );
 	r_showsky = ri.Cvar_Get( "r_showsky", "0", CVAR_CHEAT );

@@ -1783,45 +1783,79 @@ void R_DebugPolygon( int color, int numPoints, float *points ) {
 		int baseColor = ( color >= 11 ) ? color - 3 : color;  // normalize to 8-10
 		qboolean depthTest = ( color >= 11 ) ? qtrue : qfalse;
 
+		// Frustum culling: skip polygon if centroid is behind camera
+		{
+			vec3_t centroid, delta;
+			float fwd, inv;
+			int j;
+			VectorClear( centroid );
+			for ( j = 0; j < numPoints; j++ ) {
+				centroid[0] += points[j * 3 + 0];
+				centroid[1] += points[j * 3 + 1];
+				centroid[2] += points[j * 3 + 2];
+			}
+			if ( numPoints > 0 ) {
+				inv = 1.0f / numPoints;
+				VectorScale( centroid, inv, centroid );
+			}
+			VectorSubtract( centroid, tr.refdef.vieworg, delta );
+			fwd = DotProduct( delta, tr.refdef.viewaxis[0] );
+			if ( fwd < -200.0f ) {
+				return;
+			}
+		}
+
 		if ( depthTest ) {
 			GL_State( GLS_DEPTHMASK_TRUE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
 		} else {
 			GL_State( GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
 		}
 
-		switch ( baseColor ) {
-		case 8:  qglColor4f( 1.0f, 0.2f, 0.0f, 0.25f ); break;  // playerclip: orange
-		case 9:  qglColor4f( 0.0f, 0.4f, 1.0f, 0.25f ); break;  // monsterclip: blue
-		case 10: qglColor4f( 0.8f, 0.0f, 1.0f, 0.25f ); break;  // clipshot: purple
-		}
+		// Apply r_clipOpacity cvar (0..255, default 80)
+		{
+			float fillAlpha, borderAlpha, opacityScale;
+			int clipOp = 80;
+			if ( r_clipOpacity->integer >= 0 && r_clipOpacity->integer <= 255 ) {
+				clipOp = r_clipOpacity->integer;
+			}
+			opacityScale = clipOp / 255.0f;
+			fillAlpha = 0.25f * opacityScale;
+			borderAlpha = 0.8f * opacityScale;
 
-		qglBegin( GL_POLYGON );
-		for ( i = 0 ; i < numPoints ; i++ ) {
-			qglVertex3fv( points + i * 3 );
-		}
-		qglEnd();
+			switch ( baseColor ) {
+			case 8:  qglColor4f( 1.0f, 0.2f, 0.0f, fillAlpha ); break;  // playerclip: orange
+			case 9:  qglColor4f( 0.0f, 0.4f, 1.0f, fillAlpha ); break;  // monsterclip: blue
+			case 10: qglColor4f( 0.8f, 0.0f, 1.0f, fillAlpha ); break;  // clipshot: purple
+			}
 
-		// draw wireframe outline with matching solid color
-		if ( depthTest ) {
-			GL_State( GLS_POLYMODE_LINE | GLS_DEPTHMASK_TRUE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
-		} else {
-			GL_State( GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
-		}
-		if ( !depthTest ) {
-			qglDepthRange( 0, 0 );
-		}
-		switch ( baseColor ) {
-		case 8:  qglColor4f( 1.0f, 0.3f, 0.0f, 0.8f ); break;
-		case 9:  qglColor4f( 0.0f, 0.5f, 1.0f, 0.8f ); break;
-		case 10: qglColor4f( 0.9f, 0.0f, 1.0f, 0.8f ); break;
-		}
-		qglBegin( GL_POLYGON );
-		for ( i = 0 ; i < numPoints ; i++ ) {
-			qglVertex3fv( points + i * 3 );
-		}
-		qglEnd();
-		if ( !depthTest ) {
-			qglDepthRange( 0, 1 );
+			qglBegin( GL_POLYGON );
+			for ( i = 0 ; i < numPoints ; i++ ) {
+				qglVertex3fv( points + i * 3 );
+			}
+			qglEnd();
+
+			// draw wireframe outline with matching solid color
+			if ( depthTest ) {
+				GL_State( GLS_POLYMODE_LINE | GLS_DEPTHMASK_TRUE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+			} else {
+				GL_State( GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+			}
+			if ( !depthTest ) {
+				qglDepthRange( 0, 0 );
+			}
+			switch ( baseColor ) {
+			case 8:  qglColor4f( 1.0f, 0.3f, 0.0f, borderAlpha ); break;
+			case 9:  qglColor4f( 0.0f, 0.5f, 1.0f, borderAlpha ); break;
+			case 10: qglColor4f( 0.9f, 0.0f, 1.0f, borderAlpha ); break;
+			}
+			qglBegin( GL_POLYGON );
+			for ( i = 0 ; i < numPoints ; i++ ) {
+				qglVertex3fv( points + i * 3 );
+			}
+			qglEnd();
+			if ( !depthTest ) {
+				qglDepthRange( 0, 1 );
+			}
 		}
 		return;
 	}

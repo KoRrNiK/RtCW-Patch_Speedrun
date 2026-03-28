@@ -1384,7 +1384,18 @@ static int R_GetTag( byte *mod, int frame, const char *tagName, int startTagInde
 	int i;
 	md3Header_t     *md3;
 
+	if ( !mod ) {
+		*outTag = NULL;
+		return -1;
+	}
+
 	md3 = (md3Header_t *) mod;
+
+	// validate header to catch corrupt/stale hunk pointers
+	if ( md3->ident != MD3_IDENT || md3->version != MD3_VERSION ) {
+		*outTag = NULL;
+		return -1;
+	}
 
 	if ( frame >= md3->numFrames ) {
 		// it is possible to have a bad frame while changing models, so don't error
@@ -1426,7 +1437,18 @@ static int R_GetMDCTag( byte *mod, int frame, const char *tagName, int startTagI
 	int i;
 	mdcHeader_t     *mdc;
 
+	if ( !mod ) {
+		*outTag = NULL;
+		return -1;
+	}
+
 	mdc = (mdcHeader_t *) mod;
+
+	// validate header to catch corrupt/stale hunk pointers
+	if ( mdc->ident != MDC_IDENT || mdc->version != MDC_VERSION ) {
+		*outTag = NULL;
+		return -1;
+	}
 
 	if ( frame >= mdc->numFrames ) {
 		// it is possible to have a bad frame while changing models, so don't error
@@ -1528,7 +1550,7 @@ int R_LerpTag( orientation_t *tag, const refEntity_t *refent, const char *tagNam
 	}
 */
 	model = R_GetModelByHandle( handle );
-	if ( !model->md3[0] && !model->mdc[0] && !model->mds ) {
+	if ( !model->type || ( !model->md3[0] && !model->mdc[0] && !model->mds ) ) {
 		AxisClear( tag->axis );
 		VectorClear( tag->origin );
 		return -1;
@@ -1553,7 +1575,7 @@ int R_LerpTag( orientation_t *tag, const refEntity_t *refent, const char *tagNam
 		// failed
 		return -1;
 
-	} else {
+	} else if ( model->type == MOD_MDC && model->mdc[0] ) {
 		// psuedo-compressed MDC tags
 		mdcTag_t    *cstart, *cend;
 
@@ -1579,6 +1601,11 @@ int R_LerpTag( orientation_t *tag, const refEntity_t *refent, const char *tagNam
 			end = NULL;
 		}
 
+	} else {
+		// unknown/bad model type
+		AxisClear( tag->axis );
+		VectorClear( tag->origin );
+		return -1;
 	}
 
 	if ( !start || !end ) {
@@ -1720,7 +1747,11 @@ void *R_Hunk_Begin( void ) {
 	// this will "reserve" a chunk of memory for use by this application
 	// it will not be "committed" just yet, but the swap file will grow
 	// now if needed
-	membase = VirtualAlloc( NULL, maxsize, MEM_RESERVE, PAGE_NOACCESS );
+	// only allocate if we don't already have a reservation (RE_Shutdown(0)
+	// during map changes keeps the old reservation alive for model caching)
+	if ( !membase ) {
+		membase = VirtualAlloc( NULL, maxsize, MEM_RESERVE, PAGE_NOACCESS );
+	}
 
 #elif defined( __MACOS__ )
 
@@ -1820,7 +1851,10 @@ void R_Hunk_Reset( void ) {
 
 #ifdef _WIN32
 	// mark the existing committed pages as reserved, but not committed
-	VirtualFree( membase, hunkcursize, MEM_DECOMMIT );
+	// guard: VirtualFree with size=0 decommits the ENTIRE reservation
+	if ( hunkcursize > 0 ) {
+		VirtualFree( membase, hunkcursize, MEM_DECOMMIT );
+	}
 #endif
 	// on non win32 OS, we keep the allocated chunk as is, just start again to curzise = 0
 
@@ -2060,7 +2094,7 @@ qboolean R_FindCachedModel( const char *name, model_t *newmod ) {
 							R_RegisterMD3Shaders( newmod, j );
 							R_CacheModelFree( mod->md3[j] );
 						} else {
-							newmod->md3[j] = mod->md3[j + 1];
+							newmod->md3[j] = newmod->md3[j + 1];
 						}
 					}
 				}
@@ -2074,7 +2108,7 @@ qboolean R_FindCachedModel( const char *name, model_t *newmod ) {
 							R_RegisterMDCShaders( newmod, j );
 							R_CacheModelFree( mod->mdc[j] );
 						} else {
-							newmod->mdc[j] = mod->mdc[j + 1];
+							newmod->mdc[j] = newmod->mdc[j + 1];
 						}
 					}
 				}
