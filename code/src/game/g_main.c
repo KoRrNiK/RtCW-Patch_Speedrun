@@ -1389,6 +1389,8 @@ void G_InitGame( int levelTime, int randomSeed, int restart ) {
 
 	G_RegisterCvars();
 
+	trap_Cvar_Set( "ls_changelevel", "0" );   // clear speedrun signal for new map
+
 	G_ProcessIPBans();
 
 	G_InitMemory();

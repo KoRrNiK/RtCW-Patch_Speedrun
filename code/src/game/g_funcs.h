@@ -1312,6 +1312,7 @@
 {"AICast_ScriptRun", (byte *)AICast_ScriptRun},
 {"AICast_ForceScriptEvent", (byte *)AICast_ForceScriptEvent},
 {"AICast_ScriptEvent", (byte *)AICast_ScriptEvent},
+{"AICast_TriggerHasChangelevel", (byte *)AICast_TriggerHasChangelevel},
 {"AICast_ScriptChange", (byte *)AICast_ScriptChange},
 {"AICast_ScriptParse", (byte *)AICast_ScriptParse},
 {"AICast_ScriptLoad", (byte *)AICast_ScriptLoad},

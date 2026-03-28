@@ -2369,6 +2369,7 @@ qboolean AICast_ScriptAction_ChangeLevel( cast_state_t *cs, char *params ) {
 	// load the next map, after a delay
 	level.reloadDelayTime = level.time + 1000 + exitTime;
 	trap_Cvar_Set( "g_reloading", va( "%d", RELOAD_NEXTMAP_WAITING ) );
+	trap_Cvar_Set( "ls_changelevel", "1" );  /* speedrun timer: redundant safety net */
 
 	if ( endgame ) {
 		trap_Cvar_Set( "g_reloading", va( "%d", RELOAD_ENDGAME ) );

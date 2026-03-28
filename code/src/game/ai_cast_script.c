@@ -623,6 +623,22 @@ void AICast_ScriptChange( cast_state_t *cs, int newScriptNum ) {
 
 	cs->scriptCallIndex++;
 
+	/* Speedrun timer: scan ahead - if this script block contains a
+	   "changelevel" action, set ls_changelevel NOW (before any camera /
+	   cutscene action runs), so the client can finish the run the
+	   instant the cutscene’s letterbox appears. */
+	{
+		cast_script_stack_t *stk = &cs->castScriptEvents[newScriptNum].stack;
+		int j;
+		for ( j = 0; j < stk->numItems; j++ ) {
+			if ( stk->items[j].action &&
+				 !Q_stricmp( stk->items[j].action->actionString, "changelevel" ) ) {
+				trap_Cvar_Set( "ls_changelevel", "1" );
+				break;
+			}
+		}
+	}
+
 	// backup the current scripting
 	scriptStatusBackup = cs->castScriptStatus;
 
@@ -644,6 +660,63 @@ void AICast_ScriptChange( cast_state_t *cs, int newScriptNum ) {
 		cs->castScriptStatus.scriptId = scriptStatusBackup.scriptId;
 		cs->castScriptStatus.scriptFlags = scriptStatusBackup.scriptFlags;
 	}
+}
+
+/*
+================
+AICast_TriggerHasChangelevel
+
+  Check if a given AI entity's trigger event contains a "changelevel" action.
+  Used by entity script scanning to detect ending cutscenes at their start.
+================
+*/
+qboolean AICast_TriggerHasChangelevel( const char *aiName, const char *triggerName ) {
+	gentity_t *ent;
+	cast_state_t *cs;
+	int i, j, eventNum;
+
+	ent = AICast_FindEntityForName( (char *)aiName );
+	if ( !ent ) {
+		return qfalse;
+	}
+
+	cs = AICast_GetCastState( ent->s.number );
+	if ( !cs || !cs->castScriptEvents ) {
+		return qfalse;
+	}
+
+	// find the "trigger" event number
+	eventNum = -1;
+	for ( i = 0; scriptEvents[i].eventStr; i++ ) {
+		if ( !Q_stricmp( scriptEvents[i].eventStr, "trigger" ) ) {
+			eventNum = i;
+			break;
+		}
+	}
+	if ( eventNum < 0 ) {
+		return qfalse;
+	}
+
+	// search all cast script events for a "trigger" event matching triggerName
+	for ( i = 0; i < cs->numCastScriptEvents; i++ ) {
+		if ( cs->castScriptEvents[i].eventNum != eventNum ) {
+			continue;
+		}
+		if ( !cs->castScriptEvents[i].params ||
+			 Q_stricmp( cs->castScriptEvents[i].params, triggerName ) ) {
+			continue;
+		}
+		// found the matching trigger event - scan its actions for changelevel
+		for ( j = 0; j < cs->castScriptEvents[i].stack.numItems; j++ ) {
+			if ( cs->castScriptEvents[i].stack.items[j].action &&
+				 !Q_stricmp( cs->castScriptEvents[i].stack.items[j].action->actionString, "changelevel" ) ) {
+				return qtrue;
+			}
+		}
+		break; // found the event, no changelevel in it
+	}
+
+	return qfalse;
 }
 
 /*

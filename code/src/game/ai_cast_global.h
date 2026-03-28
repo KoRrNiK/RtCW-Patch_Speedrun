@@ -53,6 +53,7 @@ void AICast_ForceScriptEvent( struct cast_state_s *cs, char *eventStr, char *par
 qboolean AICast_AIDamageOK( struct cast_state_s *cs, struct cast_state_s *ocs );
 gentity_t *AICast_FindEntityForName( char *name );
 gentity_t *AICast_TravEntityForName( gentity_t *startent, char *name );
+qboolean AICast_TriggerHasChangelevel( const char *aiName, const char *triggerName );
 void AICast_ScriptParse( struct cast_state_s *cs );
 void AICast_StartFrame( int time );
 void AICast_StartServerFrame( int time );

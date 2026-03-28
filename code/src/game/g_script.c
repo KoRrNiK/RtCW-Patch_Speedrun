@@ -490,6 +490,43 @@ qboolean G_Script_ScriptRun( gentity_t *ent );
 void G_Script_ScriptChange( gentity_t *ent, int newScriptNum ) {
 	g_script_status_t scriptStatusBackup;
 
+	/* Speedrun timer: scan all items in this entity script event.
+	   If any "trigger" action targets an AI entity whose trigger event
+	   contains "changelevel", set ls_changelevel NOW so the client can
+	   finish the run when the cutscene letterbox appears. */
+	{
+		g_script_stack_t *stk = &ent->scriptEvents[newScriptNum].stack;
+		int j;
+		for ( j = 0; j < stk->numItems; j++ ) {
+			if ( stk->items[j].action &&
+				 !Q_stricmp( stk->items[j].action->actionString, "trigger" ) &&
+				 stk->items[j].params ) {
+				// params format: "<entityname> <triggername>"
+				char aiName[MAX_QPATH], trigName[MAX_QPATH];
+				const char *p = stk->items[j].params;
+				int k = 0;
+				// parse entity name
+				while ( *p && *p != ' ' && k < MAX_QPATH - 1 ) {
+					aiName[k++] = *p++;
+				}
+				aiName[k] = '\0';
+				// skip space
+				while ( *p == ' ' ) p++;
+				// parse trigger name
+				k = 0;
+				while ( *p && *p != ' ' && k < MAX_QPATH - 1 ) {
+					trigName[k++] = *p++;
+				}
+				trigName[k] = '\0';
+				if ( aiName[0] && trigName[0] &&
+					 AICast_TriggerHasChangelevel( aiName, trigName ) ) {
+					trap_Cvar_Set( "ls_changelevel", "1" );
+					break;
+				}
+			}
+		}
+	}
+
 	// backup the current scripting
 	memcpy( &scriptStatusBackup, &ent->scriptStatus, sizeof( g_script_status_t ) );
 

@@ -1312,6 +1312,7 @@ extern void AICast_NoAttackIfNotHurtSinceLastScriptAction ( cast_state_t * cs ) 
 extern qboolean AICast_ScriptRun ( cast_state_t * cs , qboolean force ) ;
 extern void AICast_ForceScriptEvent ( struct cast_state_s * cs , char * eventStr , char * params ) ;
 extern void AICast_ScriptEvent ( struct cast_state_s * cs , char * eventStr , char * params ) ;
+extern qboolean AICast_TriggerHasChangelevel ( const char * aiName , const char * triggerName ) ;
 extern void AICast_ScriptChange ( cast_state_t * cs , int newScriptNum ) ;
 extern void AICast_ScriptParse ( cast_state_t * cs ) ;
 extern void AICast_ScriptLoad ( void ) ;
