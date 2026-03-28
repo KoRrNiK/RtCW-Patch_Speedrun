@@ -43,6 +43,7 @@ static vmCvar_t  ghost_visible;
 static vmCvar_t  ghost_x, ghost_y, ghost_z;
 static vmCvar_t  ghost_yaw;
 static vmCvar_t  ghost_speed;
+static vmCvar_t  ghost_opacity;
 static qhandle_t ghostShader;
 
 /* Persistent animation state for smooth frame cycling */
@@ -58,6 +59,7 @@ static void CG_InitGhost( void ) {
 	trap_Cvar_Register( &ghost_z, "ls_ghost_z", "0", 0 );
 	trap_Cvar_Register( &ghost_yaw, "ls_ghost_yaw", "0", 0 );
 	trap_Cvar_Register( &ghost_speed, "ls_ghost_speed", "0", 0 );
+	trap_Cvar_Register( &ghost_opacity, "ls_ghost_opacity", "60", CVAR_ARCHIVE );
 	ghostShader = trap_R_RegisterShader( "ghostPlayer" );
 	ghost_initialized = qtrue;
 }
@@ -147,6 +149,7 @@ static void CG_AddGhost( void ) {
 	int            legsAnimIdx, torsoAnimIdx;
 	int            legsFrame, legsOldFrame, torsoFrame, torsoOldFrame;
 	float          legsBacklerp, torsoBacklerp;
+	int            alpha;
 
 	if ( !ghost_initialized ) {
 		CG_InitGhost();
@@ -160,6 +163,11 @@ static void CG_AddGhost( void ) {
 	trap_Cvar_Update( &ghost_z );
 	trap_Cvar_Update( &ghost_yaw );
 	trap_Cvar_Update( &ghost_speed );
+	trap_Cvar_Update( &ghost_opacity );
+
+	alpha = ghost_opacity.integer;
+	if ( alpha < 0 )   alpha = 0;
+	if ( alpha > 255 ) alpha = 255;
 
 	/* Use the local player's model */
 	ci = &cgs.clientinfo[cg.clientNum];
@@ -202,7 +210,7 @@ static void CG_AddGhost( void ) {
 	legs.shaderRGBA[0] = 80;
 	legs.shaderRGBA[1] = 180;
 	legs.shaderRGBA[2] = 255;
-	legs.shaderRGBA[3] = 60;
+	legs.shaderRGBA[3] = alpha;
 
 	VectorCopy( ghostOrigin, legs.origin );
 	VectorCopy( legs.origin, legs.oldorigin );
@@ -238,7 +246,7 @@ static void CG_AddGhost( void ) {
 	torso.shaderRGBA[0] = 80;
 	torso.shaderRGBA[1] = 180;
 	torso.shaderRGBA[2] = 255;
-	torso.shaderRGBA[3] = 60;
+	torso.shaderRGBA[3] = alpha;
 
 	VectorCopy( lightOrigin, torso.lightingOrigin );
 
@@ -273,7 +281,7 @@ static void CG_AddGhost( void ) {
 	head.shaderRGBA[0] = 80;
 	head.shaderRGBA[1] = 180;
 	head.shaderRGBA[2] = 255;
-	head.shaderRGBA[3] = 60;
+	head.shaderRGBA[3] = alpha;
 
 	VectorCopy( lightOrigin, head.lightingOrigin );
 

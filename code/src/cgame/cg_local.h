@@ -1696,6 +1696,7 @@ extern vmCvar_t cg_drawFPS;
 extern vmCvar_t cg_fpsScale;
 extern vmCvar_t cg_fpsX;
 extern vmCvar_t cg_fpsY;
+extern vmCvar_t cg_fpsAlign;  /* 0=right (default), 1=left */
 
 extern vmCvar_t cg_drawVelocity;
 extern vmCvar_t cg_velocity_type;
@@ -1826,6 +1827,9 @@ extern vmCvar_t cg_crosshairSpread;
 extern vmCvar_t cg_drawTriggers;
 extern vmCvar_t cg_drawEnemies;
 extern vmCvar_t cg_drawItems;
+extern vmCvar_t cg_triggerOpacity;
+extern vmCvar_t cg_enemyOpacity;
+extern vmCvar_t cg_itemOpacity;
 extern vmCvar_t cg_drawPos;
 extern vmCvar_t cg_drawJumpStats;
 

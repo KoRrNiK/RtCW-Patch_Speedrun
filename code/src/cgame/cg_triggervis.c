@@ -6,8 +6,8 @@ Parses BSP entity string at map load to find ALL brush entities
 (any entity with model "*N"), then renders them as colored transparent
 3D boxes.  Different entity types get different colors.
 
-Usage:  cg_drawTriggers 1          (default alpha 80)
-        cg_drawTriggers 2..255     (explicit alpha value)
+Usage:  cg_drawTriggers 1          (enable trigger visualization)
+        cg_triggerOpacity 0..255   (alpha value, default 80)
 
 Colors:
   trigger_multiple       = green          func_door/_rotating = dark blue
@@ -259,7 +259,8 @@ static void TrigVis_DrawBorderedFace( vec3_t v0, vec3_t v1, vec3_t v2, vec3_t v3
 	TrigVis_DrawBoxFace( v3, v0, i0, i3, borderColor, borderShader );
 }
 
-#define BORDER_FRAC  0.015f
+#define BORDER_FRAC       0.015f   /* proportional border for small boxes (items) */
+#define TRIGGER_BORDER_W  2.0f     /* fixed-width border for triggers in world units */
 
 /*
 ==================
@@ -290,6 +291,60 @@ void TrigVis_DrawBox( vec3_t mins, vec3_t maxs, byte fillColor[4],
 	TrigVis_DrawBorderedFace( c[2], c[3], c[7], c[6], borderColor, fillColor, BORDER_FRAC, fillShader, borderShader );  // back
 	TrigVis_DrawBorderedFace( c[3], c[0], c[4], c[7], borderColor, fillColor, BORDER_FRAC, fillShader, borderShader );  // left
 	TrigVis_DrawBorderedFace( c[1], c[2], c[6], c[5], borderColor, fillColor, BORDER_FRAC, fillShader, borderShader );  // right
+}
+
+/*
+==================
+TrigVis_DrawBoxFixedBorder
+
+Like TrigVis_DrawBox but uses a fixed-width border in world units
+instead of proportional fraction.  Keeps borders thin on large triggers.
+==================
+*/
+static void TrigVis_DrawBoxFixedBorder( vec3_t mins, vec3_t maxs,
+										byte fillColor[4], byte borderColor[4],
+										float borderWidth,
+										qhandle_t fillShader, qhandle_t borderShader ) {
+	vec3_t c[8];
+	float sx, sy, sz, bf;
+
+	sx = maxs[0] - mins[0];
+	sy = maxs[1] - mins[1];
+	sz = maxs[2] - mins[2];
+
+	// 8 corners of the AABB
+	VectorSet( c[0], mins[0], mins[1], mins[2] );
+	VectorSet( c[1], maxs[0], mins[1], mins[2] );
+	VectorSet( c[2], maxs[0], maxs[1], mins[2] );
+	VectorSet( c[3], mins[0], maxs[1], mins[2] );
+	VectorSet( c[4], mins[0], mins[1], maxs[2] );
+	VectorSet( c[5], maxs[0], mins[1], maxs[2] );
+	VectorSet( c[6], maxs[0], maxs[1], maxs[2] );
+	VectorSet( c[7], mins[0], maxs[1], maxs[2] );
+
+	// Bottom (XY plane @ minZ): edges are sx and sy
+	bf = ( sx > 0 && sy > 0 ) ? borderWidth / ( ( sx < sy ? sx : sy ) * 0.5f ) : BORDER_FRAC;
+	if ( bf > 0.25f ) bf = 0.25f;
+	TrigVis_DrawBorderedFace( c[3], c[2], c[1], c[0], borderColor, fillColor, bf, fillShader, borderShader );
+
+	// Top (XY plane @ maxZ)
+	TrigVis_DrawBorderedFace( c[4], c[5], c[6], c[7], borderColor, fillColor, bf, fillShader, borderShader );
+
+	// Front (XZ plane @ minY): edges are sx and sz
+	bf = ( sx > 0 && sz > 0 ) ? borderWidth / ( ( sx < sz ? sx : sz ) * 0.5f ) : BORDER_FRAC;
+	if ( bf > 0.25f ) bf = 0.25f;
+	TrigVis_DrawBorderedFace( c[0], c[1], c[5], c[4], borderColor, fillColor, bf, fillShader, borderShader );
+
+	// Back (XZ plane @ maxY)
+	TrigVis_DrawBorderedFace( c[2], c[3], c[7], c[6], borderColor, fillColor, bf, fillShader, borderShader );
+
+	// Left (YZ plane @ minX): edges are sy and sz
+	bf = ( sy > 0 && sz > 0 ) ? borderWidth / ( ( sy < sz ? sy : sz ) * 0.5f ) : BORDER_FRAC;
+	if ( bf > 0.25f ) bf = 0.25f;
+	TrigVis_DrawBorderedFace( c[3], c[0], c[4], c[7], borderColor, fillColor, bf, fillShader, borderShader );
+
+	// Right (YZ plane @ maxX)
+	TrigVis_DrawBorderedFace( c[1], c[2], c[6], c[5], borderColor, fillColor, bf, fillShader, borderShader );
 }
 
 /*
@@ -486,9 +541,9 @@ void CG_DrawTriggerVis( void ) {
 		return;
 	}
 
-	// Alpha from cvar  (cg_drawTriggers: 1..255 sets alpha, 1 = default 80)
-	if ( cg_drawTriggers.integer > 1 && cg_drawTriggers.integer <= 255 ) {
-		alpha = (byte)cg_drawTriggers.integer;
+	// Alpha from cg_triggerOpacity cvar (0..255, default 80)
+	if ( cg_triggerOpacity.integer > 0 && cg_triggerOpacity.integer <= 255 ) {
+		alpha = (byte)cg_triggerOpacity.integer;
 	} else {
 		alpha = 80;  // default ~31% opacity
 	}
@@ -512,6 +567,20 @@ void CG_DrawTriggerVis( void ) {
 			continue;
 		}
 
+		// Frustum culling: skip if entire box is behind camera
+		{
+			float fwd = DotProduct( delta, cg.refdef.viewaxis[0] );
+			vec3_t extents;
+			float radius;
+			extents[0] = ( tv->absmax[0] - tv->absmin[0] ) * 0.5f;
+			extents[1] = ( tv->absmax[1] - tv->absmin[1] ) * 0.5f;
+			extents[2] = ( tv->absmax[2] - tv->absmin[2] ) * 0.5f;
+			radius = VectorLength( extents );
+			if ( fwd < -radius ) {
+				continue;
+			}
+		}
+
 		// Draw box with bordered faces
 		{
 			byte baseColor[4], fillColor[4], borderColor[4];
@@ -524,13 +593,16 @@ void CG_DrawTriggerVis( void ) {
 			fillColor[2] = baseColor[2];
 			fillColor[3] = (byte)( alpha * 0.6f );
 
-			// Border: slightly brighter, moderate glow
+			// Border: slightly brighter, opacity scales with cg_triggerOpacity
 			borderColor[0] = (byte)( baseColor[0] + ( 255 - baseColor[0] ) * 0.3f );
 			borderColor[1] = (byte)( baseColor[1] + ( 255 - baseColor[1] ) * 0.3f );
 			borderColor[2] = (byte)( baseColor[2] + ( 255 - baseColor[2] ) * 0.3f );
-			borderColor[3] = 140;
+			{
+				float ba = alpha * 1.5f;
+				borderColor[3] = (byte)( ba > 255.0f ? 255 : ba );
+			}
 
-			TrigVis_DrawBox( tv->absmin, tv->absmax, fillColor, borderColor, tvShader, tvBorderShader );
+			TrigVis_DrawBoxFixedBorder( tv->absmin, tv->absmax, fillColor, borderColor, TRIGGER_BORDER_W, tvShader, tvBorderShader );
 		}
 	}
 }

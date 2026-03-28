@@ -569,6 +569,9 @@ static qboolean GLW_CreateWindow( const char *drivername, int width, int height,
 		if ( cdsFullscreen || !Q_stricmp( _3DFX_DRIVER_NAME, drivername ) ) {
 			exstyle = 0;
 			stylebits = WS_POPUP | WS_VISIBLE | WS_SYSMENU | WS_MINIMIZEBOX;
+		} else if ( r_borderless && r_borderless->integer ) {
+			exstyle = 0;
+			stylebits = WS_POPUP | WS_VISIBLE;
 		} else
 		{
 			exstyle = 0;

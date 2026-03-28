@@ -992,7 +992,13 @@ static float CG_DrawFPS( float y ) {
 
 		color[0] = color[1] = color[2] = 1.0f;
 		color[3] = 1.0f;
-		CG_DrawStringExt2( xPos - w, (int)( y + 2 ), s, color, qfalse, qtrue, cw, ch, 0, ALIGN_TOPRIGHT );
+		if ( cg_fpsAlign.integer == 1 ) {
+			/* Left-aligned */
+			CG_DrawStringExt2( xPos, (int)( y + 2 ), s, color, qfalse, qtrue, cw, ch, 0, ALIGN_TOPLEFT );
+		} else {
+			/* Right-aligned (default) */
+			CG_DrawStringExt2( xPos - w, (int)( y + 2 ), s, color, qfalse, qtrue, cw, ch, 0, ALIGN_TOPRIGHT );
+		}
 	}
 
 	return y + ch + 4;
@@ -1038,7 +1044,11 @@ static float CG_DrawTimer( float y ) {
 
 	color[0] = color[1] = color[2] = 1.0f;
 	color[3] = 1.0f;
-	CG_DrawStringExt2( xPos - w, (int)( y + 2 ), s, color, qfalse, qtrue, cw, ch, 0, ALIGN_TOPRIGHT );
+	if ( cg_fpsAlign.integer == 1 ) {
+		CG_DrawStringExt2( xPos, (int)( y + 2 ), s, color, qfalse, qtrue, cw, ch, 0, ALIGN_TOPLEFT );
+	} else {
+		CG_DrawStringExt2( xPos - w, (int)( y + 2 ), s, color, qfalse, qtrue, cw, ch, 0, ALIGN_TOPRIGHT );
+	}
 
 	return y + ch + 4;
 }
@@ -3886,6 +3896,70 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 		cg.refdef.rdflags &= ~RDF_DRAWSKYBOX;
 	}
 
+	/* Demo freecam: override cg.refdef so that ESP, TriggerVis, labels
+	   and the renderer all use the camera position (not the player's).
+	   The engine writes cl_freecamActive / cl_freecamPos / cl_freecamAngles
+	   every frame when freecam is on. */
+	{
+		char buf[64];
+		trap_Cvar_VariableStringBuffer( "cl_freecamActive", buf, sizeof( buf ) );
+		if ( atoi( buf ) ) {
+			float x, y, z, pitch, yaw, roll;
+			vec3_t fcAngles;
+			trap_Cvar_VariableStringBuffer( "cl_freecamPos", buf, sizeof( buf ) );
+			if ( sscanf( buf, "%f %f %f", &x, &y, &z ) == 3 ) {
+				cg.refdef.vieworg[0] = x;
+				cg.refdef.vieworg[1] = y;
+				cg.refdef.vieworg[2] = z;
+			}
+			trap_Cvar_VariableStringBuffer( "cl_freecamAngles", buf, sizeof( buf ) );
+			if ( sscanf( buf, "%f %f %f", &pitch, &yaw, &roll ) == 3 ) {
+				fcAngles[0] = pitch;
+				fcAngles[1] = yaw;
+				fcAngles[2] = roll;
+				AnglesToAxis( fcAngles, cg.refdef.viewaxis );
+			}
+			/* Clear areamask so all BSP areas are visible (the snapshot's
+			   areamask is based on the player position, not the camera). */
+			memset( cg.refdef.areamask, 0, sizeof( cg.refdef.areamask ) );
+		}
+	}
+
+	// ---- Dev tools: auto-disable when sv_cheats is 0 ----
+	{
+		char cheatsBuf[4];
+		trap_Cvar_VariableStringBuffer( "sv_cheats", cheatsBuf, sizeof( cheatsBuf ) );
+		if ( atoi( cheatsBuf ) == 0 ) {
+			// Force-reset cheat-only drawing cvars
+			if ( cg_drawTriggers.integer ) {
+				trap_Cvar_Set( "cg_drawTriggers", "0" );
+			}
+			if ( cg_drawEnemies.integer ) {
+				trap_Cvar_Set( "cg_drawEnemies", "0" );
+			}
+			if ( cg_drawItems.integer ) {
+				trap_Cvar_Set( "cg_drawItems", "0" );
+			}
+			if ( bh_movement.integer ) {
+				trap_Cvar_Set( "bh_movement", "0" );
+			}
+			if ( bh_autojump.integer ) {
+				trap_Cvar_Set( "bh_autojump", "0" );
+			}
+			{
+				char tmp[4];
+				trap_Cvar_VariableStringBuffer( "r_drawClips", tmp, sizeof( tmp ) );
+				if ( atoi( tmp ) ) {
+					trap_Cvar_Set( "r_drawClips", "0" );
+				}
+				trap_Cvar_VariableStringBuffer( "g_triggerLog", tmp, sizeof( tmp ) );
+				if ( atoi( tmp ) ) {
+					trap_Cvar_Set( "g_triggerLog", "0" );
+				}
+			}
+		}
+	}
+
 	// Draw trigger volume visualization (adds polys to scene)
 	CG_DrawTriggerVis();
 
@@ -4071,7 +4145,7 @@ static void CG_DrawKeystrokeOverlay( void ) {
 	pressed[5] = ( cmd.wbuttons & WBUTTON_CROUCH ) ? qtrue : qfalse;         // DUCK
 	pressed[4] = ( cmd.upmove > 0 ) || ( cmd.upmove == 0 && pressed[5] );   // JUMP
 	pressed[6] = ( cmd.buttons & BUTTON_ATTACK ) ? qtrue : qfalse;           // LMB
-	pressed[7] = ( cmd.wbuttons & WBUTTON_ATTACK2 ) ? qtrue : qfalse;       // RMB
+	pressed[7] = ( cmd.buttons & BUTTON_SPRINT ) ? qtrue : qfalse;           // Run/Sprint
 	pressed[8] = qfalse;  /* mouse dir X (handled separately) */
 	pressed[9] = qfalse;  /* mouse dir Y (handled separately) */
 
@@ -4177,12 +4251,12 @@ static void CG_DrawKeystrokeOverlay( void ) {
 								   dirBoxSz * 0.5f,
 								   -mouseDirX, mouseDirY, ksOpacity );
 			CG_DrawKeystrokeKey( mBaseX + btnW + gap + dirBoxSz + gap, y,
-								 btnW, boxH, "RMB", 3, keyAlpha[7], ksOpacity, mCharW, mCharH );
+								 btnW, boxH, "RUN", 3, keyAlpha[7], ksOpacity, mCharW, mCharH );
 		} else {
 			/* [LMB] [RMB] - two items centered */
 			btnW = halfW;
 			CG_DrawKeystrokeKey( baseX,               y, btnW, boxH, "LMB", 3, keyAlpha[6], ksOpacity, mCharW, mCharH );
-			CG_DrawKeystrokeKey( baseX + btnW + gap,  y, btnW, boxH, "RMB", 3, keyAlpha[7], ksOpacity, mCharW, mCharH );
+			CG_DrawKeystrokeKey( baseX + btnW + gap,  y, btnW, boxH, "RUN", 3, keyAlpha[7], ksOpacity, mCharW, mCharH );
 		}
 	}
 }

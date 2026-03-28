@@ -195,15 +195,34 @@ void CG_DrawEnemyESP( void ) {
 			continue;
 		}
 
-		// Pass 1: RED glow through walls (depth test disabled)
-		ESP_AddGlowEntity( &cent->pe.legsRefEnt,  espWallShader, 180, 30, 15, 50 );
-		ESP_AddGlowEntity( &cent->pe.torsoRefEnt, espWallShader, 180, 30, 15, 50 );
-		ESP_AddGlowEntity( &cent->pe.headRefEnt,  espWallShader, 180, 30, 15, 50 );
+		// Frustum culling: skip if behind camera
+		{
+			float fwd = DotProduct( delta, cg.refdef.viewaxis[0] );
+			if ( fwd < -100.0f ) {
+				continue;
+			}
+		}
 
-		// Pass 2: GREEN glow on visible parts (depth test enabled, overdraws red)
-		ESP_AddGlowEntity( &cent->pe.legsRefEnt,  espVisShader, 15, 180, 30, 60 );
-		ESP_AddGlowEntity( &cent->pe.torsoRefEnt, espVisShader, 15, 180, 30, 60 );
-		ESP_AddGlowEntity( &cent->pe.headRefEnt,  espVisShader, 15, 180, 30, 60 );
+		// Alpha from cg_enemyOpacity cvar (0..255, default 255)
+		{
+			byte eAlpha = 255;
+			byte wallA, visA;
+			if ( cg_enemyOpacity.integer >= 0 && cg_enemyOpacity.integer <= 255 ) {
+				eAlpha = (byte)cg_enemyOpacity.integer;
+			}
+			wallA = (byte)( 50 * eAlpha / 255 );
+			visA  = (byte)( 60 * eAlpha / 255 );
+
+			// Pass 1: RED glow through walls (depth test disabled)
+			ESP_AddGlowEntity( &cent->pe.legsRefEnt,  espWallShader, 180, 30, 15, wallA );
+			ESP_AddGlowEntity( &cent->pe.torsoRefEnt, espWallShader, 180, 30, 15, wallA );
+			ESP_AddGlowEntity( &cent->pe.headRefEnt,  espWallShader, 180, 30, 15, wallA );
+
+			// Pass 2: GREEN glow on visible parts (depth test enabled, overdraws red)
+			ESP_AddGlowEntity( &cent->pe.legsRefEnt,  espVisShader, 15, 180, 30, visA );
+			ESP_AddGlowEntity( &cent->pe.torsoRefEnt, espVisShader, 15, 180, 30, visA );
+			ESP_AddGlowEntity( &cent->pe.headRefEnt,  espVisShader, 15, 180, 30, visA );
+		}
 	}
 }
 
@@ -540,6 +559,14 @@ void CG_DrawItemESP( void ) {
 			continue;
 		}
 
+		// Frustum culling: skip if behind camera
+		{
+			float fwd = DotProduct( delta, cg.refdef.viewaxis[0] );
+			if ( fwd < -50.0f ) {
+				continue;
+			}
+		}
+
 		// Build a small box around the item origin
 		VectorSet( mins,
 			cent->lerpOrigin[0] - ITEM_BOX_SIZE,
@@ -551,6 +578,15 @@ void CG_DrawItemESP( void ) {
 			cent->lerpOrigin[2] + ITEM_BOX_SIZE * 1.5f );
 
 		Item_GetColor( item->giType, fillColor );
+
+		/* scale base alpha by cg_itemOpacity cvar (0..255, default 255) */
+		{
+			int iOpacity = 255;
+			if ( cg_itemOpacity.integer >= 0 && cg_itemOpacity.integer <= 255 ) {
+				iOpacity = cg_itemOpacity.integer;
+			}
+			fillColor[3] = (byte)( fillColor[3] * iOpacity / 255 );
+		}
 
 		/* fade with distance */
 		{

@@ -124,6 +124,7 @@ vmCvar_t cg_drawFPS;
 vmCvar_t cg_fpsScale;
 vmCvar_t cg_fpsX;
 vmCvar_t cg_fpsY;
+vmCvar_t cg_fpsAlign;
 
 vmCvar_t cg_drawVelocity;
 vmCvar_t cg_velocity_type;
@@ -285,6 +286,9 @@ vmCvar_t cg_crosshairSpread;
 vmCvar_t cg_drawTriggers;
 vmCvar_t cg_drawEnemies;
 vmCvar_t cg_drawItems;
+vmCvar_t cg_triggerOpacity;
+vmCvar_t cg_enemyOpacity;
+vmCvar_t cg_itemOpacity;
 vmCvar_t cg_drawPos;
 vmCvar_t cg_drawJumpStats;
 
@@ -389,6 +393,7 @@ cvarTable_t cvarTable[] = {
 	{ &cg_fpsScale, "cg_fpsScale", "1.0", CVAR_ARCHIVE  },
 	{ &cg_fpsX, "cg_fpsX", "500", CVAR_ARCHIVE  },
 	{ &cg_fpsY, "cg_fpsY", "0", CVAR_ARCHIVE  },
+	{ &cg_fpsAlign, "cg_fpsAlign", "0", CVAR_ARCHIVE  },
 	
 	{ &cg_drawVelocity, "cg_drawVelocity", "0", CVAR_ARCHIVE  },
 	{ &cg_velocity_type, "cg_velocity_type", "0", CVAR_ARCHIVE  },
@@ -511,6 +516,9 @@ cvarTable_t cvarTable[] = {
 	{ &cg_drawTriggers, "cg_drawTriggers", "0", CVAR_ARCHIVE | CVAR_CHEAT },
 	{ &cg_drawEnemies, "cg_drawEnemies", "0", CVAR_ARCHIVE | CVAR_CHEAT },
 	{ &cg_drawItems, "cg_drawItems", "0", CVAR_ARCHIVE | CVAR_CHEAT },
+	{ &cg_triggerOpacity, "cg_triggerOpacity", "80", CVAR_ARCHIVE },
+	{ &cg_enemyOpacity, "cg_enemyOpacity", "255", CVAR_ARCHIVE },
+	{ &cg_itemOpacity, "cg_itemOpacity", "255", CVAR_ARCHIVE },
 	{ &cg_drawPos, "cg_drawPos", "0", CVAR_ARCHIVE },
 	{ &cg_drawJumpStats, "cg_drawJumpStats", "0", CVAR_ARCHIVE },
 
