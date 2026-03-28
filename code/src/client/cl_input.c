@@ -1080,21 +1080,28 @@ void CL_UpdateDemoFreecam( int frameMsec ) {
 	if ( kb[KB_UP].active )        up   += 1.0f;
 	if ( kb[KB_DOWN].active )      up   -= 1.0f;
 
-	if ( fwd == 0 && side == 0 && up == 0 ) {
-		return;
+	if ( fwd != 0 || side != 0 || up != 0 ) {
+		/* Build direction vectors from freecam angles */
+		AngleVectors( clc.demoFreecamAngles, forward, right, upVec );
+
+		/* Compute movement in world space */
+		VectorClear( move );
+		VectorMA( move, fwd * speed * dt,  forward, move );
+		VectorMA( move, side * speed * dt, right,   move );
+		VectorMA( move, up * speed * dt,   upVec,   move );
+
+		/* Apply movement to freecam position */
+		VectorAdd( clc.demoFreecamPos, move, clc.demoFreecamPos );
 	}
 
-	/* Build direction vectors from freecam angles */
-	AngleVectors( clc.demoFreecamAngles, forward, right, upVec );
-
-	/* Compute movement in world space */
-	VectorClear( move );
-	VectorMA( move, fwd * speed * dt,  forward, move );
-	VectorMA( move, side * speed * dt, right,   move );
-	VectorMA( move, up * speed * dt,   upVec,   move );
-
-	/* Apply movement to freecam position */
-	VectorAdd( clc.demoFreecamPos, move, clc.demoFreecamPos );
+	/* Sync freecam state to cvars every frame so the cgame can use
+	   the correct camera position for ESP/TriggerVis rendering and
+	   world-to-screen projection (angles change even without movement
+	   due to mouse look). */
+	Cvar_Set( "cl_freecamPos", va( "%.2f %.2f %.2f",
+		clc.demoFreecamPos[0], clc.demoFreecamPos[1], clc.demoFreecamPos[2] ) );
+	Cvar_Set( "cl_freecamAngles", va( "%.2f %.2f %.2f",
+		clc.demoFreecamAngles[0], clc.demoFreecamAngles[1], clc.demoFreecamAngles[2] ) );
 }
 
 

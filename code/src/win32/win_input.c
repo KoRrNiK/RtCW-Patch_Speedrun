@@ -218,7 +218,7 @@ void IN_RawInput_Register( void ) {
 		raw_mouse_registered = qtrue;
 		raw_mouse_dx = 0;
 		raw_mouse_dy = 0;
-		Com_Printf( "Raw mouse input enabled.\n" );
+		// Com_Printf( "Raw mouse input enabled.\n" );
 	} else {
 		Com_Printf( "^1Failed to register raw mouse input.\n" );
 	}

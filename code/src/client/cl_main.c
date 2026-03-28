@@ -169,6 +169,11 @@ void CL_AddReliableCommand( const char *cmd ) {
 //		Com_Printf ("cmd: %s\n", cmd);
 
 	if ( clc.reliableSequence - clc.reliableAcknowledge > MAX_RELIABLE_COMMANDS ) {
+		// During demo playback there is no server to acknowledge commands,
+		// so the buffer fills up.  Silently drop instead of crashing.
+		if ( clc.demoplaying ) {
+			return;
+		}
 		Com_Error( ERR_DROP, "Client command overflow" );
 	}
 	clc.reliableSequence++;
@@ -225,8 +230,6 @@ void CL_WriteDemoMessage( msg_t *msg, int headerBytes ) {
 }
 
 
-static int  cl_savedSvFps = 0;          // original sv_fps before demo boost
-
 /*
 ====================
 CL_StopRecording_f
@@ -249,13 +252,6 @@ void CL_StopRecord_f( void ) {
 	FS_FCloseFile( clc.demofile );
 	clc.demofile = 0;
 	clc.demorecording = qfalse;
-
-	// SP/localhost: restore original sv_fps
-	if ( cl_savedSvFps > 0 ) {
-		Cvar_Set( "sv_fps", va( "%d", cl_savedSvFps ) );
-		Com_Printf( "^2Demo: sv_fps restored to %d\n", cl_savedSvFps );
-		cl_savedSvFps = 0;
-	}
 
 	Com_Printf( "Stopped demo.\n" );
 }
@@ -363,16 +359,6 @@ void CL_Record_f( void ) {
 	}
 	clc.demorecording = qtrue;
 	Q_strncpyz( clc.demoName, demoName, sizeof( clc.demoName ) );
-
-	// SP/localhost: boost sv_fps for smoother demo recording
-	if ( !Q_stricmp( cls.servername, "localhost" ) ) {
-		int demofps = Cvar_VariableIntegerValue( "sp_demofps" );
-		if ( demofps > 20 ) {
-			cl_savedSvFps = Cvar_VariableIntegerValue( "sv_fps" );
-			Cvar_Set( "sv_fps", va( "%d", demofps ) );
-			Com_Printf( "^2Demo: sv_fps boosted to %d (was %d)\n", demofps, cl_savedSvFps );
-		}
-	}
 
 	// don't start saving messages until a non-delta compressed message is received
 	clc.demowaiting = qtrue;
@@ -658,9 +644,19 @@ void CL_DemoFreecam_f( void ) {
 		clc.demoFreecam = qtrue;
 		/* Force third-person so the player model is rendered in the scene */
 		Cvar_Set( "cg_thirdPerson", "1" );
+		/* Communicate freecam state to cgame for ESP/TriggerVis rendering */
+		Cvar_Set( "cl_freecamActive", "1" );
+		Cvar_Set( "cl_freecamPos", va( "%.2f %.2f %.2f",
+			clc.demoFreecamPos[0], clc.demoFreecamPos[1], clc.demoFreecamPos[2] ) );
+		Cvar_Set( "cl_freecamAngles", va( "%.2f %.2f %.2f",
+			clc.demoFreecamAngles[0], clc.demoFreecamAngles[1], clc.demoFreecamAngles[2] ) );
+		/* Disable PVS culling so the full map is visible from any camera position */
+		Cvar_Set( "r_novis", "1" );
 	} else {
 		clc.demoFreecam = qfalse;
 		Cvar_Set( "cg_thirdPerson", "0" );
+		Cvar_Set( "cl_freecamActive", "0" );
+		Cvar_Set( "r_novis", "0" );
 	}
 }
 
@@ -1230,10 +1226,12 @@ void CL_DemoControlsReset( void ) {
 	demo_pauseServerTime = 0;
 	if ( clc.demoFreecam ) {
 		Cvar_Set( "cg_thirdPerson", "0" );
+		Cvar_Set( "r_novis", "0" );
 	}
 	clc.demoFreecam = qfalse;
 	clc.demoHideHUD = qfalse;
 	s_demoHideBinds = qfalse;
+	Cvar_Set( "cl_freecamActive", "0" );
 	Cvar_Set( "cl_freezeDemo", "0" );
 	Cvar_SetValue( "timescale", 1.0f );
 }

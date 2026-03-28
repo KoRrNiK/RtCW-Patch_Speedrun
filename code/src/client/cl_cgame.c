@@ -1232,6 +1232,11 @@ void CL_FirstSnapshot( void ) {
 			   and ensure third-person stays on. */
 			VectorCopy( clc.demoFreecamAngles, cl.viewangles );
 			Cvar_Set( "cg_thirdPerson", "1" );
+			/* Sync updated freecam position to cgame cvars */
+			Cvar_Set( "cl_freecamPos", va( "%.2f %.2f %.2f",
+				clc.demoFreecamPos[0], clc.demoFreecamPos[1], clc.demoFreecamPos[2] ) );
+			Cvar_Set( "cl_freecamAngles", va( "%.2f %.2f %.2f",
+				clc.demoFreecamAngles[0], clc.demoFreecamAngles[1], clc.demoFreecamAngles[2] ) );
 		}
 	}
 
