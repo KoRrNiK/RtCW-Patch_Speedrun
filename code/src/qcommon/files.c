@@ -266,6 +266,7 @@ static cvar_t      *fs_cdpath;
 static cvar_t      *fs_copyfiles;
 static cvar_t      *fs_gamedirvar;
 static cvar_t      *fs_restrict;
+static cvar_t      *fs_defaultFonts;   // speedrun: skip custom fonts from sp_speedrun.pk3
 static searchpath_t    *fs_searchpaths;
 static int fs_readCount;                    // total bytes read
 static int fs_loadCount;                    // total files read
@@ -1145,6 +1146,17 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 				do {
 					// case and separator insensitive comparisons
 					if ( !FS_FilenameCompare( pakFile->name, filename ) ) {
+						// speedrun: skip custom font assets from sp_speedrun.pk3
+						if ( fs_defaultFonts && fs_defaultFonts->integer &&
+							 !Q_stricmp( pak->pakBasename, "sp_speedrun" ) &&
+							 ( !Q_stricmpn( filename, "gfx/2d/bigchars", 15 ) ||
+							   !Q_stricmpn( filename, "gfx/2d/hudchars", 15 ) ||
+							   !Q_stricmpn( filename, "gfx\\2d\\bigchars", 15 ) ||
+							   !Q_stricmpn( filename, "gfx\\2d\\hudchars", 15 ) ||
+							   !Q_stricmpn( filename, "fonts/", 6 ) ||
+							   !Q_stricmpn( filename, "fonts\\", 6 ) ) ) {
+							break;  // skip this pk3 match
+						}
 						// found it!
 						return qtrue;
 					}
@@ -1216,6 +1228,19 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 				// case and separator insensitive comparisons
 				if ( !FS_FilenameCompare( pakFile->name, filename ) ) {
 					// found it!
+
+					// speedrun: skip custom font assets from sp_speedrun.pk3
+					// when cg_defaultFonts is enabled, so original pak0 fonts are used
+					if ( fs_defaultFonts && fs_defaultFonts->integer &&
+						 !Q_stricmp( pak->pakBasename, "sp_speedrun" ) &&
+						 ( !Q_stricmpn( filename, "gfx/2d/bigchars", 15 ) ||
+						   !Q_stricmpn( filename, "gfx/2d/hudchars", 15 ) ||
+						   !Q_stricmpn( filename, "gfx\\2d\\bigchars", 15 ) ||
+						   !Q_stricmpn( filename, "gfx\\2d\\hudchars", 15 ) ||
+						   !Q_stricmpn( filename, "fonts/", 6 ) ||
+						   !Q_stricmpn( filename, "fonts\\", 6 ) ) ) {
+						break;  // skip this pk3 match, fall through to next search path
+					}
 
 					// mark the pak as having been referenced and mark specifics on cgame and ui
 					// shaders, txt, arena files  by themselves do not count as a reference as
@@ -2907,6 +2932,7 @@ static void FS_Startup( const char *gameName ) {
 	fs_homepath = Cvar_Get( "fs_homepath", homePath, CVAR_INIT );
 	fs_gamedirvar = Cvar_Get( "fs_game", "", CVAR_INIT | CVAR_SYSTEMINFO );
 	fs_restrict = Cvar_Get( "fs_restrict", "", CVAR_INIT );
+	fs_defaultFonts = Cvar_Get( "cg_defaultFonts", "0", CVAR_ARCHIVE );
 
 	// add search path elements in reverse priority order
 	if ( fs_cdpath->string[0] ) {
