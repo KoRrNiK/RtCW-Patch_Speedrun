@@ -28,4 +28,5 @@
 
 	// Speedrun additions
 	loadMenu { "ui/ingame_livesplit.menu" }
+	loadMenu { "ui/colorpicker.menu" }
 }
