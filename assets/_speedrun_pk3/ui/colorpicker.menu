@@ -2,7 +2,7 @@
 
 // ========================================
 //  Color Picker popup menu
-//  Single ownerdraw covers the full screen — handles all
+//  Single ownerdraw covers the full screen - handles all
 //  rendering (dim backdrop + wheel) and input in C code.
 //  Click outside the wheel or press ESC/RMB to close.
 // ========================================
@@ -18,7 +18,7 @@
 		popup
 		onESC { close colorpicker }
 
-		// Single ownerdraw item — covers full screen so it always gets focus.
+		// Single ownerdraw item - covers full screen so it always gets focus.
 		// The C draw function renders the picker panel.
 		// The C key handler closes on click outside wheel.
 		itemDef {

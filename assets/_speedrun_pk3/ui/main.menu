@@ -554,6 +554,31 @@ itemDef {
 
 
 
+//	UPDATE AVAILABLE - shown only when sp_updateAvailable == "1"	//
+
+	itemDef {
+		name update_btn
+		text "UPDATE AVAILABLE"
+		type 1
+		style WINDOW_STYLE_FILLED
+		textstyle 6
+		rect 228 440 184 18
+		textalign 1
+		textscale .22
+		textalignx 92
+		textaligny 14
+		forecolor .55 .85 1.0 .90
+		backcolor .05 .10 .18 .50
+		visible 1
+		textfont UI_FONT_NORMAL
+		mouseEnter { setitemcolor update_btn forecolor .80 .95 1.0 1 ; setitemcolor update_btn backcolor .10 .18 .30 .70 }
+		mouseExit { setitemcolor update_btn forecolor .55 .85 1.0 .90 ; setitemcolor update_btn backcolor .05 .10 .18 .50 }
+		action { exec "sp_openUpdate" ; play "sound/misc/zap.wav" }
+		cvarTest "sp_updateAvailable"
+		showCvar { "1" }
+	}
+
+
 itemDef {
       	name fadebox					// Box for fading in menus
       	style WINDOW_STYLE_FILLED

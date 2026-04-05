@@ -249,7 +249,7 @@ menuDef {
 		backcolor .12 .18 .08 0
 		style WINDOW_STYLE_FILLED
 		visible 1
-		action { hide grpLivesplit ; show lsDemos ; uiScript LoadDemos }
+		action { hide grpLivesplit ; show lsDemos ; show dfAll ; show dfIL ; show dfMis ; show dfFG ; show dfOth ; show demoSearch ; uiScript LoadDemos }
 		mouseEnter { setitemcolor ctr_demos backcolor .08 .12 .20 .65 }
 		mouseExit { setitemcolor ctr_demos backcolor .12 .18 .08 0 }
 	}
@@ -436,7 +436,7 @@ menuDef {
 		textaligny 11
 		textscale .22
 		forecolor .85 .88 .80 .90
-		visible 1
+		visible 0
 	}
 
 	itemDef {
@@ -445,7 +445,7 @@ menuDef {
 		type ITEM_TYPE_MULTI
 		text "Run Mode:"
 		cvar "ls_mode"
-		cvarFloatList { "Full Game" 0 "Mission" 1 "Individual Level" 2 }
+		cvarFloatList { "Full Game" 0 "Chapter" 1 "Individual Level" 2 }
 		rect 20 76 390 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 150
@@ -459,7 +459,7 @@ menuDef {
 		name lsTimer
 		group grpLivesplit
 		type ITEM_TYPE_MULTI
-		text "Mission Group:"
+		text "Chapter:"
 		cvar "ls_mission"
 		cvarFloatList { "1: Ominous Rumors" 1 "2: Vengeance" 2 "3: Deadly Designs" 3 "4: Deathshead" 4 "5: Resurrection" 5 }
 		rect 20 90 390 14
@@ -474,10 +474,10 @@ menuDef {
 	itemDef {
 		name lsTimer
 		group grpLivesplit
-		type ITEM_TYPE_EDITFIELD
-		text "Map Override:"
+		type ITEM_TYPE_MULTI
+		text "IL Map:"
 		cvar "ls_map"
-		maxchars 32
+		cvarStrList { "Auto (current)", "", "Escape!", "escape1", "Castle Keep", "escape2", "Tram Ride", "tram", "Village", "village1", "Catacombs", "crypt1", "Crypt", "crypt2", "Church", "church", "Tomb", "boss1", "Forest Compound", "forest", "Rocket Base", "rocket", "Radar Installation", "baseout", "Air Base Assault", "assault", "Kugelstadt", "sfm", "Bombed Factory", "factory", "Trainyards", "trainyard", "SWF", "swf", "Ice Station Norway", "norway", "X-Labs", "xlabs", "Super Soldier", "boss2", "Bramburg Dam", "dam", "Paderborn Village", "village2", "Chateau", "chateau", "Unhallowed Ground", "dark", "The Dig", "dig", "RTCW", "castle", "Heinrich", "end" }
 		rect 20 104 390 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 150
@@ -493,7 +493,39 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "100% Category:"
 		cvar "ls_100pct"
-		rect 20 120 390 14
+		rect 20 118 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Compare Against:"
+		cvar "ls_compare"
+		cvarFloatList { "Personal Best" 0 "Best Segments" 1 "Average Segments" 2 }
+		rect 20 132 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 1
+	}
+
+	itemDef {
+		name lsTimer
+		group grpLivesplit
+		type ITEM_TYPE_MULTI
+		text "Timing Method:"
+		cvar "ls_timing"
+		cvarFloatList { "Game Time" 0 "Real Time" 1 }
+		rect 20 146 390 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 150
 		textaligny 11
@@ -508,7 +540,7 @@ menuDef {
 		group grpLivesplit
 		type ITEM_TYPE_TEXT
 		text "Element Visibility"
-		rect 12 140 200 12
+		rect 12 168 200 12
 		textalign ITEM_ALIGN_LEFT
 		textalignx 0
 		textaligny 10
@@ -520,7 +552,7 @@ menuDef {
 	itemDef {
 		name lsTimer
 		group grpLivesplit
-		rect 12 152 400 1
+		rect 12 180 400 1
 		style WINDOW_STYLE_FILLED
 		backcolor .22 .38 .12 .22
 		visible 1
@@ -533,7 +565,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Main Timer:"
 		cvar "ls_showtimer"
-		rect 20 160 185 14
+		rect 20 188 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -547,7 +579,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Segment Timer:"
 		cvar "ls_showseg"
-		rect 215 160 185 14
+		rect 215 188 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -562,7 +594,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "PB Label:"
 		cvar "ls_showpb"
-		rect 20 178 185 14
+		rect 20 204 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -576,7 +608,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Best Label:"
 		cvar "ls_showbest"
-		rect 215 178 185 14
+		rect 215 204 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -591,7 +623,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Headers:"
 		cvar "ls_showheader"
-		rect 20 196 185 14
+		rect 20 220 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -605,7 +637,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Statistics:"
 		cvar "ls_showstats"
-		rect 215 196 185 14
+		rect 215 220 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -620,7 +652,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "RGT:"
 		cvar "ls_showrgt"
-		rect 20 214 185 14
+		rect 20 236 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -634,7 +666,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Separators:"
 		cvar "ls_showseps"
-		rect 215 214 185 14
+		rect 215 236 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -649,7 +681,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "PB Delta (+/-):"
 		cvar "ls_showdeltas"
-		rect 20 232 185 14
+		rect 20 252 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -663,7 +695,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Best Delta (+/-):"
 		cvar "ls_showbestdeltas"
-		rect 215 232 185 14
+		rect 215 252 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -677,7 +709,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Attempt Counter:"
 		cvar "ls_showatt"
-		rect 20 250 185 14
+		rect 20 268 185 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 80
 		textaligny 11
@@ -692,7 +724,7 @@ menuDef {
 		group grpLivesplit
 		type ITEM_TYPE_TEXT
 		text "Demo Recording"
-		rect 12 274 200 12
+		rect 12 292 200 12
 		textalign ITEM_ALIGN_LEFT
 		textalignx 0
 		textaligny 10
@@ -704,7 +736,7 @@ menuDef {
 	itemDef {
 		name lsTimer
 		group grpLivesplit
-		rect 12 286 400 1
+		rect 12 304 400 1
 		style WINDOW_STYLE_FILLED
 		backcolor .22 .38 .12 .22
 		visible 1
@@ -717,7 +749,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Auto-Record Demos:"
 		cvar "sp_autorecord"
-		rect 20 294 390 14
+		rect 20 312 390 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 150
 		textaligny 11
@@ -731,7 +763,7 @@ menuDef {
 		group grpLivesplit
 		type ITEM_TYPE_TEXT
 		text "^3Automatically records a demo when the timer starts."
-		rect 20 312 390 12
+		rect 20 332 390 12
 		textalign ITEM_ALIGN_LEFT
 		textalignx 0
 		textaligny 10
@@ -745,7 +777,7 @@ menuDef {
 		group grpLivesplit
 		type ITEM_TYPE_TEXT
 		text "^3Demos persist across map changes (full run in one file)."
-		rect 20 324 390 12
+		rect 20 344 390 12
 		textalign ITEM_ALIGN_LEFT
 		textalignx 0
 		textaligny 10
@@ -759,7 +791,7 @@ menuDef {
 		group grpLivesplit
 		type ITEM_TYPE_TEXT
 		text "^3Files saved to: demos/speedrun_*.dm_49"
-		rect 20 336 390 12
+		rect 20 356 390 12
 		textalign ITEM_ALIGN_LEFT
 		textalignx 0
 		textaligny 10
@@ -775,7 +807,7 @@ menuDef {
 		group grpLivesplit
 		type ITEM_TYPE_TEXT
 		text "^3Note: ^7Mode changes apply on next livesplit_start"
-		rect 12 370 400 12
+		rect 12 388 400 12
 		textalign ITEM_ALIGN_LEFT
 		textalignx 0
 		textaligny 10
@@ -2276,6 +2308,21 @@ menuDef {
 		text "IGT Scale:"
 		cvarfloat "ls_igttimer_scale" 1.0 0.3 4.0
 		rect 20 384 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
+		text "Show IGT Segment Timer:"
+		cvar "ls_igtsegtimer"
+		rect 20 402 390 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 150
 		textaligny 11
@@ -3978,12 +4025,198 @@ menuDef {
 		decoration
 	}
 
+	// -- Filter buttons --
+	itemDef {
+		name dfAll
+		group grpLivesplit
+		text "All"
+		type 1
+		textscale .18
+		style WINDOW_STYLE_FILLED
+		rect 12 46 52 18
+		textalign 1
+		textalignx 26
+		textaligny 13
+		forecolor .85 .95 .75 .90
+		backcolor .35 .55 .25 .70
+		border 1
+		bordercolor .45 .65 .30 .60
+		visible 0
+		action {
+			setitemcolor dfAll backcolor .35 .55 .25 .70 ;
+			setitemcolor dfAll bordercolor .45 .65 .30 .60 ;
+			setitemcolor dfIL backcolor .15 .28 .10 .50 ;
+			setitemcolor dfIL bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfMis backcolor .15 .28 .10 .50 ;
+			setitemcolor dfMis bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfFG backcolor .15 .28 .10 .50 ;
+			setitemcolor dfFG bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfOth backcolor .15 .28 .10 .50 ;
+			setitemcolor dfOth bordercolor .22 .38 .12 .40 ;
+			uiScript DemoFilterAll
+		}
+	}
+	itemDef {
+		name dfIL
+		group grpLivesplit
+		text "IL"
+		type 1
+		textscale .18
+		style WINDOW_STYLE_FILLED
+		rect 68 46 52 18
+		textalign 1
+		textalignx 26
+		textaligny 13
+		forecolor .85 .95 .75 .90
+		backcolor .15 .28 .10 .50
+		border 1
+		bordercolor .22 .38 .12 .40
+		visible 0
+		action {
+			setitemcolor dfAll backcolor .15 .28 .10 .50 ;
+			setitemcolor dfAll bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfIL backcolor .35 .55 .25 .70 ;
+			setitemcolor dfIL bordercolor .45 .65 .30 .60 ;
+			setitemcolor dfMis backcolor .15 .28 .10 .50 ;
+			setitemcolor dfMis bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfFG backcolor .15 .28 .10 .50 ;
+			setitemcolor dfFG bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfOth backcolor .15 .28 .10 .50 ;
+			setitemcolor dfOth bordercolor .22 .38 .12 .40 ;
+			uiScript DemoFilterIL
+		}
+	}
+	itemDef {
+		name dfMis
+		group grpLivesplit
+		text "Mission"
+		type 1
+		textscale .18
+		style WINDOW_STYLE_FILLED
+		rect 124 46 64 18
+		textalign 1
+		textalignx 32
+		textaligny 13
+		forecolor .85 .95 .75 .90
+		backcolor .15 .28 .10 .50
+		border 1
+		bordercolor .22 .38 .12 .40
+		visible 0
+		action {
+			setitemcolor dfAll backcolor .15 .28 .10 .50 ;
+			setitemcolor dfAll bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfIL backcolor .15 .28 .10 .50 ;
+			setitemcolor dfIL bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfMis backcolor .35 .55 .25 .70 ;
+			setitemcolor dfMis bordercolor .45 .65 .30 .60 ;
+			setitemcolor dfFG backcolor .15 .28 .10 .50 ;
+			setitemcolor dfFG bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfOth backcolor .15 .28 .10 .50 ;
+			setitemcolor dfOth bordercolor .22 .38 .12 .40 ;
+			uiScript DemoFilterMission
+		}
+	}
+	itemDef {
+		name dfFG
+		group grpLivesplit
+		text "Fullgame"
+		type 1
+		textscale .18
+		style WINDOW_STYLE_FILLED
+		rect 192 46 64 18
+		textalign 1
+		textalignx 32
+		textaligny 13
+		forecolor .85 .95 .75 .90
+		backcolor .15 .28 .10 .50
+		border 1
+		bordercolor .22 .38 .12 .40
+		visible 0
+		action {
+			setitemcolor dfAll backcolor .15 .28 .10 .50 ;
+			setitemcolor dfAll bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfIL backcolor .15 .28 .10 .50 ;
+			setitemcolor dfIL bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfMis backcolor .15 .28 .10 .50 ;
+			setitemcolor dfMis bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfFG backcolor .35 .55 .25 .70 ;
+			setitemcolor dfFG bordercolor .45 .65 .30 .60 ;
+			setitemcolor dfOth backcolor .15 .28 .10 .50 ;
+			setitemcolor dfOth bordercolor .22 .38 .12 .40 ;
+			uiScript DemoFilterFullgame
+		}
+	}
+	itemDef {
+		name dfOth
+		group grpLivesplit
+		text "Other"
+		type 1
+		textscale .18
+		style WINDOW_STYLE_FILLED
+		rect 260 46 52 18
+		textalign 1
+		textalignx 26
+		textaligny 13
+		forecolor .85 .95 .75 .90
+		backcolor .15 .28 .10 .50
+		border 1
+		bordercolor .22 .38 .12 .40
+		visible 0
+		action {
+			setitemcolor dfAll backcolor .15 .28 .10 .50 ;
+			setitemcolor dfAll bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfIL backcolor .15 .28 .10 .50 ;
+			setitemcolor dfIL bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfMis backcolor .15 .28 .10 .50 ;
+			setitemcolor dfMis bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfFG backcolor .15 .28 .10 .50 ;
+			setitemcolor dfFG bordercolor .22 .38 .12 .40 ;
+			setitemcolor dfOth backcolor .35 .55 .25 .70 ;
+			setitemcolor dfOth bordercolor .45 .65 .30 .60 ;
+			uiScript DemoFilterOther
+		}
+	}
+
+	// -- Search field --
+	itemDef {
+		name lsDemos
+		group grpLivesplit
+		text "Search:"
+		rect 316 47 40 16
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		textaligny 12
+		textscale .17
+		forecolor .60 .75 .50 .80
+		visible 0
+		decoration
+	}
+	itemDef {
+		name demoSearch
+		group grpLivesplit
+		type ITEM_TYPE_EDITFIELD
+		text ""
+		cvar "ui_demoSearch"
+		maxchars 24
+		rect 352 46 56 18
+		textalign ITEM_ALIGN_LEFT
+		textalignx 3
+		textaligny 13
+		textscale .17
+		forecolor .85 .95 .75 .90
+		style WINDOW_STYLE_FILLED
+		backcolor .10 .15 .08 .50
+		border 1
+		bordercolor .22 .38 .12 .40
+		visible 0
+	}
+
 	// -- Demo list --
 	itemDef {
 		name demolist
 		group grpLivesplit
 		name lsDemos
-		rect 12 46 396 330
+		rect 12 68 396 308
 		type ITEM_TYPE_LISTBOX
 		style WINDOW_STYLE_FILLED
 		elementwidth 380
