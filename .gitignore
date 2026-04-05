@@ -14,5 +14,16 @@ code/src/*/bin/
 code/src/_speedrun_pk3/
 *.pk3
 
+# LiveSplit standalone app build artifacts
+code/src/livesplit_app/bin/
+code/src/livesplit_app/obj/
+code/src/livesplit_app/*.obj
+code/src/livesplit_app/*.res
+code/src/livesplit_app/*.exe
+code/src/livesplit_app/*.pdb
+code/src/livesplit_app/*.ilk
+code/src/livesplit_app/livesplit_standalone.cfg
+code/src/livesplit_app/livesplit_layout.json
+
 # Binaries we don't want to track
 code/src/extractfuncs/extractfuncs.exe

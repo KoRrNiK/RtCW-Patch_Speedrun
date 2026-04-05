@@ -93,6 +93,7 @@
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <DataExecutionPrevention />
       <TargetMachine>MachineX86</TargetMachine>
+      <LargeAddressAware>true</LargeAddressAware>
     </Link>
     <Bscmake>
       <SuppressStartupBanner>true</SuppressStartupBanner>
@@ -140,6 +141,7 @@
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <DataExecutionPrevention />
       <TargetMachine>MachineX86</TargetMachine>
+      <LargeAddressAware>true</LargeAddressAware>
     </Link>
     <Bscmake>
       <SuppressStartupBanner>true</SuppressStartupBanner>
@@ -153,6 +155,7 @@
     <ClCompile Include="client\cl_input.c" />
     <ClCompile Include="client\cl_keys.c" />
     <ClCompile Include="client\cl_livesplit.c" />
+    <ClCompile Include="client\cl_livesplit_window.c" />
     <ClCompile Include="client\cl_update.c" />
     <ClCompile Include="client\cl_main.c" />
     <ClCompile Include="client\cl_net_chan.c" />
