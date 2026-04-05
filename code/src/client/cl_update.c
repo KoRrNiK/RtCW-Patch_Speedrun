@@ -13,6 +13,7 @@ minimal, modern notification if a newer version is found.
 #include <windows.h>
 #include <wininet.h>
 #include <math.h>
+#include <time.h>
 
 #define UPDATE_URL_HOST  "api.github.com"
 #define UPDATE_URL_PATH  "/repos/KoRrNiK/RtCW-Patch_Speedrun/releases/latest"
@@ -119,9 +120,23 @@ static void Upd_SimulateUpdate_f( void )
 {
 	upd.checked   = 2;
 	upd.available = 1;
-	Q_strncpyz( upd.latestVer, "99.99z", sizeof( upd.latestVer ) );
+	Q_strncpyz( upd.latestVer, "1.46", sizeof( upd.latestVer ) );
+	Q_strncpyz( upd.releaseUrl, "https://github.com/KoRrNiK/RtCW-Patch_Speedrun/releases/latest",
+				sizeof( upd.releaseUrl ) );
+	Cvar_Set( "sp_updateAvailable", "1" );
+	Cvar_Set( "sp_updateVersion", upd.latestVer );
 	Com_Printf( "^2Update: Simulating notification (version %s)\n",
 		upd.latestVer );
+}
+
+/*  Open the release page when the user clicks the update badge  */
+static void Upd_OpenRelease_f( void )
+{
+	if ( upd.releaseUrl[0] ) {
+		Sys_OpenURL( upd.releaseUrl, qfalse );
+	} else {
+		Sys_OpenURL( "https://github.com/KoRrNiK/RtCW-Patch_Speedrun/releases/latest", qfalse );
+	}
 }
 
 /* =====================================================================
@@ -138,49 +153,83 @@ void SCR_UpdateInit( void )
 	upd.latestVer[0]  = '\0';
 	upd.releaseUrl[0] = '\0';
 
+	/* cvars used by UI menu to show/hide update button */
+	Cvar_Set( "sp_updateAvailable", "0" );
+	Cvar_Set( "sp_updateVersion", "" );
+
 	hThread = CreateThread( NULL, 0, Upd_CheckThread, NULL, 0, NULL );
 	if ( hThread ) CloseHandle( hThread );
 
 	Cmd_AddCommand( "xq9_sim", Upd_SimulateUpdate_f );
+	Cmd_AddCommand( "sp_openUpdate", Upd_OpenRelease_f );
 }
 
 void SCR_UpdateShutdown( void )
 {
 	Cmd_RemoveCommand( "xq9_sim" );
+	Cmd_RemoveCommand( "sp_openUpdate" );
 }
+
+/* flag: have we already pushed cvars to the UI? */
+static qboolean s_cvarsSet;
 
 void SCR_UpdateDraw( void )
 {
-	char   verBuf[64];
-	int    verLen, seg, numSegs, fontSize;
-	float  centerX, textW, textX, textY;
-	float  lineW, lineX, lineY1, lineY2;
-	float  segW, t, a, pulse, bgH;
-	vec4_t lc, bgCol, txtCol;
+	if ( !cls.rendererStarted ) return;
 
-	if ( !cls.rendererStarted )                return;
-	if ( upd.checked != 2 || !upd.available )  return;
-
-	/* gentle 0.82‥1.0 brightness pulse */
-	pulse = 0.82f + 0.18f * (float)sin( (double)cls.realtime * 0.0025 );
-
-	Com_sprintf( verBuf, sizeof( verBuf ),
-				 "v%s Update Available", upd.latestVer );
-	verLen = (int)strlen( verBuf );
+	/* Once the background thread finishes and finds an update,
+	   set cvars so the UI menu button becomes visible. */
+	if ( !s_cvarsSet && upd.checked == 2 && upd.available && upd.latestVer[0] ) {
+		Cvar_Set( "sp_updateAvailable", "1" );
+		Cvar_Set( "sp_updateVersion", upd.latestVer );
+		s_cvarsSet = qtrue;
+	}
 
 	if ( cls.state <= CA_DISCONNECTED ) {
-		/*  Main menu  */
-		fontSize = 8;
-		centerX  = 320.0f;
-		textW    = (float)( verLen * fontSize );
-		textX    = centerX - textW * 0.5f;
-		lineW    = textW + 80.0f;
-		lineX    = centerX - lineW * 0.5f;
-		lineY1   = 480.0f - 44.0f;
-		textY    = lineY1 + 5.0f;
-		lineY2   = textY + (float)fontSize + 4.0f;
+		/* ---- Main menu: version label + build date, bottom-left ---- */
+		{
+			char   verStr[64];
+			vec4_t col = { 0.52f, 0.56f, 0.48f, 0.50f };
+			Com_sprintf( verStr, sizeof( verStr ), "v%s  (%s)", PRODUCT_VERSION, __DATE__ );
+			SCR_DrawStringExt( 6, 468, 6.0f, verStr, col, qtrue );
+		}
+
+		/* ---- Main menu: current date+time, bottom-right ---- */
+		{
+			time_t     rawTime;
+			struct tm *ti;
+			char       dtStr[32];
+			int        dtLen;
+			float      dtX;
+			vec4_t     dtCol = { 0.52f, 0.56f, 0.48f, 0.50f };
+
+			time( &rawTime );
+			ti = localtime( &rawTime );
+			Com_sprintf( dtStr, sizeof( dtStr ), "%02d.%02d.%04d  %02d:%02d",
+				ti->tm_mday, ti->tm_mon + 1, ti->tm_year + 1900,
+				ti->tm_hour, ti->tm_min );
+			dtLen = (int)strlen( dtStr );
+			dtX   = 640.0f - 6.0f - (float)(dtLen * 6);
+			SCR_DrawStringExt( (int)dtX, 468, 6.0f, dtStr, dtCol, qtrue );
+		}
+
 	} else {
-		/*  In-game: top-centre, small  */
+		/* ---- In-game: top-centre notification (only when update available) ---- */
+		char   verBuf[64];
+		int    verLen, seg, numSegs, fontSize;
+		float  centerX, textW, textX, textY;
+		float  lineW, lineX, lineY1, lineY2;
+		float  segW, t, a, pulse, bgH;
+		vec4_t lc, bgCol, txtCol;
+
+		if ( upd.checked != 2 || !upd.available ) return;
+
+		pulse = 0.82f + 0.18f * (float)sin( (double)cls.realtime * 0.0025 );
+
+		Com_sprintf( verBuf, sizeof( verBuf ),
+					 "v%s Update Available", upd.latestVer );
+		verLen = (int)strlen( verBuf );
+
 		fontSize = 5;
 		centerX  = 320.0f;
 		textW    = (float)( verLen * fontSize );
@@ -190,51 +239,53 @@ void SCR_UpdateDraw( void )
 		lineY1   = 4.0f;
 		textY    = lineY1 + 4.0f;
 		lineY2   = textY + (float)fontSize + 3.0f;
-	}
 
-	numSegs = 48;
-	segW    = lineW / (float)numSegs;
-	bgH     = lineY2 - lineY1 + 1.0f;
+		numSegs = 48;
+		segW    = lineW / (float)numSegs;
+		bgH     = lineY2 - lineY1 + 1.0f;
 
-	/*  top gradient line  (transparent > light-blue > transparent)  */
-	for ( seg = 0; seg < numSegs; seg++ ) {
-		t = (float)seg / (float)( numSegs - 1 );
-		a = ( t <= 0.5f ) ? ( t * 2.0f ) : ( ( 1.0f - t ) * 2.0f );
-		a = a * a;
-		lc[0] = 0.75f; lc[1] = 0.90f; lc[2] = 1.0f;
-		lc[3] = a * 0.70f * pulse;
-		SCR_FillRect( lineX + (float)seg * segW, lineY1,
-					  segW + 0.5f, 1, lc );
-	}
+		/* top gradient line */
+		for ( seg = 0; seg < numSegs; seg++ ) {
+			t = (float)seg / (float)( numSegs - 1 );
+			a = ( t <= 0.5f ) ? ( t * 2.0f ) : ( ( 1.0f - t ) * 2.0f );
+			a = a * a;
+			lc[0] = 0.75f; lc[1] = 0.90f; lc[2] = 1.0f;
+			lc[3] = a * 0.70f * pulse;
+			SCR_FillRect( lineX + (float)seg * segW, lineY1,
+						  segW + 0.5f, 1, lc );
+		}
 
-	/*  gradient dark backdrop  (transparent > dark > transparent)  */
-	for ( seg = 0; seg < numSegs; seg++ ) {
-		t = (float)seg / (float)( numSegs - 1 );
-		a = ( t <= 0.5f ) ? ( t * 2.0f ) : ( ( 1.0f - t ) * 2.0f );
-		a = a * a;
-		bgCol[0] = 0.0f; bgCol[1] = 0.0f; bgCol[2] = 0.04f;
-		bgCol[3] = a * 0.32f * pulse;
-		SCR_FillRect( lineX + (float)seg * segW, lineY1,
-					  segW + 0.5f, bgH, bgCol );
-	}
+		/* gradient dark backdrop */
+		for ( seg = 0; seg < numSegs; seg++ ) {
+			t = (float)seg / (float)( numSegs - 1 );
+			a = ( t <= 0.5f ) ? ( t * 2.0f ) : ( ( 1.0f - t ) * 2.0f );
+			a = a * a;
+			bgCol[0] = 0.0f; bgCol[1] = 0.0f; bgCol[2] = 0.04f;
+			bgCol[3] = a * 0.32f * pulse;
+			SCR_FillRect( lineX + (float)seg * segW, lineY1,
+						  segW + 0.5f, bgH, bgCol );
+		}
 
-	/*  text  (SCR_DrawStringExt already blends a drop-shadow)  */
-	txtCol[0] = 0.88f; txtCol[1] = 0.95f; txtCol[2] = 1.0f;
-	txtCol[3] = 0.95f * pulse;
-	SCR_DrawStringExt( (int)textX, (int)textY,
-					   (float)fontSize, verBuf, txtCol, qtrue );
+		/* text */
+		txtCol[0] = 0.88f; txtCol[1] = 0.95f; txtCol[2] = 1.0f;
+		txtCol[3] = 0.95f * pulse;
+		SCR_DrawStringExt( (int)textX, (int)textY,
+						   (float)fontSize, verBuf, txtCol, qtrue );
 
-	/*  bottom gradient line  (dimmer mirror)  */
-	for ( seg = 0; seg < numSegs; seg++ ) {
-		t = (float)seg / (float)( numSegs - 1 );
-		a = ( t <= 0.5f ) ? ( t * 2.0f ) : ( ( 1.0f - t ) * 2.0f );
-		a = a * a;
-		lc[0] = 0.65f; lc[1] = 0.82f; lc[2] = 1.0f;
-		lc[3] = a * 0.38f * pulse;
-		SCR_FillRect( lineX + (float)seg * segW, lineY2,
-					  segW + 0.5f, 1, lc );
+		/* bottom gradient line */
+		for ( seg = 0; seg < numSegs; seg++ ) {
+			t = (float)seg / (float)( numSegs - 1 );
+			a = ( t <= 0.5f ) ? ( t * 2.0f ) : ( ( 1.0f - t ) * 2.0f );
+			a = a * a;
+			lc[0] = 0.65f; lc[1] = 0.82f; lc[2] = 1.0f;
+			lc[3] = a * 0.38f * pulse;
+			SCR_FillRect( lineX + (float)seg * segW, lineY2,
+						  segW + 0.5f, 1, lc );
+		}
 	}
 }
+
+
 
 #else /* !_WIN32 - stubs */
 
