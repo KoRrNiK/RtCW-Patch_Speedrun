@@ -1,0 +1,6 @@
+#include <winres.h>
+
+#define IDI_ICON1  1
+
+/* Application icon - same as main game (RtCW) */
+IDI_ICON1  ICON  "..\\win32\\qe3.ico"
