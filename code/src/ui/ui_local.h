@@ -663,7 +663,7 @@ typedef struct {
 #define MAPS_PER_TIER 3
 #define MAX_TIERS 16
 #define MAX_MODS 64
-#define MAX_DEMOS 256
+#define MAX_DEMOS 2048
 #define MAX_MOVIES 256
 #define MAX_PLAYERMODELS 256
 #define MAX_SAVEGAMES 256
@@ -866,8 +866,12 @@ typedef struct {
 	int modIndex;
 
 	const char *demoList[MAX_DEMOS];
+	int demoMTime[MAX_DEMOS];
+	int demoCategory[MAX_DEMOS];    /* 0=fullgame, 1=mission, 2=il, 3=other */
 	int demoCount;
 	int demoIndex;
+	int demoFilter;                 /* -1=all, 0=fullgame, 1=mission, 2=il, 3=other */
+	char demoSearchText[64];        /* last applied text search (for change detection) */
 
 	const char *movieList[MAX_MOVIES];
 	int movieCount;
@@ -1017,6 +1021,7 @@ void            trap_FS_Write( const void *buffer, int len, fileHandle_t f );
 void            trap_FS_FCloseFile( fileHandle_t f );
 int             trap_FS_GetFileList(  const char *path, const char *extension, char *listbuf, int bufsize );
 int             trap_FS_Delete( const char *filename );
+int             trap_FS_GetFileMTime( const char *qpath );
 qhandle_t       trap_R_RegisterModel( const char *name );
 qhandle_t       trap_R_RegisterSkin( const char *name );
 qhandle_t       trap_R_RegisterShaderNoMip( const char *name );

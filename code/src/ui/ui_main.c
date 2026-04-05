@@ -40,6 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "ui_local.h"
 #include <math.h>
+#include <time.h>
 
 uiInfo_t uiInfo;
 
@@ -4760,16 +4761,70 @@ static void UI_LoadMovies() {
 UI_LoadDemos
 ===============
 */
-static int UI_DemoSortReverse( const void *a, const void *b ) {
-	// Reverse alphabetical so date-named demos (YYYYMMDD) appear newest first
-	return -Q_stricmp( *(const char **)a, *(const char **)b );
+/* Demo categories: detect from speedrun_ prefix */
+#define DEMOCAT_FULLGAME  0
+#define DEMOCAT_MISSION   1
+#define DEMOCAT_IL        2
+#define DEMOCAT_OTHER     3
+
+/* Filtered view indices: maps feeder row -> real demoList index */
+static int demoFilteredIdx[MAX_DEMOS];
+static int demoFilteredCount = 0;
+
+static void UI_DemoBuildFiltered( void ) {
+	char searchBuf[64];
+	int i;
+
+	trap_Cvar_VariableStringBuffer( "ui_demoSearch", searchBuf, sizeof( searchBuf ) );
+	Q_strlwr( searchBuf );
+	Q_strncpyz( uiInfo.demoSearchText, searchBuf, sizeof( uiInfo.demoSearchText ) );
+
+	demoFilteredCount = 0;
+	for ( i = 0; i < uiInfo.demoCount; i++ ) {
+		if ( uiInfo.demoFilter != -1 && uiInfo.demoCategory[i] != uiInfo.demoFilter ) {
+			continue;
+		}
+		if ( searchBuf[0] ) {
+			char nameLower[MAX_QPATH];
+			Q_strncpyz( nameLower, uiInfo.demoList[i], sizeof( nameLower ) );
+			Q_strlwr( nameLower );
+			if ( !strstr( nameLower, searchBuf ) ) {
+				continue;
+			}
+		}
+		demoFilteredIdx[demoFilteredCount++] = i;
+	}
+}
+
+static int UI_DemoDetectCategory( const char *name ) {
+	if ( !Q_stricmpn( name, "speedrun_fullgame_", 18 ) ) return DEMOCAT_FULLGAME;
+	if ( !Q_stricmpn( name, "speedrun_mission_", 17 ) ) return DEMOCAT_MISSION;
+	if ( !Q_stricmpn( name, "speedrun_il_", 12 ) )      return DEMOCAT_IL;
+	return DEMOCAT_OTHER;
+}
+
+static int UI_DemoSortByMTime( const void *a, const void *b ) {
+	int ia = *(const int *)a;
+	int ib = *(const int *)b;
+	/* sort by category first (fullgame < mission < il < other) */
+	if ( uiInfo.demoCategory[ia] != uiInfo.demoCategory[ib] )
+		return uiInfo.demoCategory[ia] - uiInfo.demoCategory[ib];
+	/* within same category: newest first (descending mtime) */
+	if ( uiInfo.demoMTime[ib] != uiInfo.demoMTime[ia] )
+		return uiInfo.demoMTime[ib] - uiInfo.demoMTime[ia];
+	/* same timestamp > fallback to reverse-alpha */
+	return -Q_stricmp( uiInfo.demoList[ia], uiInfo.demoList[ib] );
 }
 
 static void UI_LoadDemos() {
-	char demolist[32768];
+	char demolist[131072];
 	char demoExt[32];
+	char demoQpath[MAX_QPATH];
 	char    *demoname;
 	int i, len;
+	int sortIdx[MAX_DEMOS];
+	const char *tmpNames[MAX_DEMOS];
+	int tmpMTimes[MAX_DEMOS];
 
 	Com_sprintf( demoExt, sizeof( demoExt ), "dm_%d", (int)trap_Cvar_VariableValue( "protocol" ) );
 
@@ -4784,16 +4839,40 @@ static void UI_LoadDemos() {
 		demoname = demolist;
 		for ( i = 0; i < uiInfo.demoCount; i++ ) {
 			len = strlen( demoname );
-			if ( !Q_stricmp( demoname +  len - strlen( demoExt ), demoExt ) ) {
+
+			/* query mtime BEFORE stripping extension (need full filename) */
+			Com_sprintf( demoQpath, sizeof( demoQpath ), "demos/%s", demoname );
+			uiInfo.demoMTime[i] = trap_FS_GetFileMTime( demoQpath );
+
+			if ( !Q_stricmp( demoname + len - strlen( demoExt ), demoExt ) ) {
 				demoname[len - strlen( demoExt )] = '\0';
 			}
 			uiInfo.demoList[i] = String_Alloc( demoname );
+			uiInfo.demoCategory[i] = UI_DemoDetectCategory( demoname );
 			demoname += len + 1;
 		}
-		// Sort reverse-alphabetically so date-named demos appear newest first
-		qsort( uiInfo.demoList, uiInfo.demoCount, sizeof( uiInfo.demoList[0] ), UI_DemoSortReverse );
+
+		/* Sort by modification time (newest first) via index array */
+		for ( i = 0; i < uiInfo.demoCount; i++ ) sortIdx[i] = i;
+		qsort( sortIdx, uiInfo.demoCount, sizeof( sortIdx[0] ), UI_DemoSortByMTime );
+
+		/* reorder demoList, demoMTime, demoCategory according to sorted indices */
+		{
+			int tmpCats[MAX_DEMOS];
+			for ( i = 0; i < uiInfo.demoCount; i++ ) {
+				tmpNames[i]  = uiInfo.demoList[sortIdx[i]];
+				tmpMTimes[i] = uiInfo.demoMTime[sortIdx[i]];
+				tmpCats[i]   = uiInfo.demoCategory[sortIdx[i]];
+			}
+			for ( i = 0; i < uiInfo.demoCount; i++ ) {
+				uiInfo.demoList[i]     = tmpNames[i];
+				uiInfo.demoMTime[i]    = tmpMTimes[i];
+				uiInfo.demoCategory[i] = tmpCats[i];
+			}
+		}
 	}
 
+	UI_DemoBuildFiltered();
 }
 
 
@@ -5556,6 +5635,21 @@ static void UI_RunMenuScript( char **args ) {
 			//#endif	// #ifdef MISSIONPACK`
 		} else if ( Q_stricmp( name, "LoadDemos" ) == 0 ) {
 			UI_LoadDemos();
+		} else if ( Q_stricmp( name, "DemoFilterAll" ) == 0 ) {
+			uiInfo.demoFilter = -1;
+			UI_DemoBuildFiltered();
+		} else if ( Q_stricmp( name, "DemoFilterIL" ) == 0 ) {
+			uiInfo.demoFilter = DEMOCAT_IL;
+			UI_DemoBuildFiltered();
+		} else if ( Q_stricmp( name, "DemoFilterMission" ) == 0 ) {
+			uiInfo.demoFilter = DEMOCAT_MISSION;
+			UI_DemoBuildFiltered();
+		} else if ( Q_stricmp( name, "DemoFilterFullgame" ) == 0 ) {
+			uiInfo.demoFilter = DEMOCAT_FULLGAME;
+			UI_DemoBuildFiltered();
+		} else if ( Q_stricmp( name, "DemoFilterOther" ) == 0 ) {
+			uiInfo.demoFilter = DEMOCAT_OTHER;
+			UI_DemoBuildFiltered();
 		} else if ( Q_stricmp( name, "LoadMovies" ) == 0 ) {
 			UI_LoadMovies();
 
@@ -6591,7 +6685,16 @@ static int UI_FeederCount( float feederID ) {
 	} else if ( feederID == FEEDER_MODS ) {
 		return uiInfo.modCount;
 	} else if ( feederID == FEEDER_DEMOS ) {
-		return uiInfo.demoCount;
+		/* auto-rebuild filtered list when search cvar changes */
+		{
+			char cur[64];
+			trap_Cvar_VariableStringBuffer( "ui_demoSearch", cur, sizeof( cur ) );
+			Q_strlwr( cur );
+			if ( strcmp( cur, uiInfo.demoSearchText ) != 0 ) {
+				UI_DemoBuildFiltered();
+			}
+		}
+		return demoFilteredCount;
 		// NERVE - SMF
 	} else if ( feederID == FEEDER_PICKSPAWN ) {
 		return uiInfo.spawnCount;
@@ -6816,8 +6919,22 @@ static const char *UI_FeederItemText( float feederID, int index, int column, qha
 			}
 		}
 	} else if ( feederID == FEEDER_DEMOS ) {
-		if ( index >= 0 && index < uiInfo.demoCount ) {
-			return uiInfo.demoList[index];
+		if ( index >= 0 && index < demoFilteredCount ) {
+			static char demoDisplayBuf[MAX_QPATH + 32];
+			int ri = demoFilteredIdx[index];
+			int mt = uiInfo.demoMTime[ri];
+			if ( mt > 0 ) {
+				time_t t = (time_t)mt;
+				struct tm *lt = localtime( &t );
+				if ( lt ) {
+					Com_sprintf( demoDisplayBuf, sizeof( demoDisplayBuf ), "%s  ^9(%04d-%02d-%02d %02d:%02d)",
+						uiInfo.demoList[ri],
+						lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday,
+						lt->tm_hour, lt->tm_min );
+					return demoDisplayBuf;
+				}
+			}
+			return uiInfo.demoList[ri];
 		}
 	}
 	// NERVE - SMF
@@ -6961,7 +7078,9 @@ static void UI_FeederSelection( float feederID, int index ) {
 //			itemdef->cursorPos = 0;
 		}
 	} else if ( feederID == FEEDER_DEMOS ) {
-		uiInfo.demoIndex = index;
+		if ( index >= 0 && index < demoFilteredCount ) {
+			uiInfo.demoIndex = demoFilteredIdx[index];
+		}
 		// NERVE - SMF
 	} else if ( feederID == FEEDER_PICKSPAWN ) {
 		trap_Cmd_ExecuteText( EXEC_NOW, va( "setspawnpt %i\n", index ) );
@@ -7495,6 +7614,10 @@ void _UI_Init( qboolean inGameLoad ) {
 
 	UI_RegisterCvars();
 	UI_InitMemory();
+
+	uiInfo.demoFilter = -1;   /* show all demos by default */
+	uiInfo.demoSearchText[0] = '\0';
+	trap_Cvar_Set( "ui_demoSearch", "" );
 
 	// cache redundant calulations
 	trap_GetGlconfig( &uiInfo.uiDC.glconfig );
