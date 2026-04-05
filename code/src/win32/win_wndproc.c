@@ -276,6 +276,19 @@ static int MapKey( int key ) {
 		is_extended = qfalse;
 	}
 
+	/* For alphabetic keys, use MapVirtualKey to respect the current
+	   OS keyboard layout automatically.  This fixes QWERTZ (German),
+	   AZERTY (French), and any other layout without requiring
+	   cl_language to match the physical keyboard. */
+	{
+		unsigned int vk = MapVirtualKey( (unsigned int)modified, 1 /*MAPVK_VSC_TO_VK*/ );
+		if ( vk >= 'A' && vk <= 'Z' ) {
+			return (int)( vk + 32 );    /* return lowercase ascii */
+		}
+	}
+
+	/* For non-alphabetic keys (function keys, OEM symbols, etc.),
+	   fall back to the language-specific scancode tables. */
 	result = s_scantokey[modified];
 	if ( cl_language->integer - 1 == LANGUAGE_FRENCH ) {
 		result = s_scantokey_french[modified];

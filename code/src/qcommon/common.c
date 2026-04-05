@@ -38,7 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #define MIN_DEDICATED_COMHUNKMEGS 1
 #define MIN_COMHUNKMEGS 54      // RF, optimizing
-#define DEF_COMHUNKMEGS "72"
+#define DEF_COMHUNKMEGS "256"
 #define DEF_COMZONEMEGS "30"
 
 int com_argc;
@@ -1101,7 +1101,7 @@ void Com_InitHunkMemory( void ) {
 		Com_Error( ERR_FATAL, "Hunk data failed to allocate %i megs", s_hunkTotal / ( 1024 * 1024 ) );
 	}
 	// cacheline align
-	s_hunkData = ( byte * )( ( (int)s_hunkData + 31 ) & ~31 );
+	s_hunkData = ( byte * )( ( (intptr_t)s_hunkData + 31 ) & ~31 );
 	Hunk_Clear();
 
 	Cmd_AddCommand( "meminfo", Com_Meminfo_f );
@@ -1999,6 +1999,10 @@ void Com_Init( char *commandLine ) {
 	Com_InitJournaling();
 
 	Cbuf_AddText( "exec default.cfg\n" );
+
+	// Speedrun patch: register all custom cvars with sensible defaults.
+	// These are set before wolfconfig.cfg so user changes always take priority.
+	Cbuf_AddText( "exec speedrun_defaults.cfg\n" );
 
 	Cbuf_AddText( "exec language.cfg\n" ); //----(SA)	added
 

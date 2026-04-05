@@ -709,8 +709,9 @@ void R_SetFrameFog( void ) {
 
 
 	// shorten the far clip if the fog opaque distance is closer than the procedural farcip dist
+	// Skip when fog is globally disabled (r_wolffog 0) so that r_zfar override is respected.
 
-	if ( glfogsettings[FOG_CURRENT].mode == GL_LINEAR ) {
+	if ( r_wolffog->integer && glfogsettings[FOG_CURRENT].mode == GL_LINEAR ) {
 		if ( glfogsettings[FOG_CURRENT].end < tr.viewParms.zFar ) {
 			tr.viewParms.zFar = glfogsettings[FOG_CURRENT].end;
 		}
