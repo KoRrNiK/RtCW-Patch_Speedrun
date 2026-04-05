@@ -18,6 +18,8 @@ Cvars:
   ls_100pct     0          100% category - display secrets/treasures
   ls_mission    1-5         Which mission group (mode 1)
   ls_map        ""          BSP name override for IL (e.g. "tram", "rocket")
+  ls_compare    0           Compare Against: 0=PB, 1=Best Segments, 2=Average
+  ls_timing     0           Timing Method: 0=Game Time, 1=Real Time
   ls_x          8           Panel X position (virtual 640x480)
   ls_y          80          Panel Y position
   ls_w          178         Panel width
@@ -61,12 +63,65 @@ Commands:
 #endif
 
 #include "client.h"
+#include "cl_livesplit_window.h"
+#include "livesplit/ls_shared.h"
 #include <time.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <wininet.h>
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "ws2_32.lib")
+#endif
+
+/* =====================================================================
+   Shared memory IPC  (game -> standalone LiveSplit window)
+   ===================================================================== */
+#ifdef _WIN32
+static HANDLE       ls_shmHandle = NULL;
+static lsSharedMem_t *ls_shmPtr = NULL;
+static long         ls_shmSeq    = 0;
+
+static void LS_ShmInit( void ) {
+	ls_shmHandle = CreateFileMappingA(
+		INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
+		0, sizeof( lsSharedMem_t ), LS_SHM_NAME );
+	if ( !ls_shmHandle ) return;
+	ls_shmPtr = (lsSharedMem_t *)MapViewOfFile(
+		ls_shmHandle, FILE_MAP_ALL_ACCESS, 0, 0, sizeof( lsSharedMem_t ) );
+	if ( !ls_shmPtr ) {
+		CloseHandle( ls_shmHandle );
+		ls_shmHandle = NULL;
+		return;
+	}
+	memset( ls_shmPtr, 0, sizeof( *ls_shmPtr ) );
+	ls_shmPtr->version    = LS_SHM_VERSION;
+	ls_shmPtr->gameActive = 1;
+	ls_shmSeq = 0;
+	Com_Printf( "^2LiveSplit: Shared memory created for standalone window\n" );
+}
+
+static void LS_ShmUpdate( void ) {
+	if ( !ls_shmPtr ) return;
+	ls_shmPtr->state = lswnd_state;
+	InterlockedIncrement( &ls_shmSeq );
+	ls_shmPtr->sequence = ls_shmSeq;
+}
+
+static void LS_ShmShutdown( void ) {
+	if ( ls_shmPtr ) {
+		ls_shmPtr->gameActive = 0;
+		UnmapViewOfFile( ls_shmPtr );
+		ls_shmPtr = NULL;
+	}
+	if ( ls_shmHandle ) {
+		CloseHandle( ls_shmHandle );
+		ls_shmHandle = NULL;
+	}
+}
+#else
+static void LS_ShmInit( void ) {}
+static void LS_ShmUpdate( void ) {}
+static void LS_ShmShutdown( void ) {}
 #endif
 
 /* =====================================================================
@@ -103,10 +158,17 @@ lsASLState_t ls_aslState = { LS_ASL_MAGIC, LS_ASL_VER };
 #define LS_MAX_DIFFICULTIES 3
 #define LS_NUM_MODES 3  /* fullgame=0, mission=1, IL=2 */
 #define LS_TOTAL_DIFF_SLOTS (LS_NUM_MODES * LS_MAX_DIFFICULTIES)  /* 9 */
-#define LS_SAVE_FILE        "livesplit_stats.dat"
+#define LS_SAVE_FILE        "livesplit_stats.dat"    /* legacy - no longer used for saving */
 #define LS_CS_MISSIONSTATS  23   /* configstring index for mission stats */
-#define LS_HISTORY_FILE     "livesplit_history.dat"
+#define LS_HISTORY_FILE     "livesplit_history.dat"  /* legacy - no longer used for saving */
 #define LS_MAX_VIS_ROWS     6
+
+/* .lss file paths (LiveSplit XML format) */
+#define LS_LSS_DIR          "livesplit"
+#define LS_LSS_DIR_FG       "livesplit/fullgame"
+#define LS_LSS_DIR_MS       "livesplit/mission"
+#define LS_LSS_DIR_IL       "livesplit/il"
+#define LS_STATE_FILE       "livesplit/state.dat"
 
 /* run modes */
 #define LS_MODE_FULLGAME    0
@@ -152,7 +214,7 @@ static const lsMapDef_t ls_mapDefs[] = {
 	{ "cutscene11",  NULL,                              NULL,       5, qtrue,   0,  0 },
 	{ "norway",      "Ice Station Norway",              "Norway",   5, qfalse,  1,  0 },
 	{ "xlabs",       "X-Labs",                          "X-Labs",   5, qfalse,  1,  0 },
-	{ "boss2",       "Super Soldier Chambers",          "SSC",      5, qfalse,  0,  0 },
+	{ "boss2",       "Super Soldier",          			"S.Soldier",      5, qfalse,  0,  0 },
 	/* Mission 6 */
 	{ "cutscene14",  NULL,                              NULL,       6, qtrue,   0,  0 },
 	{ "dam",         "Bramburg Dam",                    "Dam",      6, qfalse,  1,  0 },
@@ -171,17 +233,23 @@ static const lsMapDef_t ls_mapDefs[] = {
 #define LS_NUM_MISSION_GROUPS 5
 typedef struct {
 	const char *name;
+	const char *shortName;     /* abbreviated name for narrow header */
 	int         firstMission;  /* first original mission number in group */
 	int         lastMission;   /* last original mission number in group */
 } lsMissionGroup_t;
 
 static const lsMissionGroup_t ls_missionGroups[LS_NUM_MISSION_GROUPS] = {
-	{ "Ominous Rumors, Dark Secret",            1, 2 },  /* Group 1: Mission 1+2 */
-	{ "Weapons of Vengeance",                   3, 3 },  /* Group 2: Mission 3   */
-	{ "Deadly Designs",                         4, 4 },  /* Group 3: Mission 4   */
-	{ "Deathshead's Playground",                5, 5 },  /* Group 4: Mission 5   */
-	{ "Re. Engagement, Op. Resurrection",       6, 7 },  /* Group 5: Mission 6+7 */
+	{ "Ominous Rumors & Dark Secret",   "Ominous & Dark",  1, 2 },  /* Group 1: Mission 1+2 */
+	{ "Weapons of Vengeance",           "Vengeance",       3, 3 },  /* Group 2: Mission 3   */
+	{ "Deadly Designs",                 "Deadly Designs",  4, 4 },  /* Group 3: Mission 4   */
+	{ "Deathshead's Playground",        "Deathshead",      5, 5 },  /* Group 4: Mission 5   */
+	{ "Return Eng. & Op. Resurrection", "Return & Res.",   6, 7 },  /* Group 5: Mission 6+7 */
 };
+
+/* Difficulty name arrays for .lss file paths and display */
+static const char *ls_diffFileNames[] = { "easy", "medium", "hard" };
+static const char *ls_diffDisplayNames[] = { "Don't hurt me", "Bring 'em on!", "I am Death incarnate!" };
+static const char *ls_diffShortTags[] = { "DHM", "BEO", "IADI" };
 
 /* =====================================================================
    Data structures
@@ -190,7 +258,9 @@ static const lsMissionGroup_t ls_missionGroups[LS_NUM_MISSION_GROUPS] = {
 /* Per-difficulty persistent data per split */
 typedef struct {
 	int bestTimeMs;
+	int bestRealTimeMs;
 	int pbSegmentMs;
+	int pbRealSegmentMs;
 	int totalAttempts;
 	int totalCompletions;
 } lsDiffSplitData_t;
@@ -220,9 +290,10 @@ typedef struct {
 } lsSplit_t;
 
 /* Run history entry */
-#define LS_MAX_HISTORY_RUNS 500
+#define LS_HISTORY_INITIAL_CAP 256
 
 typedef struct {
+	int attemptId;                   /* original Attempt id from .lss */
 	int difficulty;                  /* 1-3 */
 	int mode;                        /* 0/1/2 */
 	int missionNum;                  /* for mission mode */
@@ -230,7 +301,37 @@ typedef struct {
 	int totalRGTMs;
 	int numSplits;
 	int splitTimes[LS_MAX_MAPS];
+	int splitRealTimes[LS_MAX_MAPS];
+	time_t startTime;                /* Unix timestamp of run start */
+	time_t endTime;                  /* Unix timestamp of run end */
+	qboolean isStartedSynced;
+	qboolean isEndedSynced;
 } lsRunHistory_t;
+
+/* Reset attempt entry (incomplete run, no GameTime/RealTime) */
+typedef struct {
+	int attemptId;                   /* original Attempt id from .lss */
+	int difficulty;                  /* 1-3 (diffIdx+1) */
+	int mode;                        /* 0/1/2 */
+	int missionNum;
+	time_t startTime;
+	time_t endTime;
+	qboolean isStartedSynced;
+	qboolean isEndedSynced;
+	int pauseTimeMs;                 /* >0 if attempt had <PauseTime> only (no RT/GT) */
+} lsResetAttempt_t;
+
+/* Orphan segment time: SegmentHistory entry from a partial run (reset)
+   that doesn't match any completed history entry. */
+typedef struct {
+	int attemptId;       /* the Time id from SegmentHistory (= Attempt id) */
+	int segIdx;          /* sequential segment index within the category */
+	int timeMs;          /* GameTime in ms */
+	int realTimeMs;      /* RealTime in ms */
+	int mode;
+	int diffIdx;
+	int missionNum;
+} lsOrphanSegTime_t;
 
 typedef struct {
 	qboolean    initialized;
@@ -279,9 +380,23 @@ typedef struct {
 	int         msPB[LS_NUM_MISSION_GROUPS][LS_MAX_DIFFICULTIES];
 	/* IL: uses per-split d[di].totalAttempts/totalCompletions/bestTimeMs */
 
-	/* run history */
-	lsRunHistory_t history[LS_MAX_HISTORY_RUNS];
+	/* run history (dynamically allocated, no fixed limit) */
+	lsRunHistory_t *history;
 	int            numHistoryRuns;
+	int            historyCapacity;
+
+	/* reset attempts (incomplete runs, for .lss round-trip) */
+	lsResetAttempt_t *resetAttempts;
+	int              numResetAttempts;
+	int              resetAttemptsCapacity;
+
+	/* orphan segment times (from partial runs, for .lss round-trip) */
+	lsOrphanSegTime_t *orphanSegTimes;
+	int               numOrphanSegTimes;
+	int               orphanSegTimesCapacity;
+
+	/* GameIcon (base64 string from .lss, for round-trip preservation) */
+	char             *gameIcon;      /* Z_Malloc'd, NULL if none */
 
 	/* Heinrich end trigger tracking */
 	qboolean    heinrichDead;
@@ -314,10 +429,18 @@ typedef struct {
 	/* Settings validation (per-run) */
 	qboolean    settingsModified;
 	int         settingsModCount;
+	int         settingsCheckInterval;  /* frame counter for periodic check */
+	qboolean    settingsDetected[80];   /* per-cvar: already reported this run */
+
+	/* Center-screen alert system */
+	int         alertStartMs;       /* Sys_Milliseconds when alert was triggered */
+	char        alertText[128];     /* text to display */
+	float       alertColor[4];      /* RGBA color */
 
 	/* Pre-run PB snapshot (for nosave restore) */
 	int         savedPBMs;
 	int         savedRgtPBMs;
+	int         savedPbSegMs[LS_MAX_MAPS]; /* per-split pbSegmentMs snapshot */
 
 	/* Per-category PB realtime */
 	int         fgPBRgt[LS_MAX_DIFFICULTIES];
@@ -351,15 +474,118 @@ typedef struct {
 	int         prevLiveTreasureFound;
 	int         prevLiveTreasureTotal;
 
-	/* 100% category: cumulative base at start of current map.
-	   player->numSecretsFound is cumulative across all maps (never
-	   reset by the game), so we subtract the base to get per-map
-	   found counts: perMapFound = liveSecretsFound - baseSecretsFound. */
+	/* 100% category: base for per-map found delta calculation.
+	   player->numSecretsFound resets to 0 on each map load
+	   (only health is persisted via gentityPersFields), so the
+	   base is always 0 at the start of each map.  Kept for
+	   structural compatibility but never accumulated. */
 	int         baseSecretsFound;
 	int         baseTreasureFound;
 } lsState_t;
 
 static lsState_t ls;
+
+/* Ensure the dynamic history array can hold at least 'needed' entries.
+   Grows by doubling.  Uses Z_Malloc + memcpy because the engine has
+   no realloc. */
+static void LS_HistoryEnsure( int needed ) {
+	if ( needed <= ls.historyCapacity ) return;
+	{
+		int newCap = ls.historyCapacity ? ls.historyCapacity : LS_HISTORY_INITIAL_CAP;
+		lsRunHistory_t *newBuf;
+		while ( newCap < needed ) newCap *= 2;
+		newBuf = (lsRunHistory_t *)Z_Malloc( newCap * sizeof( lsRunHistory_t ) );
+		if ( ls.history ) {
+			memcpy( newBuf, ls.history, ls.numHistoryRuns * sizeof( lsRunHistory_t ) );
+			Z_Free( ls.history );
+		}
+		ls.history = newBuf;
+		ls.historyCapacity = newCap;
+	}
+}
+
+static void LS_HistoryFree( void ) {
+	if ( ls.history ) {
+		Z_Free( ls.history );
+		ls.history = NULL;
+	}
+	ls.numHistoryRuns  = 0;
+	ls.historyCapacity = 0;
+	if ( ls.resetAttempts ) {
+		Z_Free( ls.resetAttempts );
+		ls.resetAttempts = NULL;
+	}
+	ls.numResetAttempts  = 0;
+	ls.resetAttemptsCapacity = 0;
+	if ( ls.orphanSegTimes ) {
+		Z_Free( ls.orphanSegTimes );
+		ls.orphanSegTimes = NULL;
+	}
+	ls.numOrphanSegTimes  = 0;
+	ls.orphanSegTimesCapacity = 0;
+	if ( ls.gameIcon ) {
+		Z_Free( ls.gameIcon );
+		ls.gameIcon = NULL;
+	}
+}
+
+/* Ensure the reset attempts array can hold at least 'needed' entries. */
+static void LS_ResetAttemptsEnsure( int needed ) {
+	if ( needed <= ls.resetAttemptsCapacity ) return;
+	{
+		int newCap = ls.resetAttemptsCapacity ? ls.resetAttemptsCapacity : 256;
+		lsResetAttempt_t *newBuf;
+		while ( newCap < needed ) newCap *= 2;
+		newBuf = (lsResetAttempt_t *)Z_Malloc( newCap * sizeof( lsResetAttempt_t ) );
+		if ( ls.resetAttempts ) {
+			memcpy( newBuf, ls.resetAttempts, ls.numResetAttempts * sizeof( lsResetAttempt_t ) );
+			Z_Free( ls.resetAttempts );
+		}
+		ls.resetAttempts = newBuf;
+		ls.resetAttemptsCapacity = newCap;
+	}
+}
+
+/* Ensure the orphan segment times array can hold at least 'needed' entries. */
+static void LS_OrphanSegTimesEnsure( int needed ) {
+	if ( needed <= ls.orphanSegTimesCapacity ) return;
+	{
+		int newCap = ls.orphanSegTimesCapacity ? ls.orphanSegTimesCapacity : 256;
+		lsOrphanSegTime_t *newBuf;
+		while ( newCap < needed ) newCap *= 2;
+		newBuf = (lsOrphanSegTime_t *)Z_Malloc( newCap * sizeof( lsOrphanSegTime_t ) );
+		if ( ls.orphanSegTimes ) {
+			memcpy( newBuf, ls.orphanSegTimes, ls.numOrphanSegTimes * sizeof( lsOrphanSegTime_t ) );
+			Z_Free( ls.orphanSegTimes );
+		}
+		ls.orphanSegTimes = newBuf;
+		ls.orphanSegTimesCapacity = newCap;
+	}
+}
+
+static int LS_DiffIdx( int skill ); /* forward declaration */
+
+/* Find the highest attemptId across all history entries and reset attempts
+   for a given mode/difficulty/mission. Returns 0 if none exist. */
+static int LS_MaxAttemptId( int mode, int diffIdx, int missionNum ) {
+	int maxId = 0, i;
+	for ( i = 0; i < ls.numHistoryRuns; i++ ) {
+		lsRunHistory_t *r = &ls.history[i];
+		if ( r->mode != mode ) continue;
+		if ( LS_DiffIdx( r->difficulty ) != diffIdx ) continue;
+		if ( mode == LS_MODE_MISSION && r->missionNum != missionNum ) continue;
+		if ( r->attemptId > maxId ) maxId = r->attemptId;
+	}
+	for ( i = 0; i < ls.numResetAttempts; i++ ) {
+		lsResetAttempt_t *ra = &ls.resetAttempts[i];
+		if ( ra->mode != mode ) continue;
+		if ( LS_DiffIdx( ra->difficulty ) != diffIdx ) continue;
+		if ( mode == LS_MODE_MISSION && ra->missionNum != missionNum ) continue;
+		if ( ra->attemptId > maxId ) maxId = ra->attemptId;
+	}
+	return maxId;
+}
+
 static cvar_t *cg_livesplit   = NULL;
 static cvar_t *ls_modeCvar    = NULL;
 static cvar_t *ls_missionCvar = NULL;
@@ -383,9 +609,29 @@ static cvar_t *ls_showtimerCvar  = NULL; /* show the main big timer */
 static cvar_t *ls_showsepsCvar   = NULL; /* show separator lines */
 static cvar_t *ls_showdeltasCvar = NULL; /* show PB delta column (+/-)  */
 static cvar_t *ls_showbestdeltasCvar = NULL; /* show best/gold delta column (Best +/-) */
+
+/* Compare Against mode (ls_compare):
+   0 = Personal Best      - compare cumulative time vs PB splits
+   1 = Best Segments       - compare cumulative time vs sum of best segments (golds)
+   2 = Average Segments    - compare against average segment times from history
+*/
+#define LS_COMPARE_PB            0
+#define LS_COMPARE_BEST          1
+#define LS_COMPARE_AVERAGE       2
+static cvar_t *ls_compareCvar = NULL;
+
+/* Timing Method (ls_timing):
+   0 = Game Time (IGT)     - default, uses in-game time
+   1 = Real Time (RGT)     - uses real/wall-clock time
+*/
+#define LS_TIMING_GAMETIME  0
+#define LS_TIMING_REALTIME  1
+static cvar_t *ls_timingCvar = NULL;
 static cvar_t *ls_showattCvar    = NULL; /* show attempt counter in header */
 static cvar_t *ls_drawCvar       = NULL; /* show/hide LiveSplit panel (timers still run) */
 static cvar_t *ls_100pctCvar     = NULL; /* 100% category: display secrets & treasures */
+static int     ls_prev100pct    = 0;    /* track 100% cvar changes for file reload */
+static int     ls_prevDifficulty = 2;   /* track difficulty cvar changes for file reload */
 
 /* Color customization cvars (format: "R G B A", RGB 0-255, Alpha 0.0-1.0) */
 static cvar_t *ls_clr_aheadCvar   = NULL;  /* ahead of PB (green) */
@@ -448,7 +694,10 @@ static qboolean ls_autoRecordActive = qfalse; /* qtrue while we auto-started a d
 /* Forward declarations - defined later in file */
 static int LS_CumulativeTime( int upToIdx );
 static void LS_CompleteSplit( int idx, int nowReal );
+static void LS_DoResetSaveEx( qboolean fromExternal );
 static void LS_DoResetSave( void );
+static void LS_TriggerAlert( const char *text, float r, float g, float b );
+static void LS_QuickCheckSettings( void );
 
 #ifdef _WIN32
 
@@ -465,6 +714,12 @@ static qboolean lsext_connected = qfalse;
 static int     lsext_lastPollMs = 0;
 static char    lsext_recvBuf[512];
 static int     lsext_recvLen = 0;
+
+/* Track whether starttimer was sent on the current connection.
+   If the connection drops and reconnects while ls.active is true,
+   LS_ExtFrame will re-send initgametime/starttimer/pausegametime
+   so the external timer stays in sync. */
+static qboolean lsext_timerStarted = qfalse;
 
 static qboolean LS_ExtEnabled( void ) {
 	if ( !ls_typeCvar ) return qfalse;
@@ -546,6 +801,7 @@ static void LS_ExtDisconnect( void ) {
 	}
 	lsext_connected = qfalse;
 	lsext_recvLen = 0;
+	lsext_timerStarted = qfalse;
 }
 
 static void LS_ExtSend( const char *cmd ) {
@@ -646,14 +902,18 @@ static void LS_ExtRecvCheck( void ) {
 				/* stale response inside grace window, discard */
 			} else if ( ls.active || ls.runFinished ) {
 				Com_Printf( "^2LiveSplit: External reset detected - syncing in-game\n" );
-				LS_DoResetSave();
+				LS_DoResetSaveEx( qtrue );
 			}
 		}
 
 		/* Remove processed line from buffer */
-		memmove( lsext_recvBuf, lsext_recvBuf + lineLen, lsext_recvLen - lineLen + 1 );
-		lsext_recvLen -= lineLen;
-		if ( lsext_recvLen < 0 ) lsext_recvLen = 0;
+		if ( lsext_recvLen <= lineLen ) {
+			lsext_recvLen = 0;
+			lsext_recvBuf[0] = '\0';
+		} else {
+			memmove( lsext_recvBuf, lsext_recvBuf + lineLen, lsext_recvLen - lineLen + 1 );
+			lsext_recvLen -= lineLen;
+		}
 	}
 }
 
@@ -686,8 +946,22 @@ static void LS_ExtFrame( void ) {
 	   so LiveSplit never ticks on its own - we just set the exact value
 	   every frame for a perfect 1:1 match with the in-game timer. */
 	if ( lsext_connected && ls.active && !ls.runFinished ) {
-		int igtMs = LS_CumulativeTime( ls.modeLastIdx );
-		LS_ExtSendGameTime( igtMs );
+		/* If we haven't sent starttimer on this connection yet (e.g.
+		   the connection dropped and reconnected mid-run, or the
+		   auto-start's send was silently lost), start the external
+		   timer now so it stays in sync with the in-game timer. */
+		if ( !lsext_timerStarted ) {
+			lsext_recvLen = 0;
+			LS_ExtSend( "initgametime" );
+			LS_ExtSend( "starttimer" );
+			LS_ExtSend( "pausegametime" );
+			lsext_timerStarted = qtrue;
+			lsext_lastPollMs = Sys_Milliseconds() + LSEXT_POLL_GRACE;
+		}
+		{
+			int igtMs = LS_CumulativeTime( ls.modeLastIdx );
+			LS_ExtSendGameTime( igtMs );
+		}
 	}
 
 	/* Read any incoming data from LiveSplit Server */
@@ -714,11 +988,13 @@ static void LS_ExtFrame( void ) {}
 
 #endif /* _WIN32 */
 
+/* ls_window cvar removed - standalone exe handles the window now */
+
 /* =====================================================================
    Difficulty accessor helpers  (skill index 0-2)
    ===================================================================== */
 
-/* Clamp difficulty to 1-3, return array index 0-2 */
+/* Clamp difficulty value 1-3 to array index 0-2 */
 static int LS_DiffIdx( int skill ) {
 	if ( skill < 1 ) skill = 1;
 	if ( skill > 3 ) skill = 3;
@@ -807,7 +1083,7 @@ static void LS_GetCatPB( int **outPB ) {
 
 /* Save pre-run PB values for nosave-reset restoration */
 static void LS_SavePreRunPBs( void ) {
-	int di = LS_CurDiffIdx();
+	int i, di = LS_CurDiffIdx();
 	int *pb;
 	LS_GetCatPB( &pb );
 	ls.savedPBMs = *pb;
@@ -823,11 +1099,16 @@ static void LS_SavePreRunPBs( void ) {
 	} else {
 		ls.savedRgtPBMs = 0;
 	}
+
+	/* Snapshot per-split PB segments for current difficulty */
+	for ( i = 0; i < ls.numMaps && i < LS_MAX_MAPS; i++ ) {
+		ls.savedPbSegMs[i] = ls.splits[i].d[di].pbSegmentMs;
+	}
 }
 
 /* Restore pre-run PB values (called from nosave reset) */
 static void LS_RestorePreRunPBs( void ) {
-	int di = LS_CurDiffIdx();
+	int i, di = LS_CurDiffIdx();
 	int *pb;
 	LS_GetCatPB( &pb );
 	*pb = ls.savedPBMs;
@@ -838,6 +1119,11 @@ static void LS_RestorePreRunPBs( void ) {
 		int gi = ls.runMission - 1;
 		if ( gi >= 0 && gi < LS_NUM_MISSION_GROUPS )
 			ls.msPBRgt[gi][di] = ls.savedRgtPBMs;
+	}
+
+	/* Restore per-split PB segments for current difficulty */
+	for ( i = 0; i < ls.numMaps && i < LS_MAX_MAPS; i++ ) {
+		ls.splits[i].d[di].pbSegmentMs = ls.savedPbSegMs[i];
 	}
 }
 
@@ -937,15 +1223,26 @@ static int LS_PrevRealSplit( int from ) {
 	return -1;
 }
 
-/* Detect current difficulty from cvars */
+/* Detect current difficulty from cvars.
+   g_gameskill is the authoritative difficulty cvar (1-3), set by the
+   speedrun menu (play.menu / chapter.menu) and the game module.
+   It's CVAR_LATCH, so when the menu changes it the new value sits in
+   latchedString until the next server restart.  Check latchedString
+   first so the timer uses the INTENDED difficulty before the map
+   finishes loading. */
 static int LS_DetectDifficulty( void ) {
-	int skill = Cvar_VariableIntegerValue( "g_gameskill" );
-	if ( skill >= 1 && skill <= 3 ) return skill;
-	skill = Cvar_VariableIntegerValue( "g_spSkill" );
-	if ( skill >= 1 && skill <= 5 ) {
-		if ( skill <= 2 ) return 1;
-		if ( skill <= 4 ) return 2;
-		return 3;
+	int skill;
+	cvar_t *cv;
+	/* g_gameskill: check latched value first (menu just set it but
+	   map hasn't loaded yet), then current value. */
+	cv = Cvar_Get( "g_gameskill", "2", 0 );
+	if ( cv ) {
+		if ( cv->latchedString && cv->latchedString[0] ) {
+			skill = atoi( cv->latchedString );
+			if ( skill >= 1 && skill <= 3 ) return skill;
+		}
+		skill = cv->integer;
+		if ( skill >= 1 && skill <= 3 ) return skill;
 	}
 	return 2; /* default Bring 'em on */
 }
@@ -1032,7 +1329,7 @@ static void LS_FormatTime( int ms, char *out, int outSize ) {
 
 static void LS_FormatDelta( int deltaMs, char *out, int outSize ) {
 	int ad, secs, hundredths;
-	if ( deltaMs == 0 ) { Com_sprintf( out, outSize, "0.00" ); return; }
+	if ( deltaMs == 0 ) { Com_sprintf( out, outSize, "-" ); return; }
 	ad         = deltaMs < 0 ? -deltaMs : deltaMs;
 	secs       = ad / 1000;
 	hundredths = ( ad % 1000 ) / 10;
@@ -1085,9 +1382,16 @@ static void LS_ParseMissionStats( void ) {
 	/* Format: H,M,S,objF,objT,secF,secT,tresF,tresT[,attempts]
 	   Index:  0,1,2, 3,   4,   5,   6,   7,    8      9        */
 	if ( n >= 9 ) {
-		ls.liveSecretsFound  = vals[5];
+		/* High-watermark: after a quickload the game restores the
+		   savegame state, so CS_MISSIONSTATS may report fewer
+		   secrets/treasures than the player already found on this
+		   map.  Keep the highest count; proper reset to 0 happens
+		   in LS_Frame on real map changes. */
+		if ( vals[5] > ls.liveSecretsFound )
+			ls.liveSecretsFound  = vals[5];
 		ls.liveSecretsTotal  = vals[6];
-		ls.liveTreasureFound = vals[7];
+		if ( vals[7] > ls.liveTreasureFound )
+			ls.liveTreasureFound = vals[7];
 		ls.liveTreasureTotal = vals[8];
 	}
 }
@@ -1118,15 +1422,14 @@ static int LS_CalcBestPossible( void ) {
 		if ( ls.splits[i].splitDone ) {
 			/* Completed: locked in, use actual time */
 			bpt += ls.splits[i].currentTimeMs;
-		} else if ( i == ls.currentMapIndex || ls.splits[i].currentTimeMs > 0 ) {
-			/* Currently running or deferred: use max(actual, gold).
-			   If still under gold, assume we can hit gold.
-			   If already past gold, use actual (time lost). */
+		} else if ( i == ls.currentMapIndex && ls.splits[i].currentTimeMs > 0 ) {
+			/* Current split: use MAX(live time, gold) so BPT updates live */
 			int gold = ls.splits[i].d[di].bestTimeMs;
-			if ( gold > 0 && gold > ls.splits[i].currentTimeMs ) {
-				bpt += gold;
+			int live = ls.splits[i].currentTimeMs;
+			if ( gold > 0 ) {
+				bpt += ( live > gold ) ? live : gold;
 			} else {
-				bpt += ls.splits[i].currentTimeMs;
+				bpt += live;
 			}
 		} else {
 			/* Future split: use gold (best possible segment) */
@@ -1136,6 +1439,122 @@ static int LS_CalcBestPossible( void ) {
 				return -1;
 			}
 		}
+	}
+	return bpt;
+}
+
+/* Sum of PB segments */
+static int LS_CalcSumOfPB( void ) {
+	int i, sum = 0, di = LS_CurDiffIdx();
+	qboolean allValid = qtrue;
+	for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+		if ( ls.splits[i].cutscene ) continue;
+		if ( ls.splits[i].d[di].pbSegmentMs > 0 ) {
+			sum += ls.splits[i].d[di].pbSegmentMs;
+		} else {
+			allValid = qfalse;
+		}
+	}
+	return allValid ? sum : -1;
+}
+
+/* Sum of Average segments (from history) */
+static int LS_CalcSumOfAvgs( void ) {
+	int i, sum = 0, di = LS_CurDiffIdx();
+	int segN = 0;
+	int mode = ls.runMode, mission = ls.runMission;
+	qboolean allValid = qtrue;
+
+	for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+		int j, total = 0, count = 0;
+		if ( ls.splits[i].cutscene ) continue;
+		for ( j = 0; j < ls.numHistoryRuns; j++ ) {
+			lsRunHistory_t *r = &ls.history[j];
+			if ( r->mode != mode ) continue;
+			if ( LS_DiffIdx( r->difficulty ) != ( di % LS_MAX_DIFFICULTIES ) ) continue;
+			if ( mode == LS_MODE_MISSION && r->missionNum != mission ) continue;
+			if ( segN < r->numSplits && r->splitTimes[segN] > 0 ) {
+				total += r->splitTimes[segN];
+				count++;
+			}
+		}
+		if ( count > 0 ) {
+			sum += total / count;
+		} else {
+			allValid = qfalse;
+		}
+		segN++;
+	}
+	return allValid ? sum : -1;
+}
+
+/* Best Possible using PB segments for future splits */
+static int LS_CalcBestPossiblePB( void ) {
+	int i, bpt = 0, di = LS_CurDiffIdx();
+	for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+		if ( ls.splits[i].cutscene ) continue;
+		if ( ls.splits[i].splitDone ) {
+			bpt += ls.splits[i].currentTimeMs;
+		} else if ( i == ls.currentMapIndex && ls.splits[i].currentTimeMs > 0 ) {
+			int pb = ls.splits[i].d[di].pbSegmentMs;
+			int live = ls.splits[i].currentTimeMs;
+			if ( pb > 0 ) {
+				bpt += ( live > pb ) ? live : pb;
+			} else {
+				bpt += live;
+			}
+		} else {
+			if ( ls.splits[i].d[di].pbSegmentMs > 0 ) {
+				bpt += ls.splits[i].d[di].pbSegmentMs;
+			} else {
+				return -1;
+			}
+		}
+	}
+	return bpt;
+}
+
+/* Best Possible using Average segments for future splits */
+static int LS_CalcBestPossibleAvg( void ) {
+	int i, bpt = 0, di = LS_CurDiffIdx();
+	int segN = 0;
+	int mode = ls.runMode, mission = ls.runMission;
+	for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+		int avgSeg = 0;
+		if ( ls.splits[i].cutscene ) continue;
+		/* compute average for this segment */
+		{
+			int j, total = 0, count = 0;
+			for ( j = 0; j < ls.numHistoryRuns; j++ ) {
+				lsRunHistory_t *r = &ls.history[j];
+				if ( r->mode != mode ) continue;
+				if ( LS_DiffIdx( r->difficulty ) != ( di % LS_MAX_DIFFICULTIES ) ) continue;
+				if ( mode == LS_MODE_MISSION && r->missionNum != mission ) continue;
+				if ( segN < r->numSplits && r->splitTimes[segN] > 0 ) {
+					total += r->splitTimes[segN];
+					count++;
+				}
+			}
+			avgSeg = count > 0 ? total / count : 0;
+		}
+		if ( ls.splits[i].splitDone ) {
+			bpt += ls.splits[i].currentTimeMs;
+		} else if ( i == ls.currentMapIndex && ls.splits[i].currentTimeMs > 0 ) {
+			int live = ls.splits[i].currentTimeMs;
+			if ( avgSeg > 0 ) {
+				bpt += ( live > avgSeg ) ? live : avgSeg;
+			} else {
+				bpt += live;
+			}
+		} else {
+			if ( avgSeg > 0 ) {
+				bpt += avgSeg;
+			} else {
+				segN++;
+				return -1;
+			}
+		}
+		segN++;
 	}
 	return bpt;
 }
@@ -1178,21 +1597,143 @@ static int LS_CalcBestSegmentsDelta( qboolean *hasData ) {
 	return delta;
 }
 
-/* Check if the current run has any unsaved progress worth keeping:
-   - Any split where goldFlashMs > 0 (new gold was set this run)
-   - Or the run finished (potential new PB) */
-static qboolean LS_HasUnsavedProgress( void ) {
-	int i;
+/* Cumulative average segment time up to and including splitIdx.
+   Calculated from history entries matching current mode+difficulty.
+   Returns -1 if no history data available. */
+static int LS_CumulativeAverage( int upToIdx ) {
+	int i, segN, di, mode, mission;
+	int sum = 0;
+	qboolean allValid = qtrue;
 
-	/* A finished run always has something to save */
-	if ( ls.runFinished ) return qtrue;
+	di   = LS_CurDiffIdx();
+	mode = ls.runMode;
+	mission = ls.runMission;
 
-	/* Check for any new golds set during this run */
+	segN = 0;
+	for ( i = ls.modeFirstIdx; i <= upToIdx && i < ls.numMaps; i++ ) {
+		int j, total, count;
+		if ( ls.splits[i].cutscene ) continue;
+
+		total = 0; count = 0;
+		for ( j = 0; j < ls.numHistoryRuns; j++ ) {
+			lsRunHistory_t *r = &ls.history[j];
+			if ( r->mode != mode ) continue;
+			if ( LS_DiffIdx( r->difficulty ) != ( di % LS_MAX_DIFFICULTIES ) ) continue;
+			if ( mode == LS_MODE_MISSION && r->missionNum != mission ) continue;
+			if ( segN < r->numSplits && r->splitTimes[segN] > 0 ) {
+				total += r->splitTimes[segN];
+				count++;
+			}
+		}
+
+		if ( count > 0 ) {
+			sum += total / count;
+		} else {
+			allValid = qfalse;
+		}
+		segN++;
+	}
+	return allValid ? sum : ( sum > 0 ? sum : -1 );
+}
+
+/* forward declarations for cumulative helpers defined below */
+static int LS_CumulativeBest( int upToIdx );
+static int LS_CumulativePB( int upToIdx );
+
+/* Get the comparison cumulative time for a given split index based on ls_compare mode.
+   Returns -1 if no data available. */
+static int LS_ComparisonCumulative( int upToIdx ) {
+	int compare = ls_compareCvar ? ls_compareCvar->integer : LS_COMPARE_PB;
+	switch ( compare ) {
+	case LS_COMPARE_BEST:
+		return LS_CumulativeBest( upToIdx );
+	case LS_COMPARE_AVERAGE:
+		return LS_CumulativeAverage( upToIdx );
+	default: /* LS_COMPARE_PB */
+		return LS_CumulativePB( upToIdx );
+	}
+}
+
+/* Get the comparison segment time for a given split index.
+   Returns 0 if no data available. */
+static int LS_ComparisonSegment( int splitIdx ) {
+	int di = LS_CurDiffIdx();
+	int compare = ls_compareCvar ? ls_compareCvar->integer : LS_COMPARE_PB;
+	switch ( compare ) {
+	case LS_COMPARE_BEST:
+		return ls.splits[splitIdx].d[di].bestTimeMs;
+	case LS_COMPARE_AVERAGE: {
+		/* Average from history */
+		int j, segN, total = 0, count = 0;
+		int mode = ls.runMode, mission = ls.runMission;
+		/* Find segN for this split */
+		segN = 0;
+		for ( j = ls.modeFirstIdx; j < splitIdx && j < ls.numMaps; j++ ) {
+			if ( !ls.splits[j].cutscene ) segN++;
+		}
+		for ( j = 0; j < ls.numHistoryRuns; j++ ) {
+			lsRunHistory_t *r = &ls.history[j];
+			if ( r->mode != mode ) continue;
+			if ( LS_DiffIdx( r->difficulty ) != ( di % LS_MAX_DIFFICULTIES ) ) continue;
+			if ( mode == LS_MODE_MISSION && r->missionNum != mission ) continue;
+			if ( segN < r->numSplits && r->splitTimes[segN] > 0 ) {
+				total += r->splitTimes[segN];
+				count++;
+			}
+		}
+		return count > 0 ? total / count : 0;
+	}
+	default: /* LS_COMPARE_PB */
+		return ls.splits[splitIdx].d[di].pbSegmentMs;
+	}
+}
+
+/* Check if any new golds were set during the current run.
+   prevGoldMs stores the old best when the split was completed.
+   If bestTimeMs differs from prevGoldMs, a new gold was set. */
+static qboolean LS_HasNewGolds( void ) {
+	int i, di = LS_CurDiffIdx();
 	for ( i = 0; i < ls.numMaps; i++ ) {
-		if ( ls.splits[i].splitDone && ls.splits[i].goldFlashMs > 0 ) {
+		if ( ls.splits[i].splitDone &&
+			 ls.splits[i].prevGoldMs > 0 &&
+			 ls.splits[i].d[di].bestTimeMs != ls.splits[i].prevGoldMs ) {
 			return qtrue;
 		}
 	}
+	return qfalse;
+}
+
+/* Count how many splits have new golds this run */
+static int LS_CountNewGolds( void ) {
+	int i, count = 0, di = LS_CurDiffIdx();
+	for ( i = 0; i < ls.numMaps; i++ ) {
+		if ( ls.splits[i].splitDone &&
+			 ls.splits[i].prevGoldMs > 0 &&
+			 ls.splits[i].d[di].bestTimeMs != ls.splits[i].prevGoldMs ) {
+			count++;
+		}
+	}
+	return count;
+}
+
+/* Check if the finished run beat the previous PB.
+   savedPBMs was stored at run start via LS_SavePreRunPBs. */
+static qboolean LS_HasNewPB( void ) {
+	int *pb;
+	if ( !ls.runFinished ) return qfalse;
+	LS_GetCatPB( &pb );
+	/* New PB if either:
+	   - savedPBMs was 0 (first run) and we have a time now, or
+	   - current PB is lower than the saved one */
+	if ( ls.savedPBMs == 0 && *pb > 0 ) return qtrue;
+	if ( *pb > 0 && *pb < ls.savedPBMs ) return qtrue;
+	return qfalse;
+}
+
+/* Combined check for backward compatibility */
+static qboolean LS_HasUnsavedProgress( void ) {
+	if ( LS_HasNewGolds() ) return qtrue;
+	if ( LS_HasNewPB() ) return qtrue;
 	return qfalse;
 }
 
@@ -1248,6 +1789,483 @@ static void LS_SavePbSegments( void ) {
 }
 
 /* =====================================================================
+   LS_WindowUpdate - sync game state to the external window
+   Runs on the game thread so it can safely access all ls.* data.
+   ===================================================================== */
+static void LS_WindowUpdate( void ) {
+	volatile lsWndState_t *st = &lswnd_state;
+	const char *modeName;
+	int di, i, vi, igtMs, segMs, *pb;
+	int compare;
+
+	/* ---- title / header ---- */
+	Q_strncpyz( (char *)st->gameName, "Return to Castle Wolfenstein", sizeof( st->gameName ) );
+
+	switch ( ls.runMode ) {
+	case LS_MODE_MISSION: modeName = "Mission"; break;
+	case LS_MODE_IL:      modeName = "IL"; break;
+	default:              modeName = "Full Game"; break;
+	}
+	{
+		const char *diffTag = ls_diffShortTags[LS_DiffIdx( ls.currentDifficulty )];
+		Com_sprintf( (char *)st->categoryText, sizeof( st->categoryText ),
+			"%s [%s]", modeName, diffTag );
+	}
+
+	/* attempts / completions */
+	{
+		int *att;
+		LS_GetCatAttempts( &att );
+		st->attempts = *att;
+	}
+	{
+		int *comp;
+		LS_GetCatCompletions( &comp );
+		st->completions = *comp;
+	}
+
+	/* comparison label */
+	compare = ls_compareCvar ? ls_compareCvar->integer : LS_COMPARE_PB;
+	switch ( compare ) {
+	case LS_COMPARE_BEST:    Q_strncpyz( (char *)st->compareLabel, "Best Segments",    sizeof( st->compareLabel ) ); break;
+	case LS_COMPARE_AVERAGE: Q_strncpyz( (char *)st->compareLabel, "Average Segments", sizeof( st->compareLabel ) ); break;
+	default:                 Q_strncpyz( (char *)st->compareLabel, "Personal Best",    sizeof( st->compareLabel ) ); break;
+	}
+
+	/* PB / comparison time */
+	LS_GetCatPB( &pb );
+	if ( pb && *pb > 0 ) {
+		LS_FormatTime( *pb, (char *)st->pbText, sizeof( st->pbText ) );
+	} else {
+		st->pbText[0] = '\0';
+	}
+
+	/* ---- split rows ---- */
+	di = LS_CurDiffIdx();
+	vi = 0;
+	for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps && vi < LSWND_MAX_ROWS; i++ ) {
+		int cumTime, cumCmp;
+		if ( ls.splits[i].cutscene ) continue;
+
+		/* name */
+		{
+			const char *dn = ls.splits[i].displayName;
+			if ( !dn || !dn[0] ) dn = ls.splits[i].mapname;
+			Q_strncpyz( (char *)st->rows[vi].name, dn, sizeof( st->rows[vi].name ) );
+			if ( ls.splits[i].shortName && ls.splits[i].shortName[0] )
+				Q_strncpyz( (char *)st->rows[vi].shortName, ls.splits[i].shortName, sizeof( st->rows[vi].shortName ) );
+			else
+				( (char *)st->rows[vi].shortName )[0] = '\0';
+		}
+
+		/* state */
+		if ( ls.splits[i].splitSkipped ) {
+			st->rows[vi].state = 3;
+		} else if ( ls.splits[i].splitDone ) {
+			st->rows[vi].state = 2;
+		} else if ( ls.currentMapIndex >= 0 && i == ls.currentMapIndex ) {
+			st->rows[vi].state = 1;
+		} else {
+			/* check if current cutscene maps to this split */
+			if ( ls.currentMapIndex >= 0 && ls.splits[ls.currentMapIndex].cutscene ) {
+				int realIdx = LS_ActiveRealSplit();
+				st->rows[vi].state = ( realIdx == i ) ? 1 : 0;
+			} else {
+				st->rows[vi].state = 0;
+			}
+		}
+
+		/* cumulative time, segment time & delta (completed splits only) */
+		st->rows[vi].splitTime[0] = '\0';
+		st->rows[vi].segTime[0]   = '\0';
+		st->rows[vi].delta[0]     = '\0';
+		st->rows[vi].deltaBest[0] = '\0';
+		st->rows[vi].bestSeg[0]   = '\0';
+		st->rows[vi].pbSplitTime[0] = '\0';
+		st->rows[vi].isGold       = 0;
+		st->rows[vi].isBehind     = 0;
+		st->rows[vi].liveDeltaMs  = 0x80000000;
+		st->rows[vi].cumTimeMs    = 0;
+		st->rows[vi].pbCumMs      = -1;
+		st->rows[vi].bestCumMs    = -1;
+		st->rows[vi].avgCumMs     = -1;
+		st->rows[vi].segTimeMs    = 0;
+		st->rows[vi].segCompareMs = 0;
+		st->rows[vi].bestSegMs    = 0;
+		st->rows[vi].pbSegMs      = 0;
+		st->rows[vi].pbSegTime[0] = '\0';
+		st->rows[vi].segSecretsFound  = 0;
+		st->rows[vi].segSecretsTotal  = 0;
+		st->rows[vi].segTreasureFound = 0;
+		st->rows[vi].segTreasureTotal = 0;
+
+		/* per-segment 100% data */
+		st->rows[vi].segSecretsTotal  = ls.splits[i].secretsTotal;
+		st->rows[vi].segTreasureTotal = ls.splits[i].treasureTotal;
+		if ( ls.splits[i].splitDone ) {
+			st->rows[vi].segSecretsFound  = ls.splits[i].secretsFound;
+			st->rows[vi].segTreasureFound = ls.splits[i].treasureFound;
+		} else if ( i == ls.currentMapIndex ) {
+			st->rows[vi].segSecretsFound  = ls.liveSecretsFound;
+			st->rows[vi].segTreasureFound = ls.liveTreasureFound;
+		}
+
+		/* best segment time (always show if available) */
+		{
+			int bestMs = ls.splits[i].d[di].bestTimeMs;
+			if ( bestMs > 0 ) {
+				st->rows[vi].bestSegMs = bestMs;
+				LS_FormatTime( bestMs, (char *)st->rows[vi].bestSeg, sizeof( st->rows[vi].bestSeg ) );
+			}
+		}
+
+		/* PB cumulative split time (show for all splits) */
+		{
+			int pbCum = LS_CumulativePB( i );
+			if ( pbCum > 0 ) {
+				st->rows[vi].pbCumMs = pbCum;
+				LS_FormatTime( pbCum, (char *)st->rows[vi].pbSplitTime, sizeof( st->rows[vi].pbSplitTime ) );
+			}
+		}
+
+		/* PB segment time (for DetailedTimer) */
+		{
+			int pbSeg = ls.splits[i].d[di].pbSegmentMs;
+			if ( pbSeg > 0 ) {
+				st->rows[vi].pbSegMs = pbSeg;
+				LS_FormatTime( pbSeg, (char *)st->rows[vi].pbSegTime, sizeof( st->rows[vi].pbSegTime ) );
+			}
+		}
+
+		/* best-segments cumulative */
+		{
+			int bestCum = LS_CumulativeBest( i );
+			if ( bestCum > 0 ) {
+				st->rows[vi].bestCumMs = bestCum;
+			}
+		}
+
+		/* average-segments cumulative */
+		{
+			int avgCum = LS_CumulativeAverage( i );
+			if ( avgCum > 0 ) {
+				st->rows[vi].avgCumMs = avgCum;
+			}
+		}
+
+		/* comparison segment time (for countdown/current display) */
+		{
+			int cmpSeg = LS_ComparisonSegment( i );
+			if ( cmpSeg > 0 ) st->rows[vi].segCompareMs = cmpSeg;
+		}
+
+		if ( ls.splits[i].splitDone && !ls.splits[i].splitSkipped ) {
+			cumTime = LS_CumulativeTime( i );
+			st->rows[vi].cumTimeMs = cumTime;
+			LS_FormatTime( cumTime, (char *)st->rows[vi].splitTime, sizeof( st->rows[vi].splitTime ) );
+
+			/* individual segment time */
+			st->rows[vi].segTimeMs = ls.splits[i].currentTimeMs;
+			LS_FormatTime( ls.splits[i].currentTimeMs, (char *)st->rows[vi].segTime, sizeof( st->rows[vi].segTime ) );
+
+			/* delta vs comparison */
+			cumCmp = LS_ComparisonCumulative( i );
+			if ( cumCmp > 0 ) {
+				int dt = cumTime - cumCmp;
+				LS_FormatDelta( dt, (char *)st->rows[vi].delta, sizeof( st->rows[vi].delta ) );
+				st->rows[vi].isBehind = ( dt > 0 ) ? 1 : 0;
+			}
+
+			/* gold check - use prevGoldMs (pre-update value) so a freshly-broken
+			   gold still compares against the OLD best, not the updated one */
+			{
+				int gold = ls.splits[i].d[di].bestTimeMs;
+				int compareGold = ( ls.splits[i].prevGoldMs > 0 )
+					? ls.splits[i].prevGoldMs : gold;
+				if ( compareGold > 0 && ls.splits[i].currentTimeMs <= compareGold ) {
+					st->rows[vi].isGold = 1;
+				}
+			}
+
+			/* delta from best segment (seg time - gold) - same prevGoldMs logic.
+			   When prevGoldMs == 0 this is the first-ever completion, so there is
+			   no meaningful delta to show (seg == gold > delta would be 0). */
+			{
+				int gold = ls.splits[i].d[di].bestTimeMs;
+				if ( ls.splits[i].prevGoldMs > 0 && gold > 0 ) {
+					int dbDelta = ls.splits[i].currentTimeMs - ls.splits[i].prevGoldMs;
+					LS_FormatDelta( dbDelta, (char *)st->rows[vi].deltaBest, sizeof( st->rows[vi].deltaBest ) );
+				} else {
+					Q_strncpyz( (char *)st->rows[vi].deltaBest, "-", sizeof( st->rows[vi].deltaBest ) );
+				}
+			}
+		} else if ( ls.splits[i].splitSkipped ) {
+			Q_strncpyz( (char *)st->rows[vi].splitTime, "---", sizeof( st->rows[vi].splitTime ) );
+		} else if ( st->rows[vi].state == 1 ) {
+			/* current split: show live cumulative time */
+			cumTime = LS_CumulativeTime( i );
+			st->rows[vi].cumTimeMs = cumTime;
+			st->rows[vi].segTimeMs = ls.splits[i].currentTimeMs;
+			LS_FormatTime( cumTime, (char *)st->rows[vi].splitTime, sizeof( st->rows[vi].splitTime ) );
+		}
+
+		/* Completed splits with no comparison data: show "-" placeholder.
+		   Future / current splits intentionally left blank. */
+		if ( ls.splits[i].splitDone && !ls.splits[i].splitSkipped ) {
+			if ( !st->rows[vi].delta[0] )
+				Q_strncpyz( (char *)st->rows[vi].delta, "-", sizeof( st->rows[vi].delta ) );
+			if ( !st->rows[vi].deltaBest[0] )
+				Q_strncpyz( (char *)st->rows[vi].deltaBest, "-", sizeof( st->rows[vi].deltaBest ) );
+		}
+
+		/* live cumulative delta for current split (for delta countdown + colors) */
+		if ( st->rows[vi].state == 1 && !ls.splits[i].splitDone ) {
+			int cumNow = LS_CumulativeTime( i );
+			int cumCmpVal = LS_ComparisonCumulative( i );
+			if ( cumCmpVal > 0 ) {
+				st->rows[vi].liveDeltaMs = cumNow - cumCmpVal;
+			}
+		}
+
+		/* track current row index */
+		if ( st->rows[vi].state == 1 ) {
+			st->curRow = vi;
+		}
+
+		vi++;
+	}
+	st->numRows = vi;
+
+	/* ---- best segments list (for Best Segments component) ---- */
+	{
+		int bsi = 0, j;
+		for ( j = ls.modeFirstIdx; j <= ls.modeLastIdx && j < ls.numMaps && bsi < LSWND_MAX_ROWS; j++ ) {
+			int bestMs;
+			const char *dn;
+			if ( ls.splits[j].cutscene ) continue;
+			bestMs = ls.splits[j].d[di].bestTimeMs;
+			dn = ls.splits[j].displayName;
+			if ( !dn || !dn[0] ) dn = ls.splits[j].mapname;
+			Q_strncpyz( (char *)st->bestSegs[bsi].name, dn, sizeof( st->bestSegs[bsi].name ) );
+			if ( bestMs > 0 ) {
+				LS_FormatTime( bestMs, (char *)st->bestSegs[bsi].time, sizeof( st->bestSegs[bsi].time ) );
+			} else {
+				Q_strncpyz( (char *)st->bestSegs[bsi].time, "-", sizeof( st->bestSegs[bsi].time ) );
+			}
+
+			/* state & delta for best segments component */
+			st->bestSegs[bsi].delta[0] = '\0';
+			st->bestSegs[bsi].deltaMs  = 0x80000000; /* INT_MIN = n/a */
+			st->bestSegs[bsi].isGold   = 0;
+
+			if ( ls.splits[j].splitSkipped ) {
+				st->bestSegs[bsi].state = 2; /* treat as done */
+			} else if ( ls.splits[j].splitDone ) {
+				int segMs = ls.splits[j].currentTimeMs;
+				st->bestSegs[bsi].state = 2;
+				/* Only show delta when there was a previous gold to compare against.
+				   On first-ever completion prevGoldMs == 0, so seg == gold > delta 0. */
+				if ( ls.splits[j].prevGoldMs > 0 && segMs > 0 ) {
+					int dt = segMs - ls.splits[j].prevGoldMs;
+					st->bestSegs[bsi].deltaMs = dt;
+					LS_FormatDelta( dt, (char *)st->bestSegs[bsi].delta,
+						sizeof( st->bestSegs[bsi].delta ) );
+					if ( dt <= 0 ) {
+						st->bestSegs[bsi].isGold = 1;
+					}
+				} else if ( segMs > 0 && ls.splits[j].prevGoldMs == 0 ) {
+					/* first-ever completion - mark as gold with no delta */
+					st->bestSegs[bsi].isGold = 1;
+					Q_strncpyz( (char *)st->bestSegs[bsi].delta, "-",
+						sizeof( st->bestSegs[bsi].delta ) );
+				}
+			} else if ( ls.currentMapIndex >= 0 && j == ls.currentMapIndex ) {
+				st->bestSegs[bsi].state = 1;
+			} else if ( ls.currentMapIndex >= 0 && ls.splits[ls.currentMapIndex].cutscene ) {
+				int realIdx = LS_ActiveRealSplit();
+				st->bestSegs[bsi].state = ( realIdx == j ) ? 1 : 0;
+			} else {
+				st->bestSegs[bsi].state = 0;
+			}
+
+			bsi++;
+		}
+		st->numBestSegs = bsi;
+	}
+
+	/* ---- timer ---- */
+	if ( ls.runFinished ) {
+		igtMs = ls.runTotalIGTMs;
+	} else {
+		igtMs = LS_CumulativeTime( ls.modeLastIdx );
+	}
+	LS_FormatTime( igtMs, (char *)st->timerText, sizeof( st->timerText ) );
+	st->timerFrac[0] = '\0'; /* fraction split done locally in DetailedTimer renderer */
+
+	/* ---- real-time (RTA) timer ---- */
+	{
+		int rtMs = 0;
+		if ( ls.active && !ls.runFinished ) {
+			rtMs = Sys_Milliseconds() - ls.runStartRealMs;
+		} else {
+			rtMs = ls.runSavedRealMs;
+		}
+		LS_FormatTime( rtMs, (char *)st->rtTimerText, sizeof( st->rtTimerText ) );
+		st->rtTimerFrac[0] = '\0';
+	}
+
+	/* timerBehind: 1 if current cumulative delta > 0 */
+	st->timerBehind = 0;
+	if ( st->curRow >= 0 && st->curRow < st->numRows ) {
+		if ( st->rows[st->curRow].liveDeltaMs != (int)0x80000000
+			&& st->rows[st->curRow].liveDeltaMs > 0 ) {
+			st->timerBehind = 1;
+		} else if ( st->rows[st->curRow].isBehind ) {
+			st->timerBehind = 1;
+		}
+	}
+
+	/* segment timer */
+	segMs = 0;
+	if ( ls.currentMapIndex >= 0 && ls.currentMapIndex < ls.numMaps ) {
+		if ( !ls.splits[ls.currentMapIndex].cutscene ) {
+			segMs = ls.splits[ls.currentMapIndex].currentTimeMs;
+		} else {
+			int realIdx = LS_ActiveRealSplit();
+			if ( realIdx >= 0 ) segMs = ls.splits[realIdx].currentTimeMs;
+		}
+	}
+	LS_FormatTime( segMs, (char *)st->segTimerText, sizeof( st->segTimerText ) );
+	st->segTimerFrac[0] = '\0'; /* fraction split done locally in DetailedTimer renderer */
+
+	/* ---- info rows ---- */
+
+	/* Previous Segment / Live Segment */
+	{
+		int activeIdx = LS_ActiveRealSplit();
+		qboolean showLive = qfalse;
+
+		st->prevSegLabel[0] = '\0';
+		st->prevSegValue[0] = '\0';
+		st->prevSegBehind   = -1;
+		st->prevSegGold     = 0;
+
+		/* Show live segment when current split is near gold time */
+		if ( ls.active && !ls.runFinished && activeIdx >= 0 ) {
+			int gold = ls.splits[activeIdx].d[di].bestTimeMs;
+			int seg  = ls.splits[activeIdx].currentTimeMs;
+			if ( gold > 0 && seg >= gold - 10000 ) {
+				showLive = qtrue;
+			}
+		}
+
+		if ( showLive ) {
+			int gold = ls.splits[activeIdx].d[di].bestTimeMs;
+			int seg  = ls.splits[activeIdx].currentTimeMs;
+			int liveDelta = seg - gold;
+			Q_strncpyz( (char *)st->prevSegLabel, "Live Segment", sizeof( st->prevSegLabel ) );
+			if ( liveDelta == 0 ) {
+				Q_strncpyz( (char *)st->prevSegValue, "---", sizeof( st->prevSegValue ) );
+			} else {
+				LS_FormatDelta( liveDelta, (char *)st->prevSegValue, sizeof( st->prevSegValue ) );
+				st->prevSegBehind = ( liveDelta > 0 ) ? 1 : 0;
+				st->prevSegGold   = ( liveDelta < 0 ) ? 1 : 0;
+			}
+		} else {
+			qboolean hasPrev;
+			int prevSeg = LS_CalcPreviousSegment( &hasPrev );
+			Q_strncpyz( (char *)st->prevSegLabel, "Previous Segment", sizeof( st->prevSegLabel ) );
+			if ( hasPrev ) {
+				if ( prevSeg == 0 ) {
+					Q_strncpyz( (char *)st->prevSegValue, "---", sizeof( st->prevSegValue ) );
+				} else {
+					LS_FormatDelta( prevSeg, (char *)st->prevSegValue, sizeof( st->prevSegValue ) );
+					st->prevSegBehind = ( prevSeg > 0 ) ? 1 : 0;
+					st->prevSegGold   = ( prevSeg < 0 ) ? 1 : 0;
+				}
+			} else {
+				Q_strncpyz( (char *)st->prevSegValue, "-", sizeof( st->prevSegValue ) );
+			}
+		}
+	}
+
+	/* Sum of Best Segments (all variants) */
+	{
+		int sob = LS_CalcSumOfBests();
+		st->sobBestMs = sob;
+		if ( sob >= 0 ) {
+			LS_FormatTime( sob, (char *)st->sobText, sizeof( st->sobText ) );
+		} else {
+			st->sobText[0] = '\0';
+		}
+		st->sobPbMs  = LS_CalcSumOfPB();
+		st->sobAvgMs = LS_CalcSumOfAvgs();
+	}
+
+	/* Best Possible Time (all variants) */
+	{
+		int bpt = LS_CalcBestPossible();
+		st->bptBestMs = bpt;
+		if ( bpt >= 0 ) {
+			LS_FormatTime( bpt, (char *)st->bptText, sizeof( st->bptText ) );
+		} else {
+			st->bptText[0] = '\0';
+		}
+		st->bptPbMs  = LS_CalcBestPossiblePB();
+		st->bptAvgMs = LS_CalcBestPossibleAvg();
+	}
+
+	/* Possible Time Save  (static: comparison_seg - best_seg, plain time) */
+	{
+		int mi = LS_ActiveRealSplit();
+		if ( mi < 0 ) mi = ls.modeFirstIdx;
+		{
+		int bestSeg = ( mi >= 0 && mi < ls.numMaps ) ? ls.splits[mi].d[di].bestTimeMs : 0;
+		int cmpSeg  = ( mi >= 0 && mi < ls.numMaps ) ? LS_ComparisonSegment( mi ) : 0;
+		st->ptsMs = 0x80000000;
+		if ( bestSeg > 0 && cmpSeg > 0 ) {
+			int pts = cmpSeg - bestSeg;
+			if ( pts < 0 ) pts = 0;
+			st->ptsMs = pts;
+			LS_FormatTime( pts, (char *)st->ptsText, sizeof( st->ptsText ) );
+		} else {
+			st->ptsText[0] = '\0';
+		}
+		}
+	}
+
+	/* status */
+	/* 100% tracking: accumulate secrets/treasures across active splits */
+	{
+		int i, sf = 0, st2 = 0, tf = 0, tt = 0;
+		for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+			if ( ls.splits[i].cutscene ) continue;
+			if ( ls.splits[i].splitDone ) {
+				sf += ls.splits[i].secretsFound;
+				tf += ls.splits[i].treasureFound;
+			} else if ( i == ls.currentMapIndex ) {
+				/* Live values for the current map */
+				sf += ls.liveSecretsFound;
+				tf += ls.liveTreasureFound;
+			}
+			st2 += ls.splits[i].secretsTotal;
+			tt  += ls.splits[i].treasureTotal;
+		}
+		st->pctSecretsFound  = sf;
+		st->pctSecretsTotal  = st2;
+		st->pctTreasureFound = tf;
+		st->pctTreasureTotal = tt;
+	}
+
+	st->active   = ls.active   ? 1 : 0;
+	st->finished = ls.runFinished ? 1 : 0;
+	st->paused   = ls.manualPause ? 1 : 0;
+
+	/* push to shared memory for standalone exe */
+	LS_ShmUpdate();
+}
+
+/* =====================================================================
    Drawing helpers  (engine-level, 640x480 virtual coords)
    ===================================================================== */
 
@@ -1298,20 +2316,959 @@ static void LS_DrawString( int x, int y, float charSize, const char *str, float 
 }
 
 /* =====================================================================
-   File I/O  (V8 format - per-category stats + multi-format backward compat)
+   File I/O  (.lss LiveSplit XML format - one file per category+difficulty)
    ===================================================================== */
 
-static void LS_Save( void ) {
+/* --- LSS time format helpers --- */
+
+/* Format milliseconds as LiveSplit time: "HH:MM:SS.NNNNNNN" */
+static void LS_FormatLssTime( int ms, char *out, int outSize ) {
+	int hours, mins, secs, frac;
+	if ( ms < 0 ) ms = 0;
+	hours = ms / 3600000;
+	mins  = ( ms / 60000 ) % 60;
+	secs  = ( ms / 1000 ) % 60;
+	frac  = ( ms % 1000 ) * 10000; /* 3 significant digits -> 7 decimal places */
+	Com_sprintf( out, outSize, "%02d:%02d:%02d.%07d", hours, mins, secs, frac );
+}
+
+/* Parse LiveSplit time "HH:MM:SS.NNNNNNN" back to milliseconds */
+static int LS_ParseLssTime( const char *str ) {
+	int h = 0, m = 0, s = 0, frac = 0;
+	if ( !str || !str[0] ) return 0;
+	if ( sscanf( str, "%d:%d:%d.%d", &h, &m, &s, &frac ) >= 3 ) {
+		/* frac may have variable number of digits; normalize to ms */
+		/* count digits after the dot */
+		const char *dot = strchr( str, '.' );
+		if ( dot ) {
+			int digits = (int)strlen( dot + 1 );
+			while ( digits > 3 ) { frac /= 10; digits--; }
+			while ( digits < 3 ) { frac *= 10; digits++; }
+		}
+		return h * 3600000 + m * 60000 + s * 1000 + frac;
+	}
+	return 0;
+}
+
+/* Format time_t as LiveSplit date: "MM/DD/YYYY HH:MM:SS" */
+static void LS_FormatLssDate( time_t t, char *out, int outSize ) {
+	struct tm *ti;
+	if ( t <= 0 ) {
+		Com_sprintf( out, outSize, "01/01/2000 00:00:00" );
+		return;
+	}
+	ti = localtime( &t );
+	Com_sprintf( out, outSize, "%02d/%02d/%04d %02d:%02d:%02d",
+		ti->tm_mon + 1, ti->tm_mday, ti->tm_year + 1900,
+		ti->tm_hour, ti->tm_min, ti->tm_sec );
+}
+
+/* Parse LiveSplit date "MM/DD/YYYY HH:MM:SS" to time_t */
+static time_t LS_ParseLssDate( const char *str ) {
+	struct tm ti;
+	if ( !str || !str[0] ) return 0;
+	memset( &ti, 0, sizeof( ti ) );
+	if ( sscanf( str, "%d/%d/%d %d:%d:%d",
+		&ti.tm_mon, &ti.tm_mday, &ti.tm_year,
+		&ti.tm_hour, &ti.tm_min, &ti.tm_sec ) == 6 ) {
+		ti.tm_mon -= 1;
+		ti.tm_year -= 1900;
+		ti.tm_isdst = -1; /* let mktime determine DST */
+		return mktime( &ti );
+	}
+	return 0;
+}
+
+/* --- LSS file path helpers --- */
+
+static void LS_GetLssPath( char *out, int outSize, int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100 ) {
+	const char *suffix = pct100 ? "_100" : "";
+	if ( diffIdx < 0 ) diffIdx = 0;
+	if ( diffIdx >= LS_MAX_DIFFICULTIES ) diffIdx = LS_MAX_DIFFICULTIES - 1;
+
+	switch ( mode ) {
+	case LS_MODE_FULLGAME:
+		Com_sprintf( out, outSize, LS_LSS_DIR_FG "/%s%s.lss", ls_diffFileNames[diffIdx], suffix );
+		break;
+	case LS_MODE_MISSION:
+		Com_sprintf( out, outSize, LS_LSS_DIR_MS "/chapter%d_%s%s.lss",
+			missionGroup + 1, ls_diffFileNames[diffIdx], suffix );
+		break;
+	case LS_MODE_IL:
+		if ( mapIdx >= 0 && mapIdx < ls.numMaps )
+			Com_sprintf( out, outSize, LS_LSS_DIR_IL "/%s_%s%s.lss",
+				ls.splits[mapIdx].mapname, ls_diffFileNames[diffIdx], suffix );
+		else
+			Com_sprintf( out, outSize, LS_LSS_DIR_IL "/unknown_%s%s.lss",
+				ls_diffFileNames[diffIdx], suffix );
+		break;
+	default:
+		Com_sprintf( out, outSize, LS_LSS_DIR "/unknown.lss" );
+		break;
+	}
+}
+
+/* Get the .lss path for the CURRENT run's category */
+static void LS_GetCurrentLssPath( char *out, int outSize ) {
+	int di = LS_DiffIdx( ls.currentDifficulty );
+	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	switch ( ls.runMode ) {
+	case LS_MODE_MISSION:
+		LS_GetLssPath( out, outSize, LS_MODE_MISSION, di, ls.runMission - 1, -1, p100 );
+		break;
+	case LS_MODE_IL:
+		LS_GetLssPath( out, outSize, LS_MODE_IL, di, -1, ls.modeFirstIdx, p100 );
+		break;
+	default:
+		LS_GetLssPath( out, outSize, LS_MODE_FULLGAME, di, -1, -1, p100 );
+		break;
+	}
+}
+
+/* Build category display name for the .lss CategoryName field */
+static void LS_GetCategoryDisplayName( char *out, int outSize, int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100 ) {
+	const char *diff = ls_diffDisplayNames[diffIdx];
+	const char *pctTag = pct100 ? " 100%" : " Any%";
+	switch ( mode ) {
+	case LS_MODE_FULLGAME:
+		Com_sprintf( out, outSize, "Full Game%s - %s", pctTag, diff );
+		break;
+	case LS_MODE_MISSION:
+		if ( missionGroup >= 0 && missionGroup < LS_NUM_MISSION_GROUPS )
+			Com_sprintf( out, outSize, "%s%s - %s", ls_missionGroups[missionGroup].name, pctTag, diff );
+		else
+			Com_sprintf( out, outSize, "Chapter%s - %s", pctTag, diff );
+		break;
+	case LS_MODE_IL:
+		if ( mapIdx >= 0 && mapIdx < ls.numMaps && ls.splits[mapIdx].displayName )
+			Com_sprintf( out, outSize, "%s IL%s - %s", ls.splits[mapIdx].displayName, pctTag, diff );
+		else
+			Com_sprintf( out, outSize, "IL%s - %s", pctTag, diff );
+		break;
+	default:
+		Com_sprintf( out, outSize, "Unknown - %s", diff );
+		break;
+	}
+}
+
+/* --- XML write helper (converts \n to \r\n for LiveSplit compatibility) --- */
+static void LS_WriteStr( fileHandle_t f, const char *s ) {
+	const char *p = s;
+	while ( *p ) {
+		const char *nl = strchr( p, '\n' );
+		if ( !nl ) {
+			FS_Write( p, (int)strlen( p ), f );
+			break;
+		}
+		if ( nl > p ) {
+			FS_Write( p, (int)( nl - p ), f );
+		}
+		FS_Write( "\r\n", 2, f );
+		p = nl + 1;
+	}
+}
+
+/* --- Get segment range for a given mode/mission --- */
+static void LS_GetSegmentRange( int mode, int missionGroup, int mapIdx,
+								int *outFirst, int *outLast ) {
+	int i;
+	switch ( mode ) {
+	case LS_MODE_MISSION: {
+		int grpFirst = ls_missionGroups[missionGroup].firstMission;
+		int grpLast  = ls_missionGroups[missionGroup].lastMission;
+		*outFirst = -1; *outLast = -1;
+		for ( i = 0; i < ls.numMaps; i++ ) {
+			if ( ls.splits[i].mission >= grpFirst && ls.splits[i].mission <= grpLast ) {
+				if ( *outFirst < 0 ) *outFirst = i;
+				*outLast = i;
+			}
+		}
+		break;
+	}
+	case LS_MODE_IL:
+		*outFirst = mapIdx;
+		*outLast  = mapIdx;
+		break;
+	default: /* FULLGAME */
+		*outFirst = 0;
+		*outLast  = ls.numMaps - 1;
+		break;
+	}
+}
+
+/* =====================================================================
+   LS_WriteLss - write a single .lss file for one category+difficulty
+   ===================================================================== */
+static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100 ) {
 	fileHandle_t f;
-	int i, di, gi;
+	char path[256], catName[256], buf[1024], timeBuf[64];
+	int i, n, firstIdx, lastIdx, slot;
+	int attemptCount;
+	int numFilteredRuns;
+	int *filteredIndices;
+
+	LS_GetLssPath( path, sizeof( path ), mode, diffIdx, missionGroup, mapIdx, pct100 );
+	LS_GetCategoryDisplayName( catName, sizeof( catName ), mode, diffIdx, missionGroup, mapIdx, pct100 );
+
+	slot = mode * LS_MAX_DIFFICULTIES + diffIdx;
+	LS_GetSegmentRange( mode, missionGroup, mapIdx, &firstIdx, &lastIdx );
+	if ( firstIdx < 0 || lastIdx < 0 ) return;
+
+	/* Determine attempt count from the appropriate counter */
+	switch ( mode ) {
+	case LS_MODE_FULLGAME:
+		attemptCount = ls.fgAttempts[diffIdx];
+		break;
+	case LS_MODE_MISSION:
+		attemptCount = ls.msAttempts[missionGroup][diffIdx];
+		break;
+	case LS_MODE_IL:
+		attemptCount = ls.splits[mapIdx].d[slot].totalAttempts;
+		break;
+	default:
+		attemptCount = 0;
+		break;
+	}
+
+	/* Check if there is any data worth saving */
+	{
+		qboolean hasData = qfalse;
+		if ( attemptCount > 0 ) hasData = qtrue;
+		if ( !hasData ) {
+			for ( i = firstIdx; i <= lastIdx; i++ ) {
+				if ( ls.splits[i].cutscene ) continue;
+				if ( ls.splits[i].d[slot].bestTimeMs > 0 ||
+					 ls.splits[i].d[slot].totalAttempts > 0 ) {
+					hasData = qtrue;
+					break;
+				}
+			}
+		}
+		if ( !hasData ) return; /* skip empty categories */
+	}
+
+	/* Filter history runs matching this category */
+	filteredIndices = (int *)Z_Malloc( ( ls.numHistoryRuns > 0 ? ls.numHistoryRuns : 1 ) * sizeof( int ) );
+	numFilteredRuns = 0;
+	for ( i = 0; i < ls.numHistoryRuns; i++ ) {
+		lsRunHistory_t *r = &ls.history[i];
+		if ( r->mode != mode ) continue;
+		if ( LS_DiffIdx( r->difficulty ) != diffIdx ) continue;
+		if ( mode == LS_MODE_MISSION && r->missionNum != missionGroup + 1 ) continue;
+		/* For IL, check if the run's map matches.
+		   IL history has numSplits==1, and the map is implied by missionNum or mapIdx.
+		   Since we don't store the map index in history, we match by missionNum
+		   containing the map index for IL mode. */
+		filteredIndices[numFilteredRuns++] = i;
+	}
+
+	FS_FOpenFileByMode( path, &f, FS_WRITE );
+	if ( !f ) {
+		Z_Free( filteredIndices );
+		Com_Printf( "^1LiveSplit: Could not write %s\n", path );
+		return;
+	}
+
+	/* UTF-8 BOM */
+	FS_Write( "\xEF\xBB\xBF", 3, f );
+
+	/* XML header */
+	LS_WriteStr( f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" );
+	LS_WriteStr( f, "<Run version=\"1.7.0\">\n" );
+	if ( ls.gameIcon ) {
+		LS_WriteStr( f, "  <GameIcon>" );
+		LS_WriteStr( f, ls.gameIcon );
+		LS_WriteStr( f, "</GameIcon>\n" );
+	} else {
+		LS_WriteStr( f, "  <GameIcon />\n" );
+	}
+	LS_WriteStr( f, "  <GameName>Return to Castle Wolfenstein</GameName>\n" );
+
+	Com_sprintf( buf, sizeof( buf ), "  <CategoryName>%s</CategoryName>\n", catName );
+	LS_WriteStr( f, buf );
+
+	LS_WriteStr( f, "  <Metadata>\n" );
+	LS_WriteStr( f, "    <Run id=\"\" />\n" );
+	LS_WriteStr( f, "    <Platform usesEmulator=\"False\">\n" );
+	LS_WriteStr( f, "    </Platform>\n" );
+	LS_WriteStr( f, "    <Region>\n" );
+	LS_WriteStr( f, "    </Region>\n" );
+	LS_WriteStr( f, "    <Variables />\n" );
+	LS_WriteStr( f, "  </Metadata>\n" );
+	LS_WriteStr( f, "  <Offset>00:00:00</Offset>\n" );
+
+	Com_sprintf( buf, sizeof( buf ), "  <AttemptCount>%d</AttemptCount>\n", attemptCount );
+	LS_WriteStr( f, buf );
+
+	/* AttemptHistory - write both completed runs and reset attempts merged by attemptId */
+	LS_WriteStr( f, "  <AttemptHistory>\n" );
+	{
+		/* Filter reset attempts matching this category */
+		int *filteredResets = NULL;
+		int numFilteredResets = 0;
+		int compIdx = 0, resetIdx = 0;
+
+		if ( ls.numResetAttempts > 0 ) {
+			filteredResets = (int *)Z_Malloc( ls.numResetAttempts * sizeof( int ) );
+			for ( n = 0; n < ls.numResetAttempts; n++ ) {
+				lsResetAttempt_t *ra = &ls.resetAttempts[n];
+				if ( ra->mode != mode ) continue;
+				if ( LS_DiffIdx( ra->difficulty ) != diffIdx ) continue;
+				if ( mode == LS_MODE_MISSION && ra->missionNum != missionGroup + 1 ) continue;
+				filteredResets[numFilteredResets++] = n;
+			}
+		}
+
+		/* Merge completed runs and resets in ascending attemptId order.
+		   Both filtered lists are already in load order (ascending id). */
+		compIdx = 0;
+		resetIdx = 0;
+		while ( compIdx < numFilteredRuns || resetIdx < numFilteredResets ) {
+			int compId  = ( compIdx < numFilteredRuns )
+				? ls.history[filteredIndices[compIdx]].attemptId : 0x7FFFFFFF;
+			int resetId = ( resetIdx < numFilteredResets )
+				? ls.resetAttempts[filteredResets[resetIdx]].attemptId : 0x7FFFFFFF;
+
+			if ( compId <= resetId && compIdx < numFilteredRuns ) {
+				/* Write completed run */
+				lsRunHistory_t *r = &ls.history[filteredIndices[compIdx]];
+				char startBuf[32], endBuf[32], rgtBuf[64], igtBuf[64];
+
+				LS_FormatLssDate( r->startTime, startBuf, sizeof( startBuf ) );
+				LS_FormatLssDate( r->endTime, endBuf, sizeof( endBuf ) );
+				LS_FormatLssTime( r->totalRGTMs, rgtBuf, sizeof( rgtBuf ) );
+				LS_FormatLssTime( r->totalIGTMs, igtBuf, sizeof( igtBuf ) );
+
+				Com_sprintf( buf, sizeof( buf ),
+					"    <Attempt id=\"%d\" started=\"%s\" isStartedSynced=\"%s\" ended=\"%s\" isEndedSynced=\"%s\">\n",
+					r->attemptId, startBuf,
+					r->isStartedSynced ? "True" : "False",
+					endBuf,
+					r->isEndedSynced ? "True" : "False" );
+				LS_WriteStr( f, buf );
+
+				Com_sprintf( buf, sizeof( buf ), "      <RealTime>%s</RealTime>\n", rgtBuf );
+				LS_WriteStr( f, buf );
+				Com_sprintf( buf, sizeof( buf ), "      <GameTime>%s</GameTime>\n", igtBuf );
+				LS_WriteStr( f, buf );
+
+				LS_WriteStr( f, "    </Attempt>\n" );
+				compIdx++;
+			} else {
+				/* Write reset attempt */
+				lsResetAttempt_t *ra = &ls.resetAttempts[filteredResets[resetIdx]];
+				char startBuf[32], endBuf[32];
+
+				LS_FormatLssDate( ra->startTime, startBuf, sizeof( startBuf ) );
+				LS_FormatLssDate( ra->endTime, endBuf, sizeof( endBuf ) );
+
+				if ( ra->pauseTimeMs > 0 ) {
+					/* PauseTime-only attempt (non-self-closing) */
+					char ptBuf[64];
+					LS_FormatLssTime( ra->pauseTimeMs, ptBuf, sizeof( ptBuf ) );
+					Com_sprintf( buf, sizeof( buf ),
+						"    <Attempt id=\"%d\" started=\"%s\" isStartedSynced=\"%s\" ended=\"%s\" isEndedSynced=\"%s\">\n",
+						ra->attemptId, startBuf,
+						ra->isStartedSynced ? "True" : "False",
+						endBuf,
+						ra->isEndedSynced ? "True" : "False" );
+					LS_WriteStr( f, buf );
+					Com_sprintf( buf, sizeof( buf ), "      <PauseTime>%s</PauseTime>\n", ptBuf );
+					LS_WriteStr( f, buf );
+					LS_WriteStr( f, "    </Attempt>\n" );
+				} else {
+					/* Normal self-closing reset */
+					Com_sprintf( buf, sizeof( buf ),
+						"    <Attempt id=\"%d\" started=\"%s\" isStartedSynced=\"%s\" ended=\"%s\" isEndedSynced=\"%s\" />\n",
+						ra->attemptId, startBuf,
+						ra->isStartedSynced ? "True" : "False",
+						endBuf,
+						ra->isEndedSynced ? "True" : "False" );
+					LS_WriteStr( f, buf );
+				}
+				resetIdx++;
+			}
+		}
+
+		if ( filteredResets ) Z_Free( filteredResets );
+	}
+	LS_WriteStr( f, "  </AttemptHistory>\n" );
+
+	/* Segments */
+	LS_WriteStr( f, "  <Segments>\n" );
+	{
+		int segN = 0; /* sequential segment index within this category */
+		int cumulativePB = 0;
+		int cumulativeRealPB = 0;
+		qboolean pbValid = qtrue;
+
+		for ( i = firstIdx; i <= lastIdx; i++ ) {
+			int j;
+			const char *segName;
+			if ( ls.splits[i].cutscene ) continue;
+
+			segName = ls.splits[i].displayName ? ls.splits[i].displayName : ls.splits[i].mapname;
+
+			LS_WriteStr( f, "    <Segment>\n" );
+			Com_sprintf( buf, sizeof( buf ), "      <Name>%s</Name>\n", segName );
+			LS_WriteStr( f, buf );
+			LS_WriteStr( f, "      <Icon />\n" );
+
+			/* SplitTimes - cumulative PB */
+			LS_WriteStr( f, "      <SplitTimes>\n" );
+			LS_WriteStr( f, "        <SplitTime name=\"Personal Best\">\n" );
+			if ( pbValid && ls.splits[i].d[slot].pbSegmentMs > 0 ) {
+				cumulativePB += ls.splits[i].d[slot].pbSegmentMs;
+				if ( ls.splits[i].d[slot].pbRealSegmentMs > 0 ) {
+					cumulativeRealPB += ls.splits[i].d[slot].pbRealSegmentMs;
+					LS_FormatLssTime( cumulativeRealPB, timeBuf, sizeof( timeBuf ) );
+					Com_sprintf( buf, sizeof( buf ), "          <RealTime>%s</RealTime>\n", timeBuf );
+					LS_WriteStr( f, buf );
+				}
+				LS_FormatLssTime( cumulativePB, timeBuf, sizeof( timeBuf ) );
+				Com_sprintf( buf, sizeof( buf ), "          <GameTime>%s</GameTime>\n", timeBuf );
+				LS_WriteStr( f, buf );
+			} else {
+				pbValid = qfalse; /* once we hit a gap, remaining PB splits are invalid */
+			}
+			LS_WriteStr( f, "        </SplitTime>\n" );
+			LS_WriteStr( f, "      </SplitTimes>\n" );
+
+			/* BestSegmentTime (gold) */
+			LS_WriteStr( f, "      <BestSegmentTime>\n" );
+			if ( ls.splits[i].d[slot].bestRealTimeMs > 0 ) {
+				LS_FormatLssTime( ls.splits[i].d[slot].bestRealTimeMs, timeBuf, sizeof( timeBuf ) );
+				Com_sprintf( buf, sizeof( buf ), "        <RealTime>%s</RealTime>\n", timeBuf );
+				LS_WriteStr( f, buf );
+			}
+			if ( ls.splits[i].d[slot].bestTimeMs > 0 ) {
+				LS_FormatLssTime( ls.splits[i].d[slot].bestTimeMs, timeBuf, sizeof( timeBuf ) );
+				Com_sprintf( buf, sizeof( buf ), "        <GameTime>%s</GameTime>\n", timeBuf );
+				LS_WriteStr( f, buf );
+			}
+			LS_WriteStr( f, "      </BestSegmentTime>\n" );
+
+			/* SegmentHistory - per-attempt times for this segment */
+			LS_WriteStr( f, "      <SegmentHistory>\n" );
+			for ( j = 0; j < numFilteredRuns; j++ ) {
+				lsRunHistory_t *r = &ls.history[filteredIndices[j]];
+
+				if ( segN < r->numSplits && ( r->splitTimes[segN] > 0 || r->splitRealTimes[segN] > 0 ) ) {
+					Com_sprintf( buf, sizeof( buf ), "        <Time id=\"%d\">\n", r->attemptId );
+					LS_WriteStr( f, buf );
+					if ( r->splitRealTimes[segN] > 0 ) {
+						LS_FormatLssTime( r->splitRealTimes[segN], timeBuf, sizeof( timeBuf ) );
+						Com_sprintf( buf, sizeof( buf ), "          <RealTime>%s</RealTime>\n", timeBuf );
+						LS_WriteStr( f, buf );
+					}
+					if ( r->splitTimes[segN] > 0 ) {
+						LS_FormatLssTime( r->splitTimes[segN], timeBuf, sizeof( timeBuf ) );
+						Com_sprintf( buf, sizeof( buf ), "          <GameTime>%s</GameTime>\n", timeBuf );
+						LS_WriteStr( f, buf );
+					}
+					LS_WriteStr( f, "        </Time>\n" );
+				}
+			}
+			/* Also emit orphan segment times (from partial runs / resets) */
+			{
+				int oi;
+				for ( oi = 0; oi < ls.numOrphanSegTimes; oi++ ) {
+					lsOrphanSegTime_t *o = &ls.orphanSegTimes[oi];
+					if ( o->mode != mode ) continue;
+					if ( o->diffIdx != diffIdx ) continue;
+					if ( mode == LS_MODE_MISSION && o->missionNum != missionGroup + 1 ) continue;
+					if ( o->segIdx != segN ) continue;
+					Com_sprintf( buf, sizeof( buf ), "        <Time id=\"%d\">\n", o->attemptId );
+					LS_WriteStr( f, buf );
+					if ( o->realTimeMs > 0 ) {
+						LS_FormatLssTime( o->realTimeMs, timeBuf, sizeof( timeBuf ) );
+						Com_sprintf( buf, sizeof( buf ), "          <RealTime>%s</RealTime>\n", timeBuf );
+						LS_WriteStr( f, buf );
+					}
+					if ( o->timeMs > 0 ) {
+						LS_FormatLssTime( o->timeMs, timeBuf, sizeof( timeBuf ) );
+						Com_sprintf( buf, sizeof( buf ), "          <GameTime>%s</GameTime>\n", timeBuf );
+						LS_WriteStr( f, buf );
+					}
+					LS_WriteStr( f, "        </Time>\n" );
+				}
+			}
+			LS_WriteStr( f, "      </SegmentHistory>\n" );
+
+			LS_WriteStr( f, "    </Segment>\n" );
+			segN++;
+		}
+	}
+	LS_WriteStr( f, "  </Segments>\n" );
+
+	/* AutoSplitterSettings (empty but valid) */
+	LS_WriteStr( f, "  <AutoSplitterSettings />\n" );
+	LS_WriteStr( f, "</Run>\n" );
+
+	FS_FCloseFile( f );
+	Z_Free( filteredIndices );
+}
+
+/* =====================================================================
+   LS_ReadLss - read a single .lss file and populate in-memory state
+   ===================================================================== */
+
+/* Simple XML content extractor: find <tag>content</tag> starting from pos.
+   Returns content in out, returns pointer past </tag> or NULL if not found.
+   If boundary is non-NULL, the search will not look past that pointer. */
+static const char *LS_XmlTagContentBounded( const char *pos, const char *boundary, const char *tag, char *out, int outSize ) {
+	char openTag[64], closeTag[64];
+	const char *start, *end;
+
+	Com_sprintf( openTag, sizeof( openTag ), "<%s>", tag );
+	Com_sprintf( closeTag, sizeof( closeTag ), "</%s>", tag );
+
+	start = strstr( pos, openTag );
+	if ( !start || ( boundary && start >= boundary ) ) { out[0] = '\0'; return NULL; }
+	start += strlen( openTag );
+
+	end = strstr( start, closeTag );
+	if ( !end || ( boundary && end >= boundary ) ) { out[0] = '\0'; return NULL; }
+
+	{
+		int len = (int)( end - start );
+		if ( len >= outSize ) len = outSize - 1;
+		memcpy( out, start, len );
+		out[len] = '\0';
+	}
+	return end + strlen( closeTag );
+}
+
+/* Unbounded version for backward compatibility */
+static const char *LS_XmlTagContent( const char *pos, const char *tag, char *out, int outSize ) {
+	return LS_XmlTagContentBounded( pos, NULL, tag, out, outSize );
+}
+
+/* Extract an attribute value from a tag string like: id="42" started="..." */
+static qboolean LS_XmlAttr( const char *tagStr, const char *attr, char *out, int outSize ) {
+	char search[64];
+	const char *pos, *end;
+	Com_sprintf( search, sizeof( search ), "%s=\"", attr );
+	pos = strstr( tagStr, search );
+	if ( !pos ) { out[0] = '\0'; return qfalse; }
+	pos += strlen( search );
+	end = strchr( pos, '"' );
+	if ( !end ) { out[0] = '\0'; return qfalse; }
+	{
+		int len = (int)( end - pos );
+		if ( len >= outSize ) len = outSize - 1;
+		memcpy( out, pos, len );
+		out[len] = '\0';
+	}
+	return qtrue;
+}
+
+static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100 ) {
+	fileHandle_t fh;
+	int fileLen;
+	char *bigbuf;
+	char path[256], valBuf[256];
+	int slot, firstIdx, lastIdx;
+	const char *pos, *segPos, *histPos, *attemptEnd;
+
+	LS_GetLssPath( path, sizeof( path ), mode, diffIdx, missionGroup, mapIdx, pct100 );
+	slot = mode * LS_MAX_DIFFICULTIES + diffIdx;
+	LS_GetSegmentRange( mode, missionGroup, mapIdx, &firstIdx, &lastIdx );
+	if ( firstIdx < 0 || lastIdx < 0 ) return;
+
+	fileLen = FS_FOpenFileByMode( path, &fh, FS_READ );
+	if ( fileLen <= 0 ) {
+		if ( fh ) FS_FCloseFile( fh );
+		return;
+	}
+
+	bigbuf = (char *)Z_Malloc( fileLen + 1 );
+	FS_Read( bigbuf, fileLen, fh );
+	bigbuf[fileLen] = '\0';
+	FS_FCloseFile( fh );
+
+	/* GameIcon - preserve base64 content for round-trip.
+	   Only store the first one we encounter (all categories share the icon). */
+	if ( !ls.gameIcon ) {
+		const char *iconStart = strstr( bigbuf, "<GameIcon>" );
+		const char *iconEnd   = strstr( bigbuf, "</GameIcon>" );
+		if ( iconStart && iconEnd && iconEnd > iconStart ) {
+			int iconLen;
+			iconStart += 10; /* skip "<GameIcon>" */
+			iconLen = (int)( iconEnd - iconStart );
+			if ( iconLen > 0 ) {
+				ls.gameIcon = (char *)Z_Malloc( iconLen + 1 );
+				memcpy( ls.gameIcon, iconStart, iconLen );
+				ls.gameIcon[iconLen] = '\0';
+			}
+		}
+	}
+
+	/* AttemptCount */
+	if ( LS_XmlTagContent( bigbuf, "AttemptCount", valBuf, sizeof( valBuf ) ) ) {
+		int att = atoi( valBuf );
+		switch ( mode ) {
+		case LS_MODE_FULLGAME:
+			ls.fgAttempts[diffIdx] = att;
+			break;
+		case LS_MODE_MISSION:
+			ls.msAttempts[missionGroup][diffIdx] = att;
+			break;
+		case LS_MODE_IL:
+			ls.splits[mapIdx].d[slot].totalAttempts = att;
+			break;
+		}
+	}
+
+	/* AttemptHistory - read completed runs into history, preserve reset attempts */
+	{
+		int completions = 0;
+		int bestIGT = 0, bestRGT = 0;
+
+		pos = strstr( bigbuf, "<AttemptHistory>" );
+		attemptEnd = strstr( bigbuf, "</AttemptHistory>" );
+		if ( pos && attemptEnd ) {
+			pos += 16; /* skip "<AttemptHistory>" */
+			while ( pos < attemptEnd ) {
+				const char *attStart = strstr( pos, "<Attempt " );
+				const char *attClose;
+				const char *tagEnd; /* end of the opening <Attempt ...> or <Attempt .../> tag */
+				char idStr[32], igtStr[64], rgtStr[64], startStr[64], endStr[64];
+				char syncStr[16];
+				int attId, igtMs, rgtMs;
+				qboolean isStartedSynced, isEndedSynced;
+
+				if ( !attStart || attStart >= attemptEnd ) break;
+
+				/* Parse attempt id */
+				idStr[0] = '\0';
+				LS_XmlAttr( attStart, "id", idStr, sizeof( idStr ) );
+				attId = atoi( idStr );
+
+				/* Parse isStartedSynced / isEndedSynced */
+				syncStr[0] = '\0';
+				LS_XmlAttr( attStart, "isStartedSynced", syncStr, sizeof( syncStr ) );
+				isStartedSynced = ( Q_stricmp( syncStr, "True" ) == 0 ) ? qtrue : qfalse;
+				syncStr[0] = '\0';
+				LS_XmlAttr( attStart, "isEndedSynced", syncStr, sizeof( syncStr ) );
+				isEndedSynced = ( Q_stricmp( syncStr, "True" ) == 0 ) ? qtrue : qfalse;
+
+				/* Find end of the opening tag (first '>') to detect self-closing.
+				   <Attempt ... />  > self-closing (tagEnd[-1] == '/')
+				   <Attempt ... >   > has children, need </Attempt> */
+				tagEnd = strchr( attStart + 9, '>' ); /* 9 = strlen("<Attempt ") */
+				if ( !tagEnd || tagEnd >= attemptEnd ) break;
+
+				if ( tagEnd > attStart && *( tagEnd - 1 ) == '/' ) {
+					/* Self-closing attempt (no completion data) - store as reset */
+
+					/* Preserve this reset attempt for round-trip */
+					LS_ResetAttemptsEnsure( ls.numResetAttempts + 1 );
+					{
+						lsResetAttempt_t *ra = &ls.resetAttempts[ls.numResetAttempts];
+						ra->attemptId  = attId;
+						ra->difficulty = diffIdx + 1;
+						ra->mode       = mode;
+						ra->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
+						startStr[0] = '\0'; endStr[0] = '\0';
+						LS_XmlAttr( attStart, "started", startStr, sizeof( startStr ) );
+						LS_XmlAttr( attStart, "ended", endStr, sizeof( endStr ) );
+						ra->startTime = LS_ParseLssDate( startStr );
+						ra->endTime   = LS_ParseLssDate( endStr );
+						ra->isStartedSynced = isStartedSynced;
+						ra->isEndedSynced   = isEndedSynced;
+						ra->pauseTimeMs     = 0;
+						ls.numResetAttempts++;
+					}
+
+					pos = tagEnd + 1;
+					continue;
+				}
+
+				/* Non-self-closing: find </Attempt> */
+				attClose = strstr( tagEnd, "</Attempt>" );
+				if ( !attClose || attClose >= attemptEnd ) break;
+
+				/* This attempt has child elements - check for GameTime/RealTime
+				   (bounded search to stay within this Attempt block) */
+				igtStr[0] = '\0'; rgtStr[0] = '\0';
+				LS_XmlTagContentBounded( attStart, attClose, "GameTime", igtStr, sizeof( igtStr ) );
+				LS_XmlTagContentBounded( attStart, attClose, "RealTime", rgtStr, sizeof( rgtStr ) );
+
+				igtMs = LS_ParseLssTime( igtStr );
+				rgtMs = LS_ParseLssTime( rgtStr );
+
+				if ( igtMs > 0 || rgtMs > 0 ) {
+					/* Completed run - add to history */
+					completions++;
+
+					/* Track PB */
+					if ( igtMs > 0 && ( bestIGT == 0 || igtMs < bestIGT ) )
+						bestIGT = igtMs;
+					if ( rgtMs > 0 && ( bestRGT == 0 || rgtMs < bestRGT ) )
+						bestRGT = rgtMs;
+
+					/* Add to history array (dynamic, no fixed limit) */
+					LS_HistoryEnsure( ls.numHistoryRuns + 1 );
+					{
+						lsRunHistory_t *r = &ls.history[ls.numHistoryRuns];
+						memset( r, 0, sizeof( *r ) );
+						r->attemptId  = attId;
+						r->difficulty = diffIdx + 1;
+						r->mode       = mode;
+						r->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
+						r->totalIGTMs = igtMs;
+						r->totalRGTMs = rgtMs;
+
+						/* Parse dates */
+						startStr[0] = '\0'; endStr[0] = '\0';
+						LS_XmlAttr( attStart, "started", startStr, sizeof( startStr ) );
+						LS_XmlAttr( attStart, "ended", endStr, sizeof( endStr ) );
+						r->startTime = LS_ParseLssDate( startStr );
+						r->endTime   = LS_ParseLssDate( endStr );
+						r->isStartedSynced = isStartedSynced;
+						r->isEndedSynced   = isEndedSynced;
+
+						/* Split times will be filled from SegmentHistory below.
+						   For now, set numSplits to 0; we'll fix it after. */
+						r->numSplits = 0;
+						ls.numHistoryRuns++;
+					}
+				} else {
+					/* Non-self-closing attempt with no RT/GT.
+					   Check for <PauseTime> (paused but not completed runs). */
+					char ptStr[64];
+					int ptMs;
+					ptStr[0] = '\0';
+					LS_XmlTagContentBounded( attStart, attClose, "PauseTime", ptStr, sizeof( ptStr ) );
+					ptMs = LS_ParseLssTime( ptStr );
+
+					LS_ResetAttemptsEnsure( ls.numResetAttempts + 1 );
+					{
+						lsResetAttempt_t *ra = &ls.resetAttempts[ls.numResetAttempts];
+						ra->attemptId  = attId;
+						ra->difficulty = diffIdx + 1;
+						ra->mode       = mode;
+						ra->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
+						startStr[0] = '\0'; endStr[0] = '\0';
+						LS_XmlAttr( attStart, "started", startStr, sizeof( startStr ) );
+						LS_XmlAttr( attStart, "ended", endStr, sizeof( endStr ) );
+						ra->startTime = LS_ParseLssDate( startStr );
+						ra->endTime   = LS_ParseLssDate( endStr );
+						ra->isStartedSynced = isStartedSynced;
+						ra->isEndedSynced   = isEndedSynced;
+						ra->pauseTimeMs     = ptMs > 0 ? ptMs : 0;
+						ls.numResetAttempts++;
+					}
+				}
+
+				pos = attClose + 10; /* skip "</Attempt>" */
+			}
+		}
+
+		/* Store completions and PB */
+		switch ( mode ) {
+		case LS_MODE_FULLGAME:
+			ls.fgCompletions[diffIdx] = completions;
+			ls.fgPB[diffIdx]    = bestIGT;
+			ls.fgPBRgt[diffIdx] = bestRGT;
+			break;
+		case LS_MODE_MISSION:
+			ls.msCompletions[missionGroup][diffIdx] = completions;
+			ls.msPB[missionGroup][diffIdx]    = bestIGT;
+			ls.msPBRgt[missionGroup][diffIdx] = bestRGT;
+			break;
+		case LS_MODE_IL:
+			ls.splits[mapIdx].d[slot].totalCompletions = completions;
+			if ( bestIGT > 0 ) ls.splits[mapIdx].d[slot].bestTimeMs = bestIGT;
+			break;
+		}
+	}
+
+	/* Segments - read BestSegmentTime, SplitTimes PB, and SegmentHistory */
+	segPos = strstr( bigbuf, "<Segments>" );
+	if ( segPos ) {
+		const char *segsEnd = strstr( bigbuf, "</Segments>" );
+		int segN = 0;
+		int prevCumulativePB = 0;
+		int prevCumulativeRealPB = 0;
+		/* Track which history entries belong to this file for segment history */
+		int historyBaseIdx = ls.numHistoryRuns - 0; /* we'll compute actual base below */
+
+		/* Find the index of the first history entry we added from this file.
+		   We added them above; count backwards by completions. */
+		{
+			int completions = 0;
+			pos = strstr( bigbuf, "<AttemptHistory>" );
+			attemptEnd = strstr( bigbuf, "</AttemptHistory>" );
+			if ( pos && attemptEnd ) {
+				const char *scan = pos;
+				while ( scan < attemptEnd ) {
+					const char *att = strstr( scan, "</Attempt>" );
+					if ( !att || att >= attemptEnd ) break;
+					completions++;
+					scan = att + 10;
+				}
+			}
+			historyBaseIdx = ls.numHistoryRuns - completions;
+			if ( historyBaseIdx < 0 ) historyBaseIdx = 0;
+		}
+
+		pos = segPos + 10; /* skip "<Segments>" */
+		while ( pos && segsEnd && pos < segsEnd ) {
+			const char *segStart = strstr( pos, "<Segment>" );
+			const char *segEnd;
+			int splitIdx;
+
+			if ( !segStart || segStart >= segsEnd ) break;
+			segEnd = strstr( segStart, "</Segment>" );
+			if ( !segEnd ) break;
+
+			/* Find the map index for this segment */
+			splitIdx = -1;
+			{
+				int si;
+				int n = 0;
+				for ( si = firstIdx; si <= lastIdx; si++ ) {
+					if ( ls.splits[si].cutscene ) continue;
+					if ( n == segN ) { splitIdx = si; break; }
+					n++;
+				}
+			}
+
+			if ( splitIdx >= 0 ) {
+				/* BestSegmentTime */
+				{
+					const char *bstStart = strstr( segStart, "<BestSegmentTime>" );
+					if ( bstStart && bstStart < segEnd ) {
+						char gtBuf[64];
+						if ( LS_XmlTagContent( bstStart, "GameTime", gtBuf, sizeof( gtBuf ) ) ) {
+							int ms = LS_ParseLssTime( gtBuf );
+							if ( ms > 0 ) ls.splits[splitIdx].d[slot].bestTimeMs = ms;
+						}
+						if ( LS_XmlTagContent( bstStart, "RealTime", gtBuf, sizeof( gtBuf ) ) ) {
+							int ms = LS_ParseLssTime( gtBuf );
+							if ( ms > 0 ) ls.splits[splitIdx].d[slot].bestRealTimeMs = ms;
+						}
+					}
+				}
+
+				/* SplitTimes "Personal Best" - cumulative, de-cumulate for pbSegmentMs */
+				{
+					const char *stStart = strstr( segStart, "<SplitTime name=\"Personal Best\">" );
+					if ( stStart && stStart < segEnd ) {
+						char gtBuf[64];
+						if ( LS_XmlTagContent( stStart, "GameTime", gtBuf, sizeof( gtBuf ) ) ) {
+							int cumulMs = LS_ParseLssTime( gtBuf );
+							int segMs = cumulMs - prevCumulativePB;
+							if ( segMs > 0 ) ls.splits[splitIdx].d[slot].pbSegmentMs = segMs;
+							prevCumulativePB = cumulMs;
+						}
+						if ( LS_XmlTagContent( stStart, "RealTime", gtBuf, sizeof( gtBuf ) ) ) {
+							int cumulMs = LS_ParseLssTime( gtBuf );
+							int segMs = cumulMs - prevCumulativeRealPB;
+							if ( segMs > 0 ) ls.splits[splitIdx].d[slot].pbRealSegmentMs = segMs;
+							prevCumulativeRealPB = cumulMs;
+						}
+					}
+				}
+
+				/* SegmentHistory - populate split times in matching history entries */
+				{
+					const char *shStart = strstr( segStart, "<SegmentHistory>" );
+					const char *shEnd   = strstr( segStart, "</SegmentHistory>" );
+					if ( shStart && shEnd && shStart < segEnd ) {
+						const char *tp = shStart;
+
+						while ( tp < shEnd ) {
+							const char *timeStart = strstr( tp, "<Time " );
+							const char *timeEnd;
+							char idBuf[32], gtBuf[64];
+							int timeId, histIdx;
+							int gtMs = 0, rtMs = 0;
+							qboolean hasGT = qfalse, hasRT = qfalse;
+
+							if ( !timeStart || timeStart >= shEnd ) break;
+							timeEnd = strstr( timeStart, "</Time>" );
+							if ( !timeEnd || timeEnd >= shEnd ) break;
+
+							LS_XmlAttr( timeStart, "id", idBuf, sizeof( idBuf ) );
+							timeId = atoi( idBuf );
+
+							if ( LS_XmlTagContentBounded( timeStart, timeEnd, "GameTime", gtBuf, sizeof( gtBuf ) ) ) {
+								gtMs = LS_ParseLssTime( gtBuf );
+								hasGT = qtrue;
+							}
+							if ( LS_XmlTagContentBounded( timeStart, timeEnd, "RealTime", gtBuf, sizeof( gtBuf ) ) ) {
+								rtMs = LS_ParseLssTime( gtBuf );
+								hasRT = qtrue;
+							}
+
+							/* Find history entry whose attemptId matches the
+							   SegmentHistory Time id (which is the Attempt id
+							   from AttemptHistory, NOT a sequential index). */
+							histIdx = -1;
+							{
+								int k;
+								for ( k = historyBaseIdx; k < ls.numHistoryRuns; k++ ) {
+									if ( ls.history[k].attemptId == timeId ) {
+										histIdx = k;
+										break;
+									}
+								}
+							}
+
+							if ( histIdx >= 0 ) {
+								lsRunHistory_t *r = &ls.history[histIdx];
+								if ( segN < LS_MAX_MAPS ) {
+									if ( hasGT ) r->splitTimes[segN] = gtMs;
+									if ( hasRT ) r->splitRealTimes[segN] = rtMs;
+									if ( segN >= r->numSplits ) r->numSplits = segN + 1;
+								}
+							} else {
+								/* Orphan: id matches a reset attempt (partial run).
+								   Store for round-trip preservation. */
+								if ( ( hasGT && gtMs > 0 ) || ( hasRT && rtMs > 0 ) ) {
+									LS_OrphanSegTimesEnsure( ls.numOrphanSegTimes + 1 );
+									{
+										lsOrphanSegTime_t *o = &ls.orphanSegTimes[ls.numOrphanSegTimes];
+										o->attemptId  = timeId;
+										o->segIdx     = segN;
+										o->timeMs     = hasGT ? gtMs : 0;
+										o->realTimeMs = hasRT ? rtMs : 0;
+										o->mode       = mode;
+										o->diffIdx    = diffIdx;
+										o->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
+										ls.numOrphanSegTimes++;
+									}
+								}
+							}
+							tp = timeEnd + 7;
+						}
+					}
+				}
+			}
+
+			segN++;
+			pos = segEnd + 10; /* skip "</Segment>" */
+		}
+	}
+
+	Z_Free( bigbuf );
+}
+
+/* =====================================================================
+   LS_SaveState / LS_LoadState - current run transient state
+   ===================================================================== */
+
+static void LS_SaveState( void ) {
+	fileHandle_t f;
+	int i;
 	char buf[512];
 	int rgtElapsed;
 
-	FS_FOpenFileByMode( LS_SAVE_FILE, &f, FS_WRITE );
-	if ( !f ) {
-		Com_Printf( "^1LiveSplit: Could not save stats\n" );
-		return;
-	}
+	FS_FOpenFileByMode( LS_STATE_FILE, &f, FS_WRITE );
+	if ( !f ) return;
 
 	if ( ls.active && !ls.runFinished ) {
 		rgtElapsed = Sys_Milliseconds() - ls.runStartRealMs;
@@ -1319,308 +3276,188 @@ static void LS_Save( void ) {
 		rgtElapsed = ls.runSavedRealMs;
 	}
 
-	Com_sprintf( buf, sizeof( buf ), "LIVESPLIT_V10\n" );
-	FS_Write( buf, strlen( buf ), f );
+	LS_WriteStr( f, "LSSTATE_V1\n" );
 
-	/* RUN line: active, finished, igt, rgt, mapIndex, difficulty, mode, mission */
 	Com_sprintf( buf, sizeof( buf ), "RUN %d %d %d %d %d %d %d %d\n",
 		(int)ls.active, (int)ls.runFinished,
 		ls.runTotalIGTMs, rgtElapsed,
 		ls.currentMapIndex,
 		ls.currentDifficulty, ls.runMode, ls.runMission );
-	FS_Write( buf, strlen( buf ), f );
+	LS_WriteStr( f, buf );
 
-	/* Per-difficulty fullgame stats */
-	for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-		Com_sprintf( buf, sizeof( buf ), "FGDIFF %d %d %d %d\n",
-			di + 1,
-			ls.fgAttempts[di],
-			ls.fgCompletions[di],
-			ls.fgPB[di] );
-		FS_Write( buf, strlen( buf ), f );
-	}
-
-	/* Per-mission-group per-difficulty stats */
-	for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
-		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-			Com_sprintf( buf, sizeof( buf ), "MSDIFF %d %d %d %d %d\n",
-				gi + 1, di + 1,
-				ls.msAttempts[gi][di],
-				ls.msCompletions[gi][di],
-				ls.msPB[gi][di] );
-			FS_Write( buf, strlen( buf ), f );
-		}
-	}
-
-	/* V9: Per-difficulty fullgame PB realtime */
-	for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-		Com_sprintf( buf, sizeof( buf ), "FGRGT %d %d\n",
-			di + 1, ls.fgPBRgt[di] );
-		FS_Write( buf, strlen( buf ), f );
-	}
-
-	/* V9: Per-mission-group per-difficulty PB realtime */
-	for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
-		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-			Com_sprintf( buf, sizeof( buf ), "MSRGT %d %d %d\n",
-				gi + 1, di + 1, ls.msPBRgt[gi][di] );
-			FS_Write( buf, strlen( buf ), f );
-		}
-	}
-
-	/* V9: Anti-cheat counters */
 	Com_sprintf( buf, sizeof( buf ), "CHEATS %d %d %d\n",
 		ls.totalPauses, ls.totalUndos, ls.totalSkips );
-	FS_Write( buf, strlen( buf ), f );
+	LS_WriteStr( f, buf );
 
-	/* Per-mode per-difficulty per-map golds/PB segments */
-	{
-		int mi;
-		for ( mi = 0; mi < LS_NUM_MODES; mi++ ) {
-			for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-				int slot = mi * LS_MAX_DIFFICULTIES + di;
-				for ( i = 0; i < ls.numMaps; i++ ) {
-					if ( ls.splits[i].cutscene ) continue;
-					Com_sprintf( buf, sizeof( buf ), "MMAP %d %d %s %d %d %d %d\n",
-						mi, di + 1,
-						ls.splits[i].mapname,
-						ls.splits[i].d[slot].bestTimeMs,
-						ls.splits[i].d[slot].pbSegmentMs,
-						ls.splits[i].d[slot].totalAttempts,
-						ls.splits[i].d[slot].totalCompletions );
-					FS_Write( buf, strlen( buf ), f );
-				}
-			}
-		}
-	}
-
-	/* Current run map times */
 	for ( i = 0; i < ls.numMaps; i++ ) {
 		Com_sprintf( buf, sizeof( buf ), "CMAP %s %d %d\n",
 			ls.splits[i].mapname,
 			ls.splits[i].currentTimeMs,
 			(int)ls.splits[i].splitDone );
-		FS_Write( buf, strlen( buf ), f );
+		LS_WriteStr( f, buf );
 	}
 
 	FS_FCloseFile( f );
 }
 
-static void LS_SaveHistory( void ) {
-	fileHandle_t f;
-	int i, j;
-	char buf[4096];
-
-	FS_FOpenFileByMode( LS_HISTORY_FILE, &f, FS_WRITE );
-	if ( !f ) return;
-
-	Com_sprintf( buf, sizeof( buf ), "LSHISTORY_V2\n" );
-	FS_Write( buf, strlen( buf ), f );
-
-	Com_sprintf( buf, sizeof( buf ), "COUNT %d\n", ls.numHistoryRuns );
-	FS_Write( buf, strlen( buf ), f );
-
-	for ( i = 0; i < ls.numHistoryRuns; i++ ) {
-		lsRunHistory_t *r = &ls.history[i];
-		char tmp[32];
-
-		Com_sprintf( buf, sizeof( buf ), "HRUN %d %d %d %d %d %d",
-			r->difficulty, r->mode, r->missionNum,
-			r->totalIGTMs, r->totalRGTMs, r->numSplits );
-		for ( j = 0; j < r->numSplits && j < LS_MAX_MAPS; j++ ) {
-			Com_sprintf( tmp, sizeof( tmp ), " %d", r->splitTimes[j] );
-			Q_strcat( buf, sizeof( buf ), tmp );
-		}
-		Q_strcat( buf, sizeof( buf ), "\n" );
-		FS_Write( buf, strlen( buf ), f );
-	}
-
-	FS_FCloseFile( f );
-}
-
-static void LS_LoadHistory( void ) {
-	fileHandle_t f;
+static void LS_LoadState( void ) {
+	fileHandle_t fh;
 	int fileLen;
 	char *bigbuf, *text, *token;
-	qboolean isV2 = qfalse;
 
-	fileLen = FS_FOpenFileByMode( LS_HISTORY_FILE, &f, FS_READ );
-	if ( fileLen <= 0 ) return;
+	fileLen = FS_FOpenFileByMode( LS_STATE_FILE, &fh, FS_READ );
+	if ( fileLen <= 0 ) {
+		if ( fh ) FS_FCloseFile( fh );
+		return;
+	}
 
-	bigbuf = Z_Malloc( fileLen + 1 );
-	FS_Read( bigbuf, fileLen, f );
+	bigbuf = (char *)Z_Malloc( fileLen + 1 );
+	FS_Read( bigbuf, fileLen, fh );
 	bigbuf[fileLen] = '\0';
-	FS_FCloseFile( f );
+	FS_FCloseFile( fh );
 
 	text = bigbuf;
 	token = COM_Parse( &text );
 
-	if ( !Q_stricmp( token, "LSHISTORY_V2" ) ) {
-		isV2 = qtrue;
-	} else {
-		Com_Printf( "^1LiveSplit: Unknown history format (expected LSHISTORY_V2)\n" );
+	if ( Q_stricmp( token, "LSSTATE_V1" ) ) {
 		Z_Free( bigbuf );
 		return;
 	}
 
-	/* COUNT */
-	token = COM_Parse( &text ); /* "COUNT" */
-	token = COM_Parse( &text );
-	ls.numHistoryRuns = atoi( token );
-	if ( ls.numHistoryRuns > LS_MAX_HISTORY_RUNS ) ls.numHistoryRuns = LS_MAX_HISTORY_RUNS;
+	while ( 1 ) {
+		token = COM_Parse( &text );
+		if ( !token[0] ) break;
 
-	{
-		int i, j;
-		for ( i = 0; i < ls.numHistoryRuns; i++ ) {
-			lsRunHistory_t *r = &ls.history[i];
-			token = COM_Parse( &text ); /* "HRUN" */
-			if ( Q_stricmp( token, "HRUN" ) ) break;
-			token = COM_Parse( &text ); r->difficulty = atoi( token );
-			token = COM_Parse( &text ); r->mode       = atoi( token );
-			token = COM_Parse( &text ); r->missionNum = atoi( token );
-			token = COM_Parse( &text ); r->totalIGTMs = atoi( token );
-			if ( isV2 ) {
-				token = COM_Parse( &text ); r->totalRGTMs = atoi( token );
-			} else {
-				r->totalRGTMs = 0;
-			}
-			token = COM_Parse( &text ); r->numSplits  = atoi( token );
-			if ( r->numSplits > LS_MAX_MAPS ) r->numSplits = LS_MAX_MAPS;
-			for ( j = 0; j < r->numSplits; j++ ) {
-				token = COM_Parse( &text );
-				r->splitTimes[j] = atoi( token );
-			}
-		}
-	}
-
-	Z_Free( bigbuf );
-	Com_Printf( "^2LiveSplit: %d history runs loaded%s\n", ls.numHistoryRuns, isV2 ? " (V2)" : "" );
-}
-
-static void LS_Load( void ) {
-	fileHandle_t f;
-	int fileLen;
-	char *bigbuf, *text, *token;
-
-	fileLen = FS_FOpenFileByMode( LS_SAVE_FILE, &f, FS_READ );
-	if ( fileLen <= 0 ) return;
-
-	bigbuf = Z_Malloc( fileLen + 1 );
-	FS_Read( bigbuf, fileLen, f );
-	bigbuf[fileLen] = '\0';
-	FS_FCloseFile( f );
-
-	text = bigbuf;
-	token = COM_Parse( &text );
-
-	if ( Q_stricmp( token, "LIVESPLIT_V10" ) ) {
-		Com_Printf( "^1LiveSplit: Unknown save format (expected LIVESPLIT_V10)\n" );
-		Z_Free( bigbuf );
-		return;
-	}
-
-	{
-
-		while ( 1 ) {
+		if ( !Q_stricmp( token, "RUN" ) ) {
+			int savedRgt, loadedIdx;
+			token = COM_Parse( &text ); ls.active             = (qboolean)atoi( token );
+			token = COM_Parse( &text ); ls.runFinished         = (qboolean)atoi( token );
+			token = COM_Parse( &text ); ls.runTotalIGTMs       = atoi( token );
+			token = COM_Parse( &text ); savedRgt               = atoi( token );
+			token = COM_Parse( &text ); loadedIdx              = atoi( token );
+			token = COM_Parse( &text ); ls.currentDifficulty   = atoi( token );
+			token = COM_Parse( &text ); ls.runMode             = atoi( token );
+			token = COM_Parse( &text ); ls.runMission          = atoi( token );
+			if ( loadedIdx >= ls.numMaps ) loadedIdx = ls.numMaps - 1;
+			if ( loadedIdx < -1 ) loadedIdx = -1;
+			ls.currentMapIndex = loadedIdx;
+			ls.runSavedRealMs = savedRgt;
+			if ( ls.active && !ls.runFinished )
+				ls.runStartRealMs = Sys_Milliseconds() - savedRgt;
+		} else if ( !Q_stricmp( token, "CHEATS" ) ) {
+			token = COM_Parse( &text ); ls.totalPauses = atoi( token );
+			token = COM_Parse( &text ); ls.totalUndos  = atoi( token );
+			token = COM_Parse( &text ); ls.totalSkips  = atoi( token );
+		} else if ( !Q_stricmp( token, "CMAP" ) ) {
+			int idx;
 			token = COM_Parse( &text );
-			if ( !token[0] ) break;
-
-			if ( !Q_stricmp( token, "RUN" ) ) {
-				int savedRgt, loadedIdx;
-				token = COM_Parse( &text ); ls.active             = (qboolean)atoi( token );
-				token = COM_Parse( &text ); ls.runFinished         = (qboolean)atoi( token );
-				token = COM_Parse( &text ); ls.runTotalIGTMs       = atoi( token );
-				token = COM_Parse( &text ); savedRgt               = atoi( token );
-				token = COM_Parse( &text ); loadedIdx              = atoi( token );
-				token = COM_Parse( &text ); ls.currentDifficulty   = atoi( token );
-				token = COM_Parse( &text ); ls.runMode             = atoi( token );
-				token = COM_Parse( &text ); ls.runMission          = atoi( token );
-				/* Validate map index bounds */
-				if ( loadedIdx >= ls.numMaps ) loadedIdx = ls.numMaps - 1;
-				if ( loadedIdx < -1 ) loadedIdx = -1;
-				ls.currentMapIndex = loadedIdx;
-				ls.runSavedRealMs = savedRgt;
-				if ( ls.active && !ls.runFinished )
-					ls.runStartRealMs = Sys_Milliseconds() - savedRgt;
-			} else if ( !Q_stricmp( token, "FGDIFF" ) ) {
-				int di;
-				token = COM_Parse( &text ); di = atoi( token ) - 1;
-				if ( di >= 0 && di < LS_MAX_DIFFICULTIES ) {
-					token = COM_Parse( &text ); ls.fgAttempts[di]    = atoi( token );
-					token = COM_Parse( &text ); ls.fgCompletions[di] = atoi( token );
-					token = COM_Parse( &text ); ls.fgPB[di]          = atoi( token );
-				} else {
-					COM_Parse( &text ); COM_Parse( &text ); COM_Parse( &text );
-				}
-			} else if ( !Q_stricmp( token, "FGRGT" ) ) {
-				int di;
-				token = COM_Parse( &text ); di = atoi( token ) - 1;
-				if ( di >= 0 && di < LS_MAX_DIFFICULTIES ) {
-					token = COM_Parse( &text ); ls.fgPBRgt[di] = atoi( token );
-				} else {
-					COM_Parse( &text );
-				}
-			} else if ( !Q_stricmp( token, "MSDIFF" ) ) {
-				int gi, di;
-				token = COM_Parse( &text ); gi = atoi( token ) - 1;
-				token = COM_Parse( &text ); di = atoi( token ) - 1;
-				if ( gi >= 0 && gi < LS_NUM_MISSION_GROUPS &&
-					 di >= 0 && di < LS_MAX_DIFFICULTIES ) {
-					token = COM_Parse( &text ); ls.msAttempts[gi][di]    = atoi( token );
-					token = COM_Parse( &text ); ls.msCompletions[gi][di] = atoi( token );
-					token = COM_Parse( &text ); ls.msPB[gi][di]          = atoi( token );
-				} else {
-					COM_Parse( &text ); COM_Parse( &text ); COM_Parse( &text );
-				}
-			} else if ( !Q_stricmp( token, "MSRGT" ) ) {
-				int gi, di;
-				token = COM_Parse( &text ); gi = atoi( token ) - 1;
-				token = COM_Parse( &text ); di = atoi( token ) - 1;
-				if ( gi >= 0 && gi < LS_NUM_MISSION_GROUPS &&
-					 di >= 0 && di < LS_MAX_DIFFICULTIES ) {
-					token = COM_Parse( &text ); ls.msPBRgt[gi][di] = atoi( token );
-				} else {
-					COM_Parse( &text );
-				}
-			} else if ( !Q_stricmp( token, "CHEATS" ) ) {
-				token = COM_Parse( &text ); ls.totalPauses = atoi( token );
-				token = COM_Parse( &text ); ls.totalUndos  = atoi( token );
-				token = COM_Parse( &text ); ls.totalSkips  = atoi( token );
-			} else if ( !Q_stricmp( token, "MMAP" ) ) {
-				/* V10 mode-specific per-difficulty map data */
-				int mi, di, idx, slot;
-				token = COM_Parse( &text ); mi = atoi( token );
-				token = COM_Parse( &text ); di = atoi( token ) - 1;
-				token = COM_Parse( &text );
-				idx = LS_FindMapIndex( token );
-				if ( mi >= 0 && mi < LS_NUM_MODES &&
-					 di >= 0 && di < LS_MAX_DIFFICULTIES && idx >= 0 ) {
-					slot = mi * LS_MAX_DIFFICULTIES + di;
-					token = COM_Parse( &text ); ls.splits[idx].d[slot].bestTimeMs       = atoi( token );
-					token = COM_Parse( &text ); ls.splits[idx].d[slot].pbSegmentMs      = atoi( token );
-					token = COM_Parse( &text ); ls.splits[idx].d[slot].totalAttempts     = atoi( token );
-					token = COM_Parse( &text ); ls.splits[idx].d[slot].totalCompletions  = atoi( token );
-				} else {
-					COM_Parse( &text ); COM_Parse( &text );
-					COM_Parse( &text ); COM_Parse( &text );
-				}
-			} else if ( !Q_stricmp( token, "CMAP" ) ) {
-				int idx;
-				token = COM_Parse( &text );
-				idx = LS_FindMapIndex( token );
-				if ( idx >= 0 ) {
-					token = COM_Parse( &text ); ls.splits[idx].currentTimeMs = atoi( token );
-					token = COM_Parse( &text ); ls.splits[idx].splitDone     = (qboolean)atoi( token );
-				} else {
-					COM_Parse( &text ); COM_Parse( &text );
-				}
+			idx = LS_FindMapIndex( token );
+			if ( idx >= 0 ) {
+				token = COM_Parse( &text ); ls.splits[idx].currentTimeMs = atoi( token );
+				token = COM_Parse( &text ); ls.splits[idx].splitDone     = (qboolean)atoi( token );
+			} else {
+				COM_Parse( &text ); COM_Parse( &text );
 			}
 		}
-		LS_UpdateCurVisRow();
-		Com_Printf( "^2LiveSplit: Stats loaded (V10)\n" );
-		Z_Free( bigbuf );
-		return;
 	}
+
+	LS_UpdateCurVisRow();
+	Z_Free( bigbuf );
+}
+
+/* =====================================================================
+   LS_Save / LS_Load - main save/load entry points
+   ===================================================================== */
+
+/* Save current category's .lss file + state */
+static void LS_Save( void ) {
+	int di = LS_DiffIdx( ls.currentDifficulty );
+	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+
+	/* Save the .lss for the current category */
+	switch ( ls.runMode ) {
+	case LS_MODE_FULLGAME:
+		LS_WriteLss( LS_MODE_FULLGAME, di, -1, -1, p100 );
+		break;
+	case LS_MODE_MISSION:
+		LS_WriteLss( LS_MODE_MISSION, di, ls.runMission - 1, -1, p100 );
+		break;
+	case LS_MODE_IL:
+		LS_WriteLss( LS_MODE_IL, di, -1, ls.modeFirstIdx, p100 );
+		break;
+	}
+
+	/* Always save transient state */
+	LS_SaveState();
+}
+
+/* Save ALL categories that have data (for reset-bests, shutdown, etc.) */
+static void LS_SaveAll( void ) {
+	int di, gi, mi;
+	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+
+	/* Fullgame: 3 difficulties */
+	for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+		LS_WriteLss( LS_MODE_FULLGAME, di, -1, -1, p100 );
+	}
+
+	/* Mission: 5 groups x 3 difficulties */
+	for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
+		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+			LS_WriteLss( LS_MODE_MISSION, di, gi, -1, p100 );
+		}
+	}
+
+	/* IL: each non-cutscene map x 3 difficulties */
+	for ( mi = 0; mi < ls.numMaps; mi++ ) {
+		if ( ls.splits[mi].cutscene ) continue;
+		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+			LS_WriteLss( LS_MODE_IL, di, -1, mi, p100 );
+		}
+	}
+
+	LS_SaveState();
+}
+
+/* LS_SaveHistory kept as wrapper for backward compatibility with callers */
+static void LS_SaveHistory( void ) {
+	/* History is now embedded in .lss files - LS_Save handles it */
+}
+
+/* Load all .lss files + state */
+static void LS_Load( void ) {
+	int di, gi, mi;
+	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+
+	/* Load fullgame .lss files */
+	for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+		LS_ReadLss( LS_MODE_FULLGAME, di, -1, -1, p100 );
+	}
+
+	/* Load mission .lss files */
+	for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
+		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+			LS_ReadLss( LS_MODE_MISSION, di, gi, -1, p100 );
+		}
+	}
+
+	/* Load IL .lss files */
+	for ( mi = 0; mi < ls.numMaps; mi++ ) {
+		if ( ls.splits[mi].cutscene ) continue;
+		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+			LS_ReadLss( LS_MODE_IL, di, -1, mi, p100 );
+		}
+	}
+
+	/* Load transient state */
+	LS_LoadState();
+
+	Com_Printf( "^2LiveSplit: .lss files loaded (%d history runs)\n", ls.numHistoryRuns );
+}
+
+/* LS_LoadHistory kept as no-op for backward compatibility */
+static void LS_LoadHistory( void ) {
+	/* History is now loaded from .lss files in LS_Load */
 }
 
 /* =====================================================================
@@ -1714,6 +3551,7 @@ static void LS_SetupMode( int mode, int mission ) {
 
 static void LS_BuildSplitTable( void ) {
 	int i;
+	LS_HistoryFree();  /* free dynamic history before zeroing struct */
 	memset( &ls, 0, sizeof( ls ) );
 
 	for ( i = 0; ls_mapDefs[i].name && i < LS_MAX_MAPS; i++ ) {
@@ -1784,12 +3622,40 @@ static void LS_AutoRecordStop( void ) {
 	Com_Printf( "^2LiveSplit: Auto-record stopped\n" );
 }
 
-static void LS_DoResetSave( void ) {
+static void LS_DoResetSaveEx( qboolean fromExternal ) {
 	int i;
 	Com_Printf( "^2LiveSplit: Run reset (saving golds)\n" );
 
+	/* Record as a reset attempt if a run was active but not finished. */
+	if ( ls.active && !ls.runFinished ) {
+		int di = LS_CurDiffIdx();
+		LS_ResetAttemptsEnsure( ls.numResetAttempts + 1 );
+		{
+			lsResetAttempt_t *ra = &ls.resetAttempts[ls.numResetAttempts];
+			ra->mode       = ls.runMode;
+			ra->difficulty = ls.currentDifficulty;
+			ra->missionNum = ls.runMission;
+			ra->endTime    = time( NULL );
+			ra->startTime  = ra->endTime - ( ( Sys_Milliseconds() - ls.runStartRealMs ) / 1000 );
+			ra->attemptId  = LS_MaxAttemptId( ls.runMode, di, ls.runMission ) + 1;
+			ra->isStartedSynced = qtrue;
+			ra->isEndedSynced   = qtrue;
+			ra->pauseTimeMs     = 0;
+			ls.numResetAttempts++;
+		}
+	}
+
 	LS_AutoRecordStop();
-	LS_ExtSend( "reset" );
+
+	/* When the reset was triggered by external LS detection (got
+	   "NotRunning" from polling), external LS is already reset.
+	   Sending "reset" back would be redundant and could interfere
+	   with the subsequent starttimer sent by auto-start. */
+	if ( !fromExternal ) {
+		LS_ExtSend( "reset" );
+	}
+	lsext_timerStarted = qfalse;
+	lsext_recvLen = 0;  /* flush stale recv data */
 	ls_resetPending = 0;
 
 	ls.active         = qfalse;
@@ -1808,12 +3674,56 @@ static void LS_DoResetSave( void ) {
 	ls.cheatsUsed     = qfalse;
 	ls.settingsModified = qfalse;
 	ls.settingsModCount = 0;
+	memset( ls.settingsDetected, 0, sizeof( ls.settingsDetected ) );
 	ls.liveSecretsFound = 0;
 	ls.liveSecretsTotal = 0;
 	ls.liveTreasureFound = 0;
 	ls.liveTreasureTotal = 0;
 	ls.baseSecretsFound  = 0;
 	ls.baseTreasureFound = 0;
+
+	/* Save PB segments for completed splits on reset (incomplete run).
+	   PB represents a SINGLE CONSISTENT RUN - all segments from the
+	   same attempt are saved together (wholesale), NOT cherry-picked
+	   per-segment like golds.  Compare the SUM of completed segments
+	   from this run vs the SUM of existing PB segments for the same
+	   splits.  If this run's total is better (or no PB exists yet for
+	   any of them), replace ALL PB segments with this run's values.
+	   Golds (bestTimeMs) are already handled per-segment in
+	   LS_CompleteSplit and are not touched here. */
+	{
+		int di = LS_CurDiffIdx();
+		int sumCurrent = 0, sumPB = 0;
+		int numCompleted = 0;
+		qboolean anyMissing = qfalse; /* true if any completed segment has no PB yet */
+
+		/* First pass: compute sums */
+		for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+			if ( ls.splits[i].cutscene ) continue;
+			if ( !ls.splits[i].splitDone ) continue;
+			if ( ls.splits[i].currentTimeMs <= 0 ) continue;
+			numCompleted++;
+			sumCurrent += ls.splits[i].currentTimeMs;
+			if ( ls.splits[i].d[di].pbSegmentMs > 0 ) {
+				sumPB += ls.splits[i].d[di].pbSegmentMs;
+			} else {
+				anyMissing = qtrue;
+			}
+		}
+
+		/* Second pass: wholesale save if total is better (or first PB) */
+		if ( numCompleted > 0 && ( anyMissing || sumCurrent < sumPB ) ) {
+			for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+				if ( ls.splits[i].cutscene ) continue;
+				if ( !ls.splits[i].splitDone ) continue;
+				if ( ls.splits[i].currentTimeMs <= 0 ) continue;
+				ls.splits[i].d[di].pbSegmentMs = ls.splits[i].currentTimeMs;
+			}
+			Com_Printf( "^2LiveSplit: PB segments saved (sum %d < prev %d)\n",
+				sumCurrent, sumPB );
+		}
+	}
+
 	for ( i = 0; i < ls.numMaps; i++ ) {
 		ls.splits[i].currentTimeMs = 0;
 		ls.splits[i].splitDone     = qfalse;
@@ -1828,13 +3738,24 @@ static void LS_DoResetSave( void ) {
 	ls.curVisRow        = -1;
 
 	Cvar_Set( "ls_ghost_visible", "0" );
-	/* Clear prevMapname so auto-start fires reliably even when
-	   the brief disconnect during map reload is too fast for
-	   LS_Frame to see (same-map IL retry). */
-	ls.prevMapname[0] = '\0';
+	/* Keep prevMapname = current map so auto-start only fires on an
+	   actual level load / changelevel, not while still on the same map.
+	   The brief disconnect during map reload will clear prevMapname
+	   via the !isConnected early-out in LS_Frame. */
+	if ( cls.state >= CA_CONNECTED && cl.mapname[0] ) {
+		char tmp[LS_MAX_MAPNAME];
+		LS_ExtractMapname( cl.mapname, tmp, sizeof( tmp ) );
+		Q_strncpyz( ls.prevMapname, tmp, LS_MAX_MAPNAME );
+	} else {
+		ls.prevMapname[0] = '\0';
+	}
 	if ( ls_modeCvar ) LS_SetupMode( ls_modeCvar->integer, ls_missionCvar ? ls_missionCvar->integer : 1 );
 
 	LS_Save();
+}
+
+static void LS_DoResetSave( void ) {
+	LS_DoResetSaveEx( qfalse );
 }
 
 static void LS_DoResetNoSave( void ) {
@@ -1856,6 +3777,8 @@ static void LS_DoResetNoSave( void ) {
 		}
 	}
 	LS_ExtSend( "reset" );
+	lsext_timerStarted = qfalse;
+	lsext_recvLen = 0;  /* flush stale recv data */
 	ls_resetPending = 0;
 
 	di = LS_CurDiffIdx();
@@ -1894,43 +3817,66 @@ static void LS_DoResetNoSave( void ) {
 	ls.cheatsUsed     = qfalse;
 	ls.settingsModified = qfalse;
 	ls.settingsModCount = 0;
+	memset( ls.settingsDetected, 0, sizeof( ls.settingsDetected ) );
 	ls.baseSecretsFound  = 0;
 	ls.baseTreasureFound = 0;
 
 	ls.currentMapIndex  = -1;
 	ls.curVisRow        = -1;
 
-	/* Clear prevMapname so auto-start fires reliably even when
-	   the brief disconnect during map reload is too fast for
-	   LS_Frame to see (same-map IL retry). */
-	ls.prevMapname[0] = '\0';
+	/* Keep prevMapname = current map so auto-start only fires on an
+	   actual level load, not while still on the same map. */
+	if ( cls.state >= CA_CONNECTED && cl.mapname[0] ) {
+		char tmp[LS_MAX_MAPNAME];
+		LS_ExtractMapname( cl.mapname, tmp, sizeof( tmp ) );
+		Q_strncpyz( ls.prevMapname, tmp, LS_MAX_MAPNAME );
+	} else {
+		ls.prevMapname[0] = '\0';
+	}
 	if ( ls_modeCvar ) LS_SetupMode( ls_modeCvar->integer, ls_missionCvar ? ls_missionCvar->integer : 1 );
 
 	LS_Save();
-	LS_SaveHistory();
 }
 
 static void LS_Reset_f( void ) {
-	/* If run has unsaved golds or new PB, show confirmation popup */
 	if ( ls.active || ls.runFinished ) {
-		if ( LS_HasUnsavedProgress() ) {
+		/* Finished run with new PB -> prompt */
+		if ( ls.runFinished && LS_HasNewPB() ) {
 			ls_resetPending = 1;
-			Com_Printf( "^3LiveSplit: Run has unsaved golds/PB. Press Y to save, N to discard.\n" );
+			Com_Printf( "^3LiveSplit: New PB achieved! Press Y to save, N to discard.\n" );
+			return;
+		}
+		/* Mid-run reset with new golds -> prompt with count */
+		if ( !ls.runFinished && LS_HasNewGolds() ) {
+			int gc = LS_CountNewGolds();
+			ls_resetPending = 1;
+			Com_Printf( "^3LiveSplit: New golds from %d stage%s. Press Y to save, N to discard.\n",
+				gc, gc > 1 ? "s" : "" );
 			return;
 		}
 	}
+	/* Everything else: save silently (history, golds, etc.) */
 	LS_DoResetSave();
 }
 
 static void LS_ResetNoSave_f( void ) {
-	/* If run has unsaved golds or new PB, show confirmation popup */
 	if ( ls.active || ls.runFinished ) {
-		if ( LS_HasUnsavedProgress() ) {
+		/* Finished run with new PB -> prompt */
+		if ( ls.runFinished && LS_HasNewPB() ) {
 			ls_resetPending = 1;
-			Com_Printf( "^3LiveSplit: Run has unsaved golds/PB. Press Y to save, N to discard.\n" );
+			Com_Printf( "^3LiveSplit: New PB achieved! Press Y to save, N to discard.\n" );
+			return;
+		}
+		/* Mid-run reset with new golds -> prompt with count */
+		if ( !ls.runFinished && LS_HasNewGolds() ) {
+			int gc = LS_CountNewGolds();
+			ls_resetPending = 1;
+			Com_Printf( "^3LiveSplit: New golds from %d stage%s. Press Y to save, N to discard.\n",
+				gc, gc > 1 ? "s" : "" );
 			return;
 		}
 	}
+	/* Everything else: reset silently (no save) */
 	LS_DoResetNoSave();
 }
 
@@ -1976,8 +3922,8 @@ static void LS_Start_f( void ) {
 		return;
 	}
 
-	/* If finished, do a quick reset first */
-	if ( ls.runFinished ) {
+	/* Full reset before starting - covers both "finished" and "cold" states */
+	{
 		int k;
 		ls.active          = qfalse;
 		ls.runFinished     = qfalse;
@@ -1993,6 +3939,13 @@ static void LS_Start_f( void ) {
 		ls.cheatsUsed      = qfalse;
 		ls.settingsModified = qfalse;
 		ls.settingsModCount = 0;
+		ls.totalPauses     = 0;
+		ls.totalUndos      = 0;
+		ls.totalSkips      = 0;
+		ls.baseSecretsFound  = 0;
+		ls.baseTreasureFound = 0;
+		ls.mapLoadFreeze   = qfalse;
+		Cvar_Set( "ls_loading", "0" );
 		for ( k = 0; k < ls.numMaps; k++ ) {
 			ls.splits[k].currentTimeMs = 0;
 			ls.splits[k].splitDone     = qfalse;
@@ -2014,8 +3967,6 @@ static void LS_Start_f( void ) {
 		LS_ExtractMapname( cl.mapname, currentMap, sizeof( currentMap ) );
 		newIdx = LS_FindMapIndex( currentMap );
 
-		/* IL mode: do NOT change IL target - only ls_map cvar changes it */
-
 		ls.active            = qtrue;
 		ls_aslState.runStartCount++;
 		ls_aslState.splitSeqNum = 0;
@@ -2026,10 +3977,22 @@ static void LS_Start_f( void ) {
 		di = LS_CurDiffIdx();
 		LS_SavePreRunPBs();
 
-		if ( newIdx >= 0 ) {
-			ls.currentMapIndex = newIdx;
-			LS_UpdateCurVisRow();
+		if ( ls.runMode == LS_MODE_IL ) {
+			/* IL mode: start on the current map */
+			if ( newIdx >= 0 ) {
+				ls.currentMapIndex = newIdx;
+			}
+		} else {
+			/* Fullgame / Mission: start on the current map if it's
+			   within the active set (player already loaded past
+			   cutscenes), otherwise default to first split. */
+			if ( newIdx >= 0 && LS_InActiveSet( newIdx ) ) {
+				ls.currentMapIndex = newIdx;
+			} else {
+				ls.currentMapIndex = ls.modeFirstIdx;
+			}
 		}
+		LS_UpdateCurVisRow();
 
 		/* Increment attempt counter */
 		if ( ls.runMode == LS_MODE_IL && newIdx >= 0 ) {
@@ -2050,7 +4013,16 @@ static void LS_Start_f( void ) {
 		LS_ExtSend( "initgametime" );
 		LS_ExtSend( "starttimer" );
 		LS_ExtSend( "pausegametime" );
+		lsext_timerStarted = qtrue;
 		lsext_lastPollMs = Sys_Milliseconds() + LSEXT_POLL_GRACE;
+
+		/* Immediate validation on manual start */
+		ls.settingsCheckInterval = 0;
+		LS_QuickCheckSettings();
+		if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+			ls.cheatsUsed = qtrue;
+			LS_TriggerAlert( "CHEATS ACTIVATED", 1.0f, 0.2f, 0.2f );
+		}
 	} else {
 		/* Not connected - just arm for next map load */
 		ls.prevMapname[0] = '\0';
@@ -2084,11 +4056,17 @@ static void LS_BackupFile( const char *filename ) {
 	time( &rawTime );
 	ti = localtime( &rawTime );
 
-	Com_sprintf( backupName, sizeof( backupName ),
-		"%.*s_backup_%04d%02d%02d_%02d%02d%02d.dat",
-		(int)( strlen( filename ) - 4 ), filename,   /* strip .dat */
-		ti->tm_year + 1900, ti->tm_mon + 1, ti->tm_mday,
-		ti->tm_hour, ti->tm_min, ti->tm_sec );
+	/* Strip extension and append backup suffix */
+	{
+		int baseLen = (int)strlen( filename );
+		const char *ext = ".lss";
+		if ( baseLen > 4 && !Q_stricmp( filename + baseLen - 4, ".dat" ) ) ext = ".dat";
+		Com_sprintf( backupName, sizeof( backupName ),
+			"%.*s_backup_%04d%02d%02d_%02d%02d%02d%s",
+			baseLen - 4, filename,
+			ti->tm_year + 1900, ti->tm_mon + 1, ti->tm_mday,
+			ti->tm_hour, ti->tm_min, ti->tm_sec, ext );
+	}
 
 	FS_FOpenFileByMode( backupName, &fOut, FS_WRITE );
 	if ( !fOut ) {
@@ -2105,9 +4083,12 @@ static void LS_BackupFile( const char *filename ) {
 static void LS_ResetBests_f( void ) {
 	int i, di, gi;
 
-	/* create backups before wiping */
-	LS_BackupFile( LS_SAVE_FILE );
-	LS_BackupFile( LS_HISTORY_FILE );
+	/* create backups of current category .lss before wiping */
+	{
+		char lssPath[256];
+		LS_GetCurrentLssPath( lssPath, sizeof( lssPath ) );
+		LS_BackupFile( lssPath );
+	}
 
 	Com_Printf( "^2LiveSplit: All stats & bests reset\n" );
 
@@ -2148,20 +4129,25 @@ static void LS_ResetBests_f( void ) {
 	ls.runSavedRealMs      = 0;
 	ls.currentMapIndex     = -1;
 	ls.curVisRow           = -1;
-	ls.prevMapname[0]      = '\0';
+	if ( cls.state >= CA_CONNECTED && cl.mapname[0] ) {
+		char tmp[LS_MAX_MAPNAME];
+		LS_ExtractMapname( cl.mapname, tmp, sizeof( tmp ) );
+		Q_strncpyz( ls.prevMapname, tmp, LS_MAX_MAPNAME );
+	} else {
+		ls.prevMapname[0] = '\0';
+	}
 	ls.heinrichDead        = qfalse;
 	ls.endCutsceneArmed    = qfalse;
 	ls.endCutsceneSnapMs   = -1;
 	ls.endCutscenePrevLB   = qfalse;
 	Cvar_Set( "ls_changelevel", "0" );
-	ls.numHistoryRuns      = 0;
+	LS_HistoryFree();
 	ls.manualPause         = qfalse;
 	ls.pauseSavedRealMs    = 0;
 	ls.totalPauses         = 0;
 	ls.totalUndos          = 0;
 	ls.totalSkips          = 0;
-	LS_Save();
-	LS_SaveHistory();
+	LS_SaveAll();
 }
 
 static void LS_ResetCategory_f( void ) {
@@ -2169,7 +4155,11 @@ static void LS_ResetCategory_f( void ) {
 	const char *modeName;
 	const char *skillName;
 
-	LS_BackupFile( LS_SAVE_FILE );
+	{
+		char lssPath[256];
+		LS_GetCurrentLssPath( lssPath, sizeof( lssPath ) );
+		LS_BackupFile( lssPath );
+	}
 
 	di = LS_CurDiffIdx();
 
@@ -2323,15 +4313,10 @@ static void LS_Undo_f( void ) {
 	ls.splits[idx].splitDone = qfalse;
 	ls.splits[idx].splitSkipped = qfalse;
 
-	/* Roll back 100% base counters so live display shows correct
-	   per-map deltas again.  Keep secretsFound/treasureFound intact
-	   so the snapshot persists through the undo. */
-	if ( ls_100pctCvar && ls_100pctCvar->integer ) {
-		ls.baseSecretsFound  -= ls.splits[idx].secretsFound;
-		ls.baseTreasureFound -= ls.splits[idx].treasureFound;
-		if ( ls.baseSecretsFound  < 0 ) ls.baseSecretsFound  = 0;
-		if ( ls.baseTreasureFound < 0 ) ls.baseTreasureFound = 0;
-	}
+	/* 100%: nothing to roll back - base is always 0 since
+	   liveSecretsFound is per-map (resets each map load).
+	   Keep secretsFound/treasureFound intact so the snapshot
+	   persists through the undo. */
 
 	/* Subtract this split's contribution from the cumulative total.
 	   The segment timer will keep running from the existing currentTimeMs. */
@@ -2421,16 +4406,16 @@ static void LS_Skip_f( void ) {
 	ls.splits[idx].goldFlashMs   = 0;
 	/* Don't increment completions or update gold - it's a skip */
 
-	/* 100% tracking: save per-map secrets/treasure and advance base */
+	/* 100% tracking: save per-map secrets/treasure found.
+	   liveSecretsFound is already per-map (resets each map load),
+	   so no base subtraction or accumulation is needed. */
 	if ( ls_100pctCvar && ls_100pctCvar->integer ) {
 		if ( ls.splits[idx].secretsFound == 0 && ls.splits[idx].treasureFound == 0 ) {
-			int sf = ls.liveSecretsFound  - ls.baseSecretsFound;
-			int tf = ls.liveTreasureFound - ls.baseTreasureFound;
+			int sf = ls.liveSecretsFound;
+			int tf = ls.liveTreasureFound;
 			ls.splits[idx].secretsFound  = ( sf > 0 ) ? sf : 0;
 			ls.splits[idx].treasureFound = ( tf > 0 ) ? tf : 0;
 		}
-		ls.baseSecretsFound  += ls.splits[idx].secretsFound;
-		ls.baseTreasureFound += ls.splits[idx].treasureFound;
 	}
 
 	/* Advance to next real split if available */
@@ -2490,30 +4475,32 @@ static struct {
 	/* State */
 	char         loadedMap[LS_MAX_MAPNAME];
 	char         loadedCategory[32]; /* category string when ghost was loaded */
+	qboolean     isNewGold;       /* qtrue if playback data is from a gold just set this run */
 	cvar_t       *enableCvar;     /* ls_ghost 0/1 */
 } ls_ghost;
 
 /* Build a category-specific ghost file path.
-   Fullgame:  ghostruns/fg/d<diff>/<mapname>.ghost
+   Fullgame:  ghostruns/fg/d<diff>/<mapname>.ghost  (or _100.ghost for 100%)
    Mission N: ghostruns/m<N>/d<diff>/<mapname>.ghost
    IL:        ghostruns/il/d<diff>/<mapname>.ghost  */
 static void LS_GhostBuildPath( const char *mapname, char *out, int outSize ) {
 	int diff = ls.currentDifficulty;
+	const char *suffix = ( ls_100pctCvar && ls_100pctCvar->integer ) ? "_100" : "";
 	if ( diff < 1 ) diff = 1;
 	if ( diff > 3 ) diff = 3;
 
 	switch ( ls.runMode ) {
 	case LS_MODE_FULLGAME:
-		Com_sprintf( out, outSize, "ghostruns/fg/d%d/%s.ghost", diff, mapname );
+		Com_sprintf( out, outSize, "ghostruns/fg/d%d/%s%s.ghost", diff, mapname, suffix );
 		break;
 	case LS_MODE_MISSION:
-		Com_sprintf( out, outSize, "ghostruns/m%d/d%d/%s.ghost", ls.runMission, diff, mapname );
+		Com_sprintf( out, outSize, "ghostruns/m%d/d%d/%s%s.ghost", ls.runMission, diff, mapname, suffix );
 		break;
 	case LS_MODE_IL:
-		Com_sprintf( out, outSize, "ghostruns/il/d%d/%s.ghost", diff, mapname );
+		Com_sprintf( out, outSize, "ghostruns/il/d%d/%s%s.ghost", diff, mapname, suffix );
 		break;
 	default:
-		Com_sprintf( out, outSize, "ghostruns/fg/d%d/%s.ghost", diff, mapname );
+		Com_sprintf( out, outSize, "ghostruns/fg/d%d/%s%s.ghost", diff, mapname, suffix );
 		break;
 	}
 }
@@ -2521,9 +4508,21 @@ static void LS_GhostBuildPath( const char *mapname, char *out, int outSize ) {
 /* Build a string identifying the current category for cache invalidation */
 static void LS_GhostCategoryStr( char *out, int outSize ) {
 	int diff = ls.currentDifficulty;
+	int pct = ( ls_100pctCvar && ls_100pctCvar->integer ) ? 1 : 0;
 	if ( diff < 1 ) diff = 1;
 	if ( diff > 3 ) diff = 3;
-	Com_sprintf( out, outSize, "%d_%d_d%d", ls.runMode, ls.runMission, diff );
+	Com_sprintf( out, outSize, "%d_%d_d%d_p%d", ls.runMode, ls.runMission, diff, pct );
+}
+
+/* Check if a ghost file exists for a given map */
+static qboolean LS_GhostFileExists( const char *mapname ) {
+	fileHandle_t f;
+	char path[MAX_QPATH];
+	int len;
+	LS_GhostBuildPath( mapname, path, sizeof( path ) );
+	len = FS_FOpenFileRead( path, &f, qtrue );
+	if ( f ) FS_FCloseFile( f );
+	return ( len > 0 ) ? qtrue : qfalse;
 }
 
 /* Save ghost recording to file (per-category path) */
@@ -2558,6 +4557,7 @@ static void LS_GhostLoad( const char *mapname ) {
 	ls_ghost.playCount     = 0;
 	ls_ghost.playLoaded    = qfalse;
 	ls_ghost.playSearchIdx = 0;
+	ls_ghost.isNewGold     = qfalse;
 	ls_ghost.loadedMap[0]  = '\0';
 	ls_ghost.loadedCategory[0] = '\0';
 
@@ -2602,6 +4602,8 @@ static void LS_GhostFrame( void ) {
 		ls_ghost.loadedMap[0] = '\0';
 		ls_ghost.recCount     = 0;
 		ls_ghost.playSearchIdx = 0;
+		ls_ghost.playLoaded    = qfalse;
+		ls_ghost.playCount     = 0;
 		return;
 	}
 
@@ -2714,6 +4716,19 @@ static void LS_GhostFrame( void ) {
 		Cvar_Set( "ls_ghost_z", va( "%f", gz ) );
 		Cvar_Set( "ls_ghost_yaw", va( "%f", gyaw ) );
 		Cvar_Set( "ls_ghost_speed", va( "%f", speed ) );
+		/* Ghost color: compare ghost's last frame time with best segment time.
+		   Yellow (1) = ghost time ≈ best time (ghost IS the best run).
+		   Blue   (0) = ghost time differs (e.g. LSS has a better BEST from import).
+		   Use tolerance of GHOST_SAMPLE_MS because the last recorded frame
+		   may not land exactly on the split time. */
+		{
+			int ghostLastMs = ls_ghost.play[ls_ghost.playCount - 1].timeMs;
+			int di2 = LS_CurDiffIdx();
+			int mi2 = ls.currentMapIndex;
+			int bestMs2 = ( mi2 >= 0 && mi2 < ls.numMaps ) ? ls.splits[mi2].d[di2].bestTimeMs : 0;
+			int diff2 = ( bestMs2 > ghostLastMs ) ? bestMs2 - ghostLastMs : ghostLastMs - bestMs2;
+			Cvar_Set( "ls_ghost_color", ( bestMs2 > 0 && diff2 <= GHOST_SAMPLE_MS ) ? "1" : "0" );
+		}
 	} else {
 		Cvar_Set( "ls_ghost_visible", "0" );
 	}
@@ -2732,6 +4747,7 @@ static void LS_GhostOnGoldSplit( const char *mapname ) {
 	ls_ghost.playCount     = ls_ghost.recCount;
 	ls_ghost.playLoaded    = qtrue;
 	ls_ghost.playSearchIdx = 0;
+	ls_ghost.isNewGold     = qtrue;  /* mark as freshly-set gold this run */
 	Q_strncpyz( ls_ghost.loadedMap, mapname, sizeof( ls_ghost.loadedMap ) );
 	LS_GhostCategoryStr( ls_ghost.loadedCategory, sizeof( ls_ghost.loadedCategory ) );
 }
@@ -3028,6 +5044,20 @@ static void LS_SvPagePrev_f( void ) {
 	}
 }
 
+/* Build .lss path for the currently viewed SV category and back it up */
+static void SV_BackupCurrentLss( void ) {
+	char lssPath[256];
+	int  diffIdx = sv_viewDiff - 1;
+	int  msGroup = sv_viewMs - 1;
+	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	if ( diffIdx < 0 ) diffIdx = 0;
+	if ( diffIdx >= LS_MAX_DIFFICULTIES ) diffIdx = LS_MAX_DIFFICULTIES - 1;
+	if ( msGroup < 0 ) msGroup = 0;
+	if ( msGroup >= LS_NUM_MISSION_GROUPS ) msGroup = LS_NUM_MISSION_GROUPS - 1;
+	LS_GetLssPath( lssPath, sizeof( lssPath ), sv_viewMode, diffIdx, msGroup, -1, p100 );
+	LS_BackupFile( lssPath );
+}
+
 static void LS_SvResetGold_f( void ) {
 	int row, si, di;
 	if ( Cmd_Argc() < 2 ) {
@@ -3043,7 +5073,7 @@ static void LS_SvResetGold_f( void ) {
 	if ( si < 0 || si >= ls.numMaps ) return;
 	di = SV_DiffSlot();
 
-	LS_BackupFile( LS_SAVE_FILE );
+	SV_BackupCurrentLss();
 	ls.splits[si].d[di].bestTimeMs = 0;
 	Com_Printf( "^2LiveSplit: Gold reset for '%s'\n",
 		ls.splits[si].displayName ? ls.splits[si].displayName : ls.splits[si].mapname );
@@ -3066,7 +5096,7 @@ static void LS_SvResetPBSeg_f( void ) {
 	if ( si < 0 || si >= ls.numMaps ) return;
 	di = SV_DiffSlot();
 
-	LS_BackupFile( LS_SAVE_FILE );
+	SV_BackupCurrentLss();
 	ls.splits[si].d[di].pbSegmentMs = 0;
 	Com_Printf( "^2LiveSplit: PB segment reset for '%s'\n",
 		ls.splits[si].displayName ? ls.splits[si].displayName : ls.splits[si].mapname );
@@ -3089,7 +5119,7 @@ static void LS_SvResetSplitAll_f( void ) {
 	if ( si < 0 || si >= ls.numMaps ) return;
 	di = SV_DiffSlot();
 
-	LS_BackupFile( LS_SAVE_FILE );
+	SV_BackupCurrentLss();
 	ls.splits[si].d[di].bestTimeMs      = 0;
 	ls.splits[si].d[di].pbSegmentMs     = 0;
 	ls.splits[si].d[di].totalAttempts   = 0;
@@ -3102,7 +5132,7 @@ static void LS_SvResetSplitAll_f( void ) {
 
 static void LS_SvResetCat_f( void ) {
 	int di, dbase, i;
-	LS_BackupFile( LS_SAVE_FILE );
+	SV_BackupCurrentLss();
 	di    = SV_DiffSlot();
 	dbase = sv_viewDiff - 1;
 	if ( dbase < 0 ) dbase = 0;
@@ -3144,6 +5174,63 @@ static void LS_SvResetCat_f( void ) {
 	Com_Printf( "^2LiveSplit: Category stats reset\n" );
 	LS_Save();
 	SV_Refresh();
+}
+
+/* ---- Debug dump ---- */
+static void LS_Debug_f( void ) {
+	int i, di;
+	char tbuf[32];
+	const char *modeName;
+
+	if ( !ls.initialized ) {
+		Com_Printf( "^1LiveSplit: Not initialized\n" );
+		return;
+	}
+
+	di = LS_CurDiffIdx();
+
+	switch ( ls.runMode ) {
+	case LS_MODE_MISSION: modeName = "Mission"; break;
+	case LS_MODE_IL:      modeName = "IL"; break;
+	default:              modeName = "Full Game"; break;
+	}
+
+	Com_Printf( "^2===== LiveSplit Debug Dump =====\n" );
+	Com_Printf( "^2Mode: ^7%s  ^2Diff slot: ^7%d  ^2Active: ^7%s  ^2Finished: ^7%s\n",
+			modeName, di, ls.active ? "yes" : "no", ls.runFinished ? "yes" : "no" );
+	Com_Printf( "^2Range: ^7%d-%d  ^2EndMap: ^7%d  ^2CurMap: ^7%d\n",
+			ls.modeFirstIdx, ls.modeLastIdx, ls.modeEndMapIdx, ls.currentMapIndex );
+
+	{
+		int *catPB;
+		LS_GetCatPB( &catPB );
+		Com_Printf( "^2Category PB: ^7%d ms  ^2savedPBMs: ^7%d ms\n",
+				catPB ? *catPB : -1, ls.savedPBMs );
+	}
+
+	Com_Printf( "^2ls_compare: ^7%d\n",
+			ls_compareCvar ? ls_compareCvar->integer : -1 );
+
+	Com_Printf( "^2%-4s %-20s %10s %10s %10s %10s\n",
+			"Idx", "Map", "bestTimeMs", "pbSegMs", "curTimeMs", "cmpSeg" );
+
+	for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+		const char *name;
+		int cmpSeg;
+		if ( ls.splits[i].cutscene ) continue;
+		name = ls.splits[i].displayName ? ls.splits[i].displayName : ls.splits[i].mapname;
+
+		cmpSeg = LS_ComparisonSegment( i );
+
+		Com_Printf( "^7%-4d %-20s %10d %10d %10d %10d%s\n",
+				i, name,
+				ls.splits[i].d[di].bestTimeMs,
+				ls.splits[i].d[di].pbSegmentMs,
+				ls.splits[i].currentTimeMs,
+				cmpSeg,
+				ls.splits[i].splitDone ? " ^2DONE" : "" );
+	}
+	Com_Printf( "^2================================\n" );
 }
 
 static void SV_InitCvars( void ) {
@@ -3197,6 +5284,8 @@ void SCR_LiveSplitInit( void ) {
 	ls_showbestdeltasCvar = Cvar_Get( "ls_showbestdeltas", "1", CVAR_ARCHIVE );
 	ls_showattCvar    = Cvar_Get( "ls_showatt",    "1", CVAR_ARCHIVE );
 	ls_drawCvar       = Cvar_Get( "ls_draw",       "1", CVAR_ARCHIVE );
+	ls_compareCvar    = Cvar_Get( "ls_compare",    "0", CVAR_ARCHIVE ); /* 0=PB, 1=Best Segments, 2=Average */
+	ls_timingCvar     = Cvar_Get( "ls_timing",     "0", CVAR_ARCHIVE ); /* 0=Game Time, 1=Real Time */
 	ls_100pctCvar     = Cvar_Get( "ls_100pct",     "0", CVAR_ARCHIVE );
 
 	/* Color customization */
@@ -3224,6 +5313,8 @@ void SCR_LiveSplitInit( void ) {
 	/* External LiveSplit type */
 	ls_typeCvar    = Cvar_Get( "ls_type",    "0",   CVAR_ARCHIVE );
 
+	/* External window geometry is now managed by the standalone exe */
+
 	/* Standalone IGT timer overlay */
 	ls_igttimerCvar       = Cvar_Get( "ls_igttimer",       "0",     CVAR_ARCHIVE );
 	ls_igttimer_xCvar     = Cvar_Get( "ls_igttimer_x",     "280",   CVAR_ARCHIVE );
@@ -3246,8 +5337,9 @@ void SCR_LiveSplitInit( void ) {
 	sp_demofpsCvar    = Cvar_Get( "sp_demofps",    "40", CVAR_ARCHIVE );
 
 	LS_BuildSplitTable();
+	ls_prev100pct = ( ls_100pctCvar && ls_100pctCvar->integer ) ? 1 : 0;
+	ls_prevDifficulty = LS_DetectDifficulty();
 	LS_Load();
-	LS_LoadHistory();
 
 	/* Restore mode from save or use cvar defaults */
 	if ( ls.active ) {
@@ -3273,10 +5365,14 @@ void SCR_LiveSplitInit( void ) {
 	Cmd_AddCommand( "livesplit_undo", LS_Undo_f );
 	Cmd_AddCommand( "livesplit_skip", LS_Skip_f );
 	Cmd_AddCommand( "livesplit_check", LS_CheckSettings_f );
+	Cmd_AddCommand( "livesplit_debug", LS_Debug_f );
 
 	/* Split Records viewer */
 	SV_InitCvars();
 	SV_InitCommands();
+
+	/* Shared memory for standalone LiveSplit window */
+	LS_ShmInit();
 
 	Com_Printf( "^2LiveSplit: Initialized (%d maps, %d visible)\n", ls.numMaps, ls.numVisible );
 
@@ -3284,10 +5380,10 @@ void SCR_LiveSplitInit( void ) {
 }
 
 void SCR_LiveSplitShutdown( void ) {
+	LS_ShmShutdown();
 	LS_ExtDisconnect();
 	if ( ls.initialized ) {
-		LS_Save();
-		LS_SaveHistory();
+		LS_SaveAll();
 	}
 	Cmd_RemoveCommand( "livesplit_start" );
 	Cmd_RemoveCommand( "livesplit_reset" );
@@ -3474,6 +5570,72 @@ static void LS_CheckSettings_f( void ) {
 	LS_CheckSettings();
 }
 
+/*
+===================
+LS_TriggerAlert
+
+Shows a centered alert with bounce+fade animation.
+===================
+*/
+static void LS_TriggerAlert( const char *text, float r, float g, float b ) {
+	Q_strncpyz( ls.alertText, text, sizeof( ls.alertText ) );
+	ls.alertColor[0] = r;
+	ls.alertColor[1] = g;
+	ls.alertColor[2] = b;
+	ls.alertColor[3] = 1.0f;
+	ls.alertStartMs = Sys_Milliseconds();
+}
+
+/*
+===================
+LS_QuickCheckSettings
+
+Lightweight per-frame cvar check (no console spam).
+Sets settingsModified/settingsModCount and triggers alert on first detection.
+===================
+*/
+static void LS_QuickCheckSettings( void ) {
+	const lsCvarCheck_t *check;
+	int idx, newDetections = 0;
+	char val[256];
+
+	for ( idx = 0, check = ls_settingsTable; check->name; check++, idx++ ) {
+		float fDefault, fActual, diff;
+		qboolean differs = qfalse;
+
+		Cvar_VariableStringBuffer( check->name, val, sizeof( val ) );
+		fDefault = atof( check->defaultVal );
+		fActual  = atof( val );
+
+		if ( fDefault == 0.0f && fActual == 0.0f ) {
+			if ( Q_stricmp( val, check->defaultVal ) != 0 &&
+				 Q_stricmp( val, "0" ) != 0 &&
+				 Q_stricmp( val, "0.0" ) != 0 &&
+				 Q_stricmp( val, "" ) != 0 ) {
+				differs = qtrue;
+			}
+		} else {
+			diff = fActual - fDefault;
+			if ( diff < 0 ) diff = -diff;
+			if ( diff > 0.001f ) differs = qtrue;
+		}
+
+		if ( differs && idx < 80 && !ls.settingsDetected[idx] ) {
+			/* New cvar modification detected - log it */
+			ls.settingsDetected[idx] = qtrue;
+			ls.settingsModCount++;
+			newDetections++;
+			Com_Printf( "^1LiveSplit: ^7%s ^1changed to ^7%s ^1(default: ^2%s^1)\n",
+				check->name, val, check->defaultVal );
+		}
+	}
+
+	if ( newDetections > 0 ) {
+		ls.settingsModified = qtrue;
+		LS_TriggerAlert( "MODIFIED SETTINGS DETECTED", 1.0f, 0.8f, 0.2f );
+	}
+}
+
 /* =====================================================================
    Run finish logic (shared between transition-finish and Heinrich-kill)
    ===================================================================== */
@@ -3498,8 +5660,15 @@ static void LS_FinishRun( int nowReal ) {
 
 	/* Per-category completions and PB */
 	if ( ls.runMode == LS_MODE_IL ) {
-		/* IL: completions already incremented in LS_CompleteSplit (per-split data).
-		   bestTimeMs (IL PB) also already updated there. Nothing extra to do. */
+		/* IL: completions already incremented in LS_CompleteSplit.
+		   bestTimeMs is used as the IL PB (LS_GetCatPB returns &bestTimeMs)
+		   and was already updated there.  However, LS_SavePbSegments was
+		   NOT called because the condition `finalIGT < *pb` always fails
+		   (*pb == bestTimeMs == finalIGT at this point).  Use the pre-run
+		   snapshot savedPBMs for comparison so pbSegmentMs gets set. */
+		if ( ls.savedPBMs == 0 || finalIGT < ls.savedPBMs ) {
+			LS_SavePbSegments();
+		}
 	} else {
 		int *comp, *pb;
 		LS_GetCatCompletions( &comp );
@@ -3641,15 +5810,18 @@ static void LS_FinishRun( int nowReal ) {
 	/* Auto-check settings on run finish */
 	LS_CheckSettings();
 
-	/* Record in history */
-	if ( ls.numHistoryRuns < LS_MAX_HISTORY_RUNS ) {
+	/* Record in history (dynamic, no fixed limit) */
+	LS_HistoryEnsure( ls.numHistoryRuns + 1 );
+	{
 		lsRunHistory_t *r = &ls.history[ls.numHistoryRuns];
 		int i, n = 0;
+		memset( r, 0, sizeof( *r ) );
 		r->difficulty = ls.currentDifficulty;
 		r->mode       = ls.runMode;
 		r->missionNum = ls.runMission;
 		r->totalIGTMs = finalIGT;
 		r->totalRGTMs = ls.runSavedRealMs;
+		r->attemptId  = LS_MaxAttemptId( ls.runMode, di, ls.runMission ) + 1;
 		for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
 			if ( !ls.splits[i].cutscene ) {
 				r->splitTimes[n] = ls.splits[i].currentTimeMs;
@@ -3657,11 +5829,15 @@ static void LS_FinishRun( int nowReal ) {
 			}
 		}
 		r->numSplits = n;
+		r->endTime   = time( NULL );
+		/* Estimate start time from end time and RGT duration */
+		r->startTime = r->endTime - ( ls.runSavedRealMs / 1000 );
+		r->isStartedSynced = qtrue;
+		r->isEndedSynced   = qtrue;
 		ls.numHistoryRuns++;
 	}
 
 	LS_Save();
-	LS_SaveHistory();
 }
 
 /* Complete a split: update gold, increment counters, add to runTotalIGTMs */
@@ -3680,24 +5856,36 @@ static void LS_CompleteSplit( int idx, int nowReal ) {
 	ls.splits[idx].prevGoldMs = ls.splits[idx].d[di].bestTimeMs;
 
 	/* 100% tracking: store PER-MAP secrets/treasures found.
-	   player->numSecretsFound is cumulative across all maps (the game
-	   never resets it), so we subtract the base (cumulative at the
-	   start of this map) to get the per-map delta.
-	   Totals come from the hardcoded ls_mapDefs table (set at init).
-	   Use prevLive (from previous frame) because during map transitions
-	   the configstring already shows the NEW map's values.
-	   If found values were already pre-saved (deferral or undo+re-complete),
-	   keep them but still advance the base for subsequent maps. */
+	   player->numSecretsFound resets to 0 on each map load
+	   (only health is persisted via gentityPersFields), so
+	   prevLiveSecretsFound already IS the per-map found count.
+	   Use prevLive (from previous frame) because during map
+	   transitions the configstring already shows the NEW map.
+	   If found values were already pre-saved (deferral or
+	   undo+re-complete), keep them. */
 	if ( ls_100pctCvar && ls_100pctCvar->integer ) {
 		if ( ls.splits[idx].secretsFound == 0 && ls.splits[idx].treasureFound == 0 ) {
-			int sf = ls.prevLiveSecretsFound  - ls.baseSecretsFound;
-			int tf = ls.prevLiveTreasureFound - ls.baseTreasureFound;
+			int sf = ls.prevLiveSecretsFound;
+			int tf = ls.prevLiveTreasureFound;
 			ls.splits[idx].secretsFound  = ( sf > 0 ) ? sf : 0;
 			ls.splits[idx].treasureFound = ( tf > 0 ) ? tf : 0;
 		}
-		/* Always advance base for the next map */
-		ls.baseSecretsFound  += ls.splits[idx].secretsFound;
-		ls.baseTreasureFound += ls.splits[idx].treasureFound;
+	}
+
+	/* Inject a final ghost frame at the exact split time so the ghost's
+	   total time matches the split time 1:1 (recording samples at 20Hz
+	   so the last frame can be up to 50ms early). */
+	if ( ls_ghost.recCount > 0 && ls_ghost.recCount < GHOST_MAX_FRAMES ) {
+		ghostFrame_t *last = &ls_ghost.rec[ls_ghost.recCount - 1];
+		if ( last->timeMs != t ) {
+			ghostFrame_t *gf = &ls_ghost.rec[ls_ghost.recCount];
+			gf->timeMs = t;
+			gf->x   = last->x;
+			gf->y   = last->y;
+			gf->z   = last->z;
+			gf->yaw = last->yaw;
+			ls_ghost.recCount++;
+		}
 	}
 
 	if ( ls.splits[idx].d[di].bestTimeMs == 0 ||
@@ -3705,6 +5893,25 @@ static void LS_CompleteSplit( int idx, int nowReal ) {
 		ls.splits[idx].d[di].bestTimeMs = t;
 		ls.splits[idx].goldFlashMs = Sys_Milliseconds(); /* trigger gold flash */
 		LS_GhostOnGoldSplit( ls.splits[idx].mapname );
+	} else {
+		/* Not a gold - save ghost if time is better than previous ghost.
+		   This way the ghost file always tracks the best recorded run,
+		   even when it wasn't fast enough for a new gold/best segment. */
+		int ghostTimeMs = 0;
+		if ( ls_ghost.playLoaded && ls_ghost.playCount > 0 ) {
+			ghostTimeMs = ls_ghost.play[ls_ghost.playCount - 1].timeMs;
+		}
+		if ( ls_ghost.recCount > 0 && ( ghostTimeMs <= 0 || t < ghostTimeMs ) ) {
+			LS_GhostSave( ls.splits[idx].mapname );
+			/* Load into playback so ghost is visible on next attempt */
+			memcpy( ls_ghost.play, ls_ghost.rec,
+				sizeof( ghostFrame_t ) * ls_ghost.recCount );
+			ls_ghost.playCount     = ls_ghost.recCount;
+			ls_ghost.playLoaded    = qtrue;
+			ls_ghost.playSearchIdx = 0;
+			ls_ghost.isNewGold     = qfalse; /* not a gold - stays blue */
+			Com_Printf( "^3Ghost: saved better run (%d ms < ghost %d ms)\n", t, ghostTimeMs );
+		}
 	}
 
 	ls.runTotalIGTMs += t;
@@ -3956,9 +6163,18 @@ static void LS_Frame( void ) {
 			LS_ExtSend( "initgametime" );
 			LS_ExtSend( "starttimer" );
 			LS_ExtSend( "pausegametime" );
+			lsext_timerStarted = qtrue;
 			lsext_lastPollMs = Sys_Milliseconds() + LSEXT_POLL_GRACE;
 		}
 		Com_Printf( "^2LiveSplit: Full Game run started (briefing dismissed)\n" );
+
+		/* Immediate validation on run start */
+		ls.settingsCheckInterval = 0;
+		LS_QuickCheckSettings();
+		if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+			ls.cheatsUsed = qtrue;
+			LS_TriggerAlert( "CHEATS ACTIVATED", 1.0f, 0.2f, 0.2f );
+		}
 	}
 
 	/* Deferred auto-record: fire the record command once CA_ACTIVE */
@@ -4004,8 +6220,15 @@ static void LS_Frame( void ) {
 				}
 			}
 			LS_SetupMode( curMode, curMission );
-			/* Clear prevMapname so auto-start can fire on the current map */
-			ls.prevMapname[0] = '\0';
+			/* Keep prevMapname = current map so auto-start only fires
+			   on an actual level load, not while already on the map.
+			   NOTE: currentMap isn't populated yet at this point, so
+			   extract directly from cl.mapname. */
+			if ( cls.state >= CA_CONNECTED && cl.mapname[0] ) {
+				char tmp[LS_MAX_MAPNAME];
+				LS_ExtractMapname( cl.mapname, tmp, sizeof( tmp ) );
+				Q_strncpyz( ls.prevMapname, tmp, LS_MAX_MAPNAME );
+			}
 		}
 		/* IL: detect ls_map cvar change (only when not actively running) */
 		if ( curMode == LS_MODE_IL && !ls.active && ls_mapCvar && ls_mapCvar->string[0] ) {
@@ -4039,8 +6262,127 @@ static void LS_Frame( void ) {
 					}
 				}
 				LS_SetupMode( LS_MODE_IL, ls.runMission );
-				ls.prevMapname[0] = '\0'; /* allow auto-start on current map */
+				/* Keep prevMapname = current map so auto-start only
+				   fires on actual level load, not while standing here.
+				   NOTE: currentMap isn't populated yet, use cl.mapname. */
+				if ( cls.state >= CA_CONNECTED && cl.mapname[0] ) {
+					char tmp[LS_MAX_MAPNAME];
+					LS_ExtractMapname( cl.mapname, tmp, sizeof( tmp ) );
+					Q_strncpyz( ls.prevMapname, tmp, LS_MAX_MAPNAME );
+				}
 			}
+		}
+	}
+
+	/* Detect ls_100pct toggle: save current data and reload from new file set */
+	{
+		int cur100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? 1 : 0;
+		if ( cur100 != ls_prev100pct ) {
+			/* If a run is active, force-reset it first */
+			if ( ls.active || ls.runFinished ) {
+				int k;
+				ls.active          = qfalse;
+				ls.runFinished     = qfalse;
+				ls.runTotalIGTMs   = 0;
+				ls.runStartRealMs  = 0;
+				ls.runSavedRealMs  = 0;
+				ls.heinrichDead    = qfalse;
+				ls.endCutsceneArmed = qfalse;
+				ls.endCutsceneSnapMs = -1;
+				ls.endCutscenePrevLB = qfalse;
+				Cvar_Set( "ls_changelevel", "0" );
+				ls.fgPendingStart  = qfalse;
+				ls.manualPause     = qfalse;
+				ls.currentMapIndex = -1;
+				ls.curVisRow       = -1;
+				for ( k = 0; k < ls.numMaps; k++ ) {
+					ls.splits[k].currentTimeMs = 0;
+					ls.splits[k].splitDone     = qfalse;
+					ls.splits[k].splitSkipped  = qfalse;
+					ls.splits[k].prevGoldMs    = 0;
+					ls.splits[k].goldFlashMs   = 0;
+					ls.splits[k].secretsFound  = 0;
+					ls.splits[k].treasureFound = 0;
+				}
+				Com_Printf( "^2LiveSplit: Run reset due to 100%% category change\n" );
+			}
+			/* Save current data to the OLD file set before switching */
+			{
+				int old100 = ls_prev100pct;
+				/* Temporarily restore old value for SaveAll path generation */
+				if ( ls_100pctCvar ) Cvar_Set( "ls_100pct", va( "%d", old100 ) );
+				LS_SaveAll();
+				if ( ls_100pctCvar ) Cvar_Set( "ls_100pct", va( "%d", cur100 ) );
+			}
+			/* Clear in-memory data before loading new set */
+			{
+				int k, di, gi;
+				for ( k = 0; k < ls.numMaps; k++ ) {
+					int s;
+					for ( s = 0; s < LS_TOTAL_DIFF_SLOTS; s++ ) {
+						ls.splits[k].d[s].bestTimeMs       = 0;
+						ls.splits[k].d[s].pbSegmentMs      = 0;
+						ls.splits[k].d[s].totalAttempts     = 0;
+						ls.splits[k].d[s].totalCompletions  = 0;
+					}
+					ls.splits[k].currentTimeMs = 0;
+					ls.splits[k].splitDone     = qfalse;
+					ls.splits[k].prevGoldMs    = 0;
+					ls.splits[k].goldFlashMs   = 0;
+				}
+				for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+					ls.fgAttempts[di]    = 0;
+					ls.fgCompletions[di] = 0;
+					ls.fgPB[di]          = 0;
+					for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
+						ls.msAttempts[gi][di]    = 0;
+						ls.msCompletions[gi][di] = 0;
+						ls.msPB[gi][di]          = 0;
+					}
+				}
+				LS_HistoryFree();
+			}
+			LS_Load();
+			ls_prev100pct = cur100;
+			Com_Printf( "^2LiveSplit: switched to %s .lss files\n", cur100 ? "100%%" : "Any%%" );
+		}
+	}
+
+	/* Detect difficulty change: update displayed splits immediately */
+	{
+		int curDiff = LS_DetectDifficulty();
+		if ( curDiff != ls_prevDifficulty ) {
+			/* If a run is active, force-reset it first */
+			if ( ls.active || ls.runFinished ) {
+				int k;
+				ls.active          = qfalse;
+				ls.runFinished     = qfalse;
+				ls.runTotalIGTMs   = 0;
+				ls.runStartRealMs  = 0;
+				ls.runSavedRealMs  = 0;
+				ls.heinrichDead    = qfalse;
+				ls.endCutsceneArmed = qfalse;
+				ls.endCutsceneSnapMs = -1;
+				ls.endCutscenePrevLB = qfalse;
+				Cvar_Set( "ls_changelevel", "0" );
+				ls.fgPendingStart  = qfalse;
+				ls.manualPause     = qfalse;
+				ls.currentMapIndex = -1;
+				ls.curVisRow       = -1;
+				for ( k = 0; k < ls.numMaps; k++ ) {
+					ls.splits[k].currentTimeMs = 0;
+					ls.splits[k].splitDone     = qfalse;
+					ls.splits[k].splitSkipped  = qfalse;
+					ls.splits[k].prevGoldMs    = 0;
+					ls.splits[k].goldFlashMs   = 0;
+					ls.splits[k].secretsFound  = 0;
+					ls.splits[k].treasureFound = 0;
+				}
+				Com_Printf( "^2LiveSplit: Run reset due to difficulty change\n" );
+			}
+			ls.currentDifficulty = curDiff;
+			ls_prevDifficulty    = curDiff;
+			Com_Printf( "^2LiveSplit: difficulty changed to %s\n", ls_diffShortTags[LS_DiffIdx( curDiff )] );
 		}
 	}
 
@@ -4053,18 +6395,36 @@ static void LS_Frame( void ) {
 		   a new map change, enabling auto-start after reset+reload */
 		ls.prevMapname[0] = '\0';
 
-		/* Auto-disable sv_cheats while in main menu so
-		   the warning doesn't persist next run */
-		if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+		/* Auto-disable sv_cheats on disconnect when the timer
+		   is off / reset (no active run in progress) */
+		if ( Cvar_VariableIntegerValue( "sv_cheats" ) && !ls.active ) {
 			Cvar_Set( "sv_cheats", "0" );
-			Com_Printf( "^2LiveSplit: sv_cheats auto-disabled (main menu)\n" );
+			Com_Printf( "^2LiveSplit: sv_cheats auto-disabled (disconnect)\n" );
+		}
+		/* Clear cheats flag when no run is active (reset already happened) */
+		if ( !ls.active && !ls.runFinished ) {
+			ls.cheatsUsed = qfalse;
 		}
 		return;
 	}
 
-	/* Detect sv_cheats usage - flag persists until run reset/auto-start */
-	if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+	/* Detect sv_cheats usage - only when a run is active.
+	   Flag persists until run reset/auto-start. */
+	if ( ls.active && Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+		if ( !ls.cheatsUsed ) {
+			LS_TriggerAlert( "CHEATS ACTIVATED", 1.0f, 0.2f, 0.2f );
+			Com_Printf( "^1LiveSplit: sv_cheats detected!\n" );
+		}
 		ls.cheatsUsed = qtrue;
+	}
+
+	/* Periodic settings check every ~60 frames (about once per second) */
+	if ( ls.active && !ls.runFinished ) {
+		ls.settingsCheckInterval++;
+		if ( ls.settingsCheckInterval >= 60 ) {
+			ls.settingsCheckInterval = 0;
+			LS_QuickCheckSettings();
+		}
 	}
 
 	LS_ExtractMapname( cl.mapname, currentMap, sizeof( currentMap ) );
@@ -4082,13 +6442,98 @@ static void LS_Frame( void ) {
 		LS_ParseMissionStats();
 	}
 
-	/* For IL mode, auto-update target map only when ls_map cvar is empty */
+	/* For IL mode (AUTO), auto-update target map only when ls_map cvar is empty.
+	   If the run is active but not finished, reset and restart on the new map. */
 	if ( ls.runMode == LS_MODE_IL &&
 		 ( !ls_mapCvar || !ls_mapCvar->string[0] ) ) {
 		int ilIdx = LS_FindMapIndex( currentMap );
 		if ( ilIdx >= 0 && !ls.splits[ilIdx].cutscene &&
 			 ilIdx != ls.modeFirstIdx ) {
-			LS_SetupMode( LS_MODE_IL, ls.runMission );
+			/* If a run is active (not finished), reset and auto-restart on the new map */
+			if ( ls.active && !ls.runFinished ) {
+				int k, di;
+				int restartNow = Sys_Milliseconds();
+
+				/* Reset all split data */
+				ls.active          = qfalse;
+				ls.runTotalIGTMs   = 0;
+				ls.runStartRealMs  = 0;
+				ls.runSavedRealMs  = 0;
+				ls.heinrichDead    = qfalse;
+				ls.endCutsceneArmed = qfalse;
+				ls.endCutsceneSnapMs = -1;
+				ls.endCutscenePrevLB = qfalse;
+				Cvar_Set( "ls_changelevel", "0" );
+				ls.fgPendingStart  = qfalse;
+				ls.manualPause     = qfalse;
+				ls.currentMapIndex = -1;
+				ls.curVisRow       = -1;
+				ls.baseSecretsFound  = 0;
+				ls.baseTreasureFound = 0;
+				for ( k = 0; k < ls.numMaps; k++ ) {
+					ls.splits[k].currentTimeMs = 0;
+					ls.splits[k].splitDone     = qfalse;
+					ls.splits[k].splitSkipped  = qfalse;
+					ls.splits[k].prevGoldMs    = 0;
+					ls.splits[k].goldFlashMs   = 0;
+					ls.splits[k].secretsFound  = 0;
+					ls.splits[k].treasureFound = 0;
+				}
+
+				/* Switch to the new IL map */
+				LS_SetupMode( LS_MODE_IL, ls.runMission );
+
+				/* Auto-restart timer on the new map */
+				ls.active            = qtrue;
+				ls_aslState.runStartCount++;
+				ls_aslState.splitSeqNum = 0;
+				ls.runStartRealMs    = restartNow;
+				ls.lastServerTime    = cl.serverTime;
+				ls.lastRealTimeMs    = restartNow;
+				ls.currentDifficulty = LS_DetectDifficulty();
+				di = LS_CurDiffIdx();
+				LS_SavePreRunPBs();
+				ls.currentMapIndex   = ilIdx;
+				LS_UpdateCurVisRow();
+				ls.splits[ilIdx].d[di].totalAttempts++;
+				Q_strncpyz( ls.prevMapname, currentMap, LS_MAX_MAPNAME );
+
+				/* Reset validation state for the fresh run */
+				ls.cheatsUsed       = qfalse;
+				ls.settingsModified = qfalse;
+				ls.settingsModCount = 0;
+
+				/* Re-check cheats on the new map */
+				ls.settingsCheckInterval = 0;
+				LS_QuickCheckSettings();
+				if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+					ls.cheatsUsed = qtrue;
+					LS_TriggerAlert( "CHEATS ACTIVATED", 1.0f, 0.2f, 0.2f );
+				}
+
+				/* Freeze IGT until loading is done (player clicks continue) */
+				ls.mapLoadFreeze = qtrue;
+				ls.mapLoadFreezeStartMs = restartNow;
+				Cvar_Set( "ls_loading", "1" );
+
+				LS_Save();
+
+				lsext_recvLen = 0;
+				LS_ExtSend( "initgametime" );
+				LS_ExtSend( "starttimer" );
+				LS_ExtSend( "pausegametime" );
+				lsext_timerStarted = qtrue;
+				lsext_lastPollMs = Sys_Milliseconds() + LSEXT_POLL_GRACE;
+
+				Com_Printf( "^2LiveSplit: IL run auto-restarted on '%s'\n",
+					ls.splits[ilIdx].displayName ? ls.splits[ilIdx].displayName : ls.splits[ilIdx].mapname );
+			} else {
+				/* Not active: directly update target to the new map.
+				   LS_SetupMode would use stale ls.actualMapname (updated
+				   at end of frame) so set the indices directly. */
+				ls.modeFirstIdx = ilIdx;
+				ls.modeLastIdx  = ilIdx;
+			}
 		}
 	}
 
@@ -4171,6 +6616,15 @@ static void LS_Frame( void ) {
 	}
 
 	/* ---- detect map change ---- */
+	/* Check sv_spTransition early: spmap to the SAME map while the
+	   disconnect is too brief for LS_Frame to clear prevMapname means
+	   prevMapname == currentMap and the normal diff check below won't
+	   fire.  Force-clear prevMapname so the detection triggers. */
+	if ( Cvar_VariableIntegerValue( "sv_spTransition" ) &&
+		 !Q_stricmp( currentMap, ls.prevMapname ) && !ls.active ) {
+		ls.prevMapname[0] = '\0';
+	}
+
 	if ( Q_stricmp( currentMap, ls.prevMapname ) ) {
 		/* Quickload / death-reload on the same map clears prevMapname
 		   (via the !isConnected early-out above) so it looks like a
@@ -4228,9 +6682,11 @@ static void LS_Frame( void ) {
 			goto afterMapChange;
 		}
 
-		/* IL mode: auto-start only on the configured target map (ls_map) */
-		if ( ls.runMode == LS_MODE_IL &&
-			 newIdx >= 0 && newIdx == ls.modeFirstIdx && !ls.splits[newIdx].cutscene ) {
+		/* IL mode: auto-start on target map, or any non-cutscene map in AUTO (empty ls_map) */
+		if ( ls.runMode == LS_MODE_IL && !ls.active &&
+			 newIdx >= 0 && !ls.splits[newIdx].cutscene &&
+			 ( newIdx == ls.modeFirstIdx ||
+			   ( !ls_mapCvar || !ls_mapCvar->string[0] ) ) ) {
 			int k, di;
 
 			ls.active           = qtrue;
@@ -4265,6 +6721,13 @@ static void LS_Frame( void ) {
 			}
 
 			ls.currentMapIndex = newIdx;
+			/* AUTO mode: update IL target to this map */
+			if ( !ls_mapCvar || !ls_mapCvar->string[0] ) {
+				ls.modeFirstIdx  = newIdx;
+				ls.modeLastIdx   = newIdx;
+				ls.modeEndMapIdx = newIdx;
+				LS_RebuildVisMap();
+			}
 			/* IL: attempts tracked via per-split data only */
 			ls.splits[newIdx].d[di].totalAttempts++;
 			LS_UpdateCurVisRow();
@@ -4283,12 +6746,21 @@ static void LS_Frame( void ) {
 			LS_ExtSend( "initgametime" );
 			LS_ExtSend( "starttimer" );
 			LS_ExtSend( "pausegametime" );
+			lsext_timerStarted = qtrue;
 			lsext_lastPollMs = Sys_Milliseconds() + LSEXT_POLL_GRACE;
+
+			/* Immediate validation on IL run start */
+			ls.settingsCheckInterval = 0;
+			LS_QuickCheckSettings();
+			if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+				ls.cheatsUsed = qtrue;
+				LS_TriggerAlert( "CHEATS ACTIVATED", 1.0f, 0.2f, 0.2f );
+			}
 			return;
 		}
 
 		/* ========== Mission auto-start (works with devmap too) ========== */
-		if ( ls.runMode == LS_MODE_MISSION ) {
+		if ( ls.runMode == LS_MODE_MISSION && !ls.active ) {
 			qboolean isStart = qfalse;
 			if ( newIdx == ls.modeFirstIdx ) {
 				isStart = qtrue;
@@ -4359,7 +6831,16 @@ static void LS_Frame( void ) {
 				LS_ExtSend( "initgametime" );
 				LS_ExtSend( "starttimer" );
 				LS_ExtSend( "pausegametime" );
+				lsext_timerStarted = qtrue;
 				lsext_lastPollMs = Sys_Milliseconds() + LSEXT_POLL_GRACE;
+
+				/* Immediate validation on Mission run start */
+				ls.settingsCheckInterval = 0;
+				LS_QuickCheckSettings();
+				if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+					ls.cheatsUsed = qtrue;
+					LS_TriggerAlert( "CHEATS ACTIVATED", 1.0f, 0.2f, 0.2f );
+				}
 				return;
 			}
 		}
@@ -4442,14 +6923,13 @@ static void LS_Frame( void ) {
 						   reflects this real map.  When LS_CompleteSplit
 						   fires later (leaving the cutscene), prevLive
 						   will hold the cutscene's values (0).
-						   Totals already come from the hardcoded table. */
+						   liveSecretsFound is per-map (resets each map load),
+						   so no base subtraction needed. */
 						if ( ls_100pctCvar && ls_100pctCvar->integer ) {
-							int sf = ls.prevLiveSecretsFound  - ls.baseSecretsFound;
-							int tf = ls.prevLiveTreasureFound - ls.baseTreasureFound;
+							int sf = ls.prevLiveSecretsFound;
+							int tf = ls.prevLiveTreasureFound;
 							ls.splits[prevIdx].secretsFound  = ( sf > 0 ) ? sf : 0;
 							ls.splits[prevIdx].treasureFound = ( tf > 0 ) ? tf : 0;
-							ls.baseSecretsFound  += ls.splits[prevIdx].secretsFound;
-							ls.baseTreasureFound += ls.splits[prevIdx].treasureFound;
 						}
 					}
 
@@ -4611,9 +7091,146 @@ static void LS_UpdateLayout( void ) {
 	}
 }
 
+/* =====================================================================
+   Column layout  (shared between column headers and split rows)
+   ===================================================================== */
+
+/* Cached column positions recomputed each frame by LS_UpdateLayout */
+static struct {
+	int timeRight;    /* right edge of time column (panel right - 4) */
+	int timeColW;     /* width of the time column */
+	int deltaColW;    /* width of a single delta column (+/- or Best +/-) */
+	int pbDeltaR;     /* right edge of PB delta column */
+	int goldDeltaR;   /* right edge of gold delta column */
+} ls_cols;
+
+/* Recompute column layout.  Must be called after LS_UpdateLayout()
+   and after the panel x position is known. */
+static void LS_ComputeColumns( float panelX ) {
+	qboolean showDeltas     = ls_showdeltasCvar     ? ls_showdeltasCvar->integer     : 1;
+	qboolean showBestDeltas = ls_showbestdeltasCvar ? ls_showbestdeltasCvar->integer : 1;
+
+	ls_cols.timeRight = (int)( panelX + LS_PANEL_W - 4 );
+	ls_cols.timeColW  = (int)( 8 * LS_CHAR_SZ + 4 );
+	ls_cols.deltaColW = (int)( 7 * LS_SMALL_SZ + 4 );
+
+	/* Cap columns to prevent overflow at high scale or narrow width */
+	if ( ls_cols.timeColW > (int)( LS_PANEL_W * 0.40f ) )
+		ls_cols.timeColW = (int)( LS_PANEL_W * 0.40f );
+	if ( ls_cols.deltaColW > (int)( LS_PANEL_W * 0.22f ) )
+		ls_cols.deltaColW = (int)( LS_PANEL_W * 0.22f );
+
+	ls_cols.pbDeltaR   = ls_cols.timeRight - ls_cols.timeColW;
+	ls_cols.goldDeltaR = showDeltas
+		? ls_cols.pbDeltaR - ls_cols.deltaColW
+		: ls_cols.pbDeltaR;
+}
+
+/* =====================================================================
+   Multi-color string helper
+   ===================================================================== */
+
+/*
+LS_DrawStringMulti  –  draw multiple text segments on one line, each
+with its own color.  Segments are drawn left-to-right starting at (x,y).
+Returns the final x position (useful for chaining).
+
+Usage:
+    LS_DrawStringMulti( x, y, sz, 3,
+        "PB:", labelClr,  "  ", labelClr,  "12:34.56", valClr );
+
+The TAB character '\t' inside a segment string advances x to the next
+multiple of (4 * charSize) relative to the starting x, providing simple
+column-alignment.
+*/
+static int LS_DrawStringMulti( int startX, int yy, float charSize,
+							   int numSegments, ... ) {
+	va_list ap;
+	int cx = startX;
+	int seg;
+
+	va_start( ap, numSegments );
+	for ( seg = 0; seg < numSegments; seg++ ) {
+		const char *text  = va_arg( ap, const char * );
+		float      *color = va_arg( ap, float * );
+		const char *p;
+		int tabStop = (int)( 4 * charSize );
+		if ( tabStop < 1 ) tabStop = 1;
+
+		for ( p = text; *p; p++ ) {
+			if ( *p == '\t' ) {
+				/* advance to next tab stop relative to startX */
+				int rel = cx - startX;
+				cx = startX + ( ( rel / tabStop ) + 1 ) * tabStop;
+			} else {
+				char tmp[2] = { *p, '\0' };
+				LS_DrawString( cx, yy, charSize, tmp, color );
+				cx += (int)charSize;
+			}
+		}
+	}
+	va_end( ap );
+	return cx;
+}
+
+/* LS_DrawStringMultiR  –  right-aligned version: measures total width
+   first, then draws ending at rightEdge. */
+static void LS_DrawStringMultiR( int rightEdge, int yy, float charSize,
+								 int numSegments, ... ) {
+	va_list ap;
+	int totalW = 0, seg;
+	const char *texts[8];
+	float *colors[8];
+
+	if ( numSegments > 8 ) numSegments = 8;
+
+	/* First pass: measure total width */
+	va_start( ap, numSegments );
+	for ( seg = 0; seg < numSegments; seg++ ) {
+		texts[seg]  = va_arg( ap, const char * );
+		colors[seg] = va_arg( ap, float * );
+		totalW += (int)strlen( texts[seg] ) * (int)charSize;
+	}
+	va_end( ap );
+
+	/* Second pass: draw from computed startX */
+	{
+		int cx = rightEdge - totalW;
+		for ( seg = 0; seg < numSegments; seg++ ) {
+			LS_DrawString( cx, yy, charSize, texts[seg], colors[seg] );
+			cx += (int)strlen( texts[seg] ) * (int)charSize;
+		}
+	}
+}
+
 static void LS_DrawStringR( int rightEdge, int y, float charSize, const char *str, float *color ) {
 	int w = (int)strlen( str ) * (int)charSize;
 	LS_DrawString( rightEdge - w, y, charSize, str, color );
+}
+
+/* Draw "Label: Value" pair with tight spacing.
+   colAlign 0 = right-aligned to rightE, 1 = left-aligned from leftE.
+   Label and value get separate colors; a 1-char gap separates them. */
+static void LS_DrawLabelValue( int leftE, int rightE, int colAl, int yy,
+							   const char *label, float *labelClr,
+							   const char *value, float *valueClr ) {
+	int labelLen = (int)strlen( label );
+	int valueLen = (int)strlen( value );
+	int totalW   = ( labelLen + 1 + valueLen ) * (int)LS_SMALL_SZ;  /* label + space + value */
+
+	if ( colAl == 1 ) {
+		/* left-aligned */
+		int cx = leftE;
+		LS_DrawString( cx, yy, LS_SMALL_SZ, label, labelClr );
+		cx += ( labelLen + 1 ) * (int)LS_SMALL_SZ;
+		LS_DrawString( cx, yy, LS_SMALL_SZ, value, valueClr );
+	} else {
+		/* right-aligned */
+		int cx = rightE - totalW;
+		LS_DrawString( cx, yy, LS_SMALL_SZ, label, labelClr );
+		cx += ( labelLen + 1 ) * (int)LS_SMALL_SZ;
+		LS_DrawString( cx, yy, LS_SMALL_SZ, value, valueClr );
+	}
 }
 
 /* helper: draw a split row */
@@ -4628,11 +7245,11 @@ static void LS_DrawSplitRow( int splitIdx, float x, float y,
 	qboolean isCur  = qfalse;
 	qboolean isDone = ls.splits[splitIdx].splitDone;
 	int cumTime, cumBest, cumPB;
-	int timeRight   = (int)( x + LS_PANEL_W - 4 );
-	int pbDeltaR    = (int)( x + LS_PANEL_W - 40 );
-	int goldDeltaR  = ( ls_showdeltasCvar && ls_showdeltasCvar->integer )
-		? (int)( x + LS_PANEL_W - 72 )
-		: (int)( x + LS_PANEL_W - 40 );
+	int timeRight  = ls_cols.timeRight;
+	int timeColW   = ls_cols.timeColW;
+	int deltaColW  = ls_cols.deltaColW;
+	int pbDeltaR   = ls_cols.pbDeltaR;
+	int goldDeltaR = ls_cols.goldDeltaR;
 	int di = LS_CurDiffIdx();
 
 	if ( splitIdx == ls.currentMapIndex ) {
@@ -4664,16 +7281,16 @@ static void LS_DrawSplitRow( int splitIdx, float x, float y,
 
 	{
 		/* Name column: available space = panel width minus visible columns */
-		float nameMaxPx = LS_PANEL_W - 40; /* base: time column */
-		if ( ls_showdeltasCvar && ls_showdeltasCvar->integer ) nameMaxPx -= 32;
-		if ( ls_showbestdeltasCvar && ls_showbestdeltasCvar->integer ) nameMaxPx -= 32;
+		float nameMaxPx = LS_PANEL_W - (float)timeColW - 8; /* base: time column */
+		if ( ls_showdeltasCvar && ls_showdeltasCvar->integer ) nameMaxPx -= (float)deltaColW;
+		if ( ls_showbestdeltasCvar && ls_showbestdeltasCvar->integer ) nameMaxPx -= (float)deltaColW;
 		const char *dispName = LS_SplitDisplayName( splitIdx, nameMaxPx, LS_CHAR_SZ );
 		LS_DrawString( (int)( x + 3 ), (int)( y + 1 ), LS_CHAR_SZ, dispName, nameClr );
 	}
 
 	cumTime = LS_CumulativeTime( splitIdx );
 	cumBest = LS_CumulativeBest( splitIdx );
-	cumPB   = LS_CumulativePB( splitIdx );
+	cumPB   = LS_ComparisonCumulative( splitIdx );
 
 	/* gold delta column (segment vs gold) */
 	if ( ls_showbestdeltasCvar && ls_showbestdeltasCvar->integer && !ls.splits[splitIdx].splitSkipped ) {
@@ -4709,17 +7326,17 @@ static void LS_DrawSplitRow( int splitIdx, float x, float y,
 		}
 	}
 
-	/* PB delta column (cumulative actual vs cumulative PB segments) */
-	if ( ( ls_showdeltasCvar && ls_showdeltasCvar->integer ) &&  /* separate cvar from gold */
+	/* Comparison delta column (cumulative actual vs comparison target) */
+	if ( ( ls_showdeltasCvar && ls_showdeltasCvar->integer ) &&
 		 !ls.splits[splitIdx].splitSkipped &&
 		 cumPB > 0 && ( isDone || isCur ) ) {
 		qboolean showPB = qfalse;
 		if ( isDone ) {
 			showPB = qtrue;
 		} else if ( isCur ) {
-			int pbSeg = ls.splits[splitIdx].d[di].pbSegmentMs;
+			int cmpSeg = LS_ComparisonSegment( splitIdx );
 			int segTime = ls.splits[splitIdx].currentTimeMs;
-			if ( pbSeg > 0 && segTime >= pbSeg - 10000 ) {
+			if ( cmpSeg > 0 && segTime >= cmpSeg - 10000 ) {
 				showPB = qtrue;
 			}
 		}
@@ -4744,18 +7361,24 @@ static void LS_DrawSplitRow( int splitIdx, float x, float y,
 			LS_DrawStringR( timeRight, (int)( y + 1 ), LS_CHAR_SZ, timeBuf, timeWhite );
 		}
 	} else if ( isCur ) {
-		if ( ls.splits[splitIdx].d[di].pbSegmentMs > 0 ) {
-			int cumPrev = LS_CumulativeTime( splitIdx - 1 );
-			int cumWithPb = cumPrev + ls.splits[splitIdx].d[di].pbSegmentMs;
-			LS_FormatTime( cumWithPb, timeBuf, sizeof( timeBuf ) );
+		int cumCmpCur = LS_ComparisonCumulative( splitIdx );
+		if ( cumCmpCur > 0 ) {
+			LS_FormatTime( cumCmpCur, timeBuf, sizeof( timeBuf ) );
 			LS_DrawStringR( timeRight, (int)( y + 1 ), LS_CHAR_SZ, timeBuf, currentMapC );
 		} else if ( cumBest > 0 ) {
 			LS_FormatTime( cumBest, timeBuf, sizeof( timeBuf ) );
 			LS_DrawStringR( timeRight, (int)( y + 1 ), LS_CHAR_SZ, timeBuf, currentMapC );
 		}
-	} else if ( cumBest > 0 ) {
-		LS_FormatTime( cumBest, timeBuf, sizeof( timeBuf ) );
-		LS_DrawStringR( timeRight, (int)( y + 1 ), LS_CHAR_SZ, timeBuf, timeDim );
+	} else {
+		/* Future splits: show comparison cumulative if available, else best */
+		int cumCmp = LS_ComparisonCumulative( splitIdx );
+		if ( cumCmp > 0 ) {
+			LS_FormatTime( cumCmp, timeBuf, sizeof( timeBuf ) );
+			LS_DrawStringR( timeRight, (int)( y + 1 ), LS_CHAR_SZ, timeBuf, timeDim );
+		} else if ( cumBest > 0 ) {
+			LS_FormatTime( cumBest, timeBuf, sizeof( timeBuf ) );
+			LS_DrawStringR( timeRight, (int)( y + 1 ), LS_CHAR_SZ, timeBuf, timeDim );
+		}
 	}
 }
 
@@ -4781,7 +7404,7 @@ static void LS_Draw( void ) {
 	qboolean showBestDeltas = ls_showbestdeltasCvar ? ls_showbestdeltasCvar->integer : 1;
 	qboolean showAtt        = ls_showattCvar        ? ls_showattCvar->integer        : 1;
 	int      colAlign   = ls_alignCvar      ? ls_alignCvar->integer      : 0; /* 0=right, 1=left */
-	int leftEdge, rightEdge, labelsX, labelsValR;
+	int leftEdge, rightEdge;
 
 	/* colours */
 	vec4_t panelBg     = { 0.04f, 0.04f, 0.06f, 0.0f }; /* alpha set below from ls_bgalpha */
@@ -4858,16 +7481,15 @@ static void LS_Draw( void ) {
 	}
 	y = LS_HUD_Y;
 
+	/* Compute shared column layout for split rows and headers */
+	LS_ComputeColumns( x );
+
 	/* Content positioning helpers for alignment mode */
 	leftEdge  = (int)( x + 3 );
 	if ( colAlign == 1 ) {
-		rightEdge  = (int)( x + LS_PANEL_W - 1 );
-		labelsX    = leftEdge;
-		labelsValR = (int)( x + 42 );
+		rightEdge = (int)( x + LS_PANEL_W - 3 );
 	} else {
-		rightEdge  = (int)( x + LS_PANEL_W - 4 );
-		labelsX    = (int)( x + LS_PANEL_W - 55 );
-		labelsValR = rightEdge;
+		rightEdge = (int)( x + LS_PANEL_W - 4 );
 	}
 
 	lastVisIdx = ls.numVisible - 1;
@@ -4987,7 +7609,7 @@ static void LS_Draw( void ) {
 		else                                                         dotColor = headerColor;
 
 		skill = Cvar_VariableIntegerValue( "g_gameskill" );
-		if ( skill < 1 || skill > 3 ) skill = Cvar_VariableIntegerValue( "g_spSkill" );
+		if ( skill < 1 || skill > 3 ) skill = 2;
 		switch ( skill ) {
 			case 1:  skillName = "Don't hurt me."; break;
 			case 2:  skillName = "Bring 'em on!"; break;
@@ -4999,15 +7621,7 @@ static void LS_Draw( void ) {
 		switch ( ls.runMode ) {
 		case LS_MODE_MISSION:
 			if ( ls.runMission >= 1 && ls.runMission <= LS_NUM_MISSION_GROUPS ) {
-				const char *opName;
-				switch ( ls.runMission ) {
-					case 1: opName = "Ominous Rumors & Dark Secret"; break;
-					case 2: opName = "Weapons of Vengeance"; break;
-					case 3: opName = "Deadly Designs"; break;
-					case 4: opName = "Deathshead's Playground"; break;
-					case 5: opName = "Return Engagement & Op. Resurrection"; break;
-					default: opName = "Mission"; break;
-				}
+				const char *opName = ls_missionGroups[ls.runMission - 1].name;
 				Com_sprintf( headerBuf, sizeof( headerBuf ), "%s", opName );
 			} else {
 				Com_sprintf( headerBuf, sizeof( headerBuf ), "%s", skillName );
@@ -5017,7 +7631,7 @@ static void LS_Draw( void ) {
 			Q_strncpyz( headerBuf, "Individual Level", sizeof( headerBuf ) );
 			break;
 		default:
-			Q_strncpyz( headerBuf, skillName, sizeof( headerBuf ) );
+			Q_strncpyz( headerBuf, "Full Game", sizeof( headerBuf ) );
 			break;
 		}
 
@@ -5037,23 +7651,22 @@ static void LS_Draw( void ) {
 
 		{
 			/* Truncate header if it doesn't fit: try full, then trim with ".." */
+			/* Reserve space for difficulty tag [IADI] + optional [100%] tag */
+			const char *diffTag = ls_diffShortTags[LS_DiffIdx( skill )];
+			int diffTagW = (int)( ( strlen( diffTag ) + 2 ) * LS_SMALL_SZ + LS_CHAR_SZ * 0.6f ); /* [TAG] + gap */
+			int pctTagW  = ( ls_100pctCvar && ls_100pctCvar->integer )
+				? (int)( 6 * LS_SMALL_SZ + LS_SMALL_SZ * 0.4f ) : 0;  /* [100%] + gap */
 			int dotOffset = (int)( LS_CHAR_SZ * 1.4f );
 			int headerX = (int)( x + 3 ) + dotOffset;
 			int counterW = (int)strlen( counterBuf ) * (int)LS_CHAR_SZ + 6;
-			int availW = (int)( x + LS_PANEL_W - 3 ) - headerX - counterW;
+			int availW = (int)( x + LS_PANEL_W - 3 ) - headerX - counterW - diffTagW - pctTagW;
 			int headerW = (int)strlen( headerBuf ) * (int)LS_CHAR_SZ;
 
 			if ( headerW > availW && ls.runMode == LS_MODE_MISSION ) {
-				/* Try short name first */
-				const char *shortOp = "";
-				switch ( ls.runMission ) {
-					case 1: shortOp = "Ominous Rumors"; break;
-					case 2: shortOp = "Vengeance"; break;
-					case 3: shortOp = "Deadly Designs"; break;
-					case 4: shortOp = "Deathshead"; break;
-					case 5: shortOp = "Return & Resurrection"; break;
-					default: shortOp = "Mission"; break;
-				}
+				/* Try short name from mission group table */
+				const char *shortOp = "Mission";
+				if ( ls.runMission >= 1 && ls.runMission <= LS_NUM_MISSION_GROUPS )
+					shortOp = ls_missionGroups[ls.runMission - 1].shortName;
 				Q_strncpyz( headerBuf, shortOp, sizeof( headerBuf ) );
 				headerW = (int)strlen( headerBuf ) * (int)LS_CHAR_SZ;
 				if ( headerW > availW ) {
@@ -5073,11 +7686,20 @@ static void LS_Draw( void ) {
 
 			LS_DrawString( headerX, (int)( y + 4 ), LS_CHAR_SZ, headerBuf, headerColor );
 
-			/* [100%] tag in header when 100% category is enabled */
-			if ( ls_100pctCvar && ls_100pctCvar->integer ) {
-				vec4_t pctTagClr = { 0.25f, 0.85f, 0.25f, 0.80f };
+			/* [DHM]/[BEO]/[IADI] difficulty tag in header */
+			{
+				const char *diffTag = ls_diffShortTags[LS_DiffIdx( skill )];
+				char diffBuf[12];
 				int tagX = headerX + (int)strlen( headerBuf ) * (int)LS_CHAR_SZ + (int)( LS_CHAR_SZ * 0.6f );
-				LS_DrawString( tagX, (int)( y + 4 ), LS_SMALL_SZ, "[100%]", pctTagClr );
+				Com_sprintf( diffBuf, sizeof( diffBuf ), "[%s]", diffTag );
+				LS_DrawString( tagX, (int)( y + 4 ), LS_SMALL_SZ, diffBuf, headerColor );
+
+				/* [100%] tag after difficulty tag when 100% category is enabled */
+				if ( ls_100pctCvar && ls_100pctCvar->integer ) {
+					vec4_t pctTagClr = { 0.25f, 0.85f, 0.25f, 0.80f };
+					int pctX = tagX + (int)strlen( diffBuf ) * (int)LS_SMALL_SZ + (int)( LS_SMALL_SZ * 0.4f );
+					LS_DrawString( pctX, (int)( y + 4 ), LS_SMALL_SZ, "[100%]", pctTagClr );
+				}
 			}
 		}
 
@@ -5112,20 +7734,16 @@ static void LS_Draw( void ) {
 	if ( showSeps ) LS_FillRect( x + 2, y, LS_PANEL_W - 4, 1, sepColor );
 	y += 2 * LS_SCALE;
 
-	/* Column header labels */
+	/* Column header labels - use shared column positions (ls_cols) */
 	if ( showHeader ) {
-		int colPbR    = (int)( x + LS_PANEL_W - 40 );
-		/* Best +/- header shifts right into PB column when PB deltas are hidden */
-		int colGoldR  = showDeltas ? (int)( x + LS_PANEL_W - 72 ) : colPbR;
-		int colTimeR  = (int)( x + LS_PANEL_W - 4 );
-		int hdrTextY  = (int)( y + 1 );  /* nudge down to vertically center in header row */
+		int hdrTextY  = (int)( y + 1 );
 		if ( showBestDeltas ) {
-			LS_DrawStringR( colGoldR, hdrTextY, LS_SMALL_SZ, "Best +/-", labelColor );
+			LS_DrawStringR( ls_cols.goldDeltaR, hdrTextY, LS_SMALL_SZ, "Best +/-", labelColor );
 		}
 		if ( showDeltas ) {
-			LS_DrawStringR( colPbR,   hdrTextY, LS_SMALL_SZ, "+/-", labelColor );
+			LS_DrawStringR( ls_cols.pbDeltaR,   hdrTextY, LS_SMALL_SZ, "+/-", labelColor );
 		}
-		LS_DrawStringR( colTimeR, hdrTextY, LS_SMALL_SZ, "Time", labelColor );
+		LS_DrawStringR( ls_cols.timeRight, hdrTextY, LS_SMALL_SZ, "Time", labelColor );
 		y += 6 * LS_SCALE;
 
 		if ( showSeps ) LS_FillRect( x + 2, y, LS_PANEL_W - 4, 1, sepColor );
@@ -5181,11 +7799,18 @@ static void LS_Draw( void ) {
 	/* ======== IL: flow layout – timer then labels, each advances y ======== */
 	{
 		int activeIdx = LS_ActiveRealSplit();
+		int fallbackIdx = ( activeIdx >= 0 ) ? activeIdx : LS_NextRealSplit( ls.modeFirstIdx - 1 );
 
 		/* Big timer */
 		if ( showTimer ) {
-			int totalIGT = LS_CumulativeTime( ls.modeLastIdx );
-			LS_FormatTime( totalIGT, timeBuf, sizeof( timeBuf ) );
+			int timerMs;
+			if ( ls_timingCvar && ls_timingCvar->integer == LS_TIMING_REALTIME ) {
+				timerMs = ls.runFinished ? ls.runSavedRealMs :
+						  ( ls.active ? ( Sys_Milliseconds() - ls.runStartRealMs ) : 0 );
+			} else {
+				timerMs = LS_CumulativeTime( ls.modeLastIdx );
+			}
+			LS_FormatTime( timerMs, timeBuf, sizeof( timeBuf ) );
 			if ( colAlign == 1 ) {
 				LS_DrawStringR( rightEdge, (int)( y + 2 ), LS_BIG_SZ, timeBuf,
 					ls.runFinished ? finishedC : timerColor );
@@ -5198,25 +7823,37 @@ static void LS_Draw( void ) {
 
 		/* PB label row */
 		if ( showPb ) {
-			LS_DrawString( labelsX, (int)( y + 1 ), LS_SMALL_SZ, "PB:", labelColor );
-			if ( activeIdx >= 0 && ls.splits[activeIdx].d[di].pbSegmentMs > 0 ) {
-				LS_FormatTime( ls.splits[activeIdx].d[di].pbSegmentMs, timeBuf, sizeof( timeBuf ) );
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, timeBuf, timeWhite );
-			} else {
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, "-----", noDataColor );
+			int cmpSeg = ( fallbackIdx >= 0 ) ? LS_ComparisonSegment( fallbackIdx ) : 0;
+			const char *cmpLabel = "PB:";
+			const char *valStr;
+			float *valClr;
+			if ( ls_compareCvar ) {
+				switch ( ls_compareCvar->integer ) {
+				case LS_COMPARE_BEST:    cmpLabel = "Best:"; break;
+				case LS_COMPARE_AVERAGE: cmpLabel = "Avg:"; break;
+				}
 			}
+			if ( cmpSeg > 0 ) {
+				LS_FormatTime( cmpSeg, timeBuf, sizeof( timeBuf ) );
+				valStr = timeBuf; valClr = timeWhite;
+			} else {
+				valStr = "-----"; valClr = noDataColor;
+			}
+			LS_DrawLabelValue( leftEdge, rightEdge, colAlign, (int)( y + 1 ), cmpLabel, labelColor, valStr, valClr );
 			y += 6 * LS_SCALE;
 		}
 
 		/* Best label row */
 		if ( showBest ) {
-			LS_DrawString( labelsX, (int)( y + 1 ), LS_SMALL_SZ, "Best:", labelColor );
-			if ( activeIdx >= 0 && ls.splits[activeIdx].d[di].bestTimeMs > 0 ) {
-				LS_FormatTime( ls.splits[activeIdx].d[di].bestTimeMs, timeBuf, sizeof( timeBuf ) );
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, timeBuf, goldColor );
+			const char *valStr;
+			float *valClr;
+			if ( fallbackIdx >= 0 && ls.splits[fallbackIdx].d[di].bestTimeMs > 0 ) {
+				LS_FormatTime( ls.splits[fallbackIdx].d[di].bestTimeMs, timeBuf, sizeof( timeBuf ) );
+				valStr = timeBuf; valClr = goldColor;
 			} else {
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, "-----", noDataColor );
+				valStr = "-----"; valClr = noDataColor;
 			}
+			LS_DrawLabelValue( leftEdge, rightEdge, colAlign, (int)( y + 1 ), "Best:", labelColor, valStr, valClr );
 			y += 6 * LS_SCALE;
 		}
 	}
@@ -5225,11 +7862,18 @@ static void LS_Draw( void ) {
 	/* ======== Non-IL: flow layout – each section advances y ======== */
 	{
 		int activeIdx = LS_ActiveRealSplit();
+		int fallbackIdx = ( activeIdx >= 0 ) ? activeIdx : LS_NextRealSplit( ls.modeFirstIdx - 1 );
 
 		/* --- Big timer --- */
 		if ( showTimer ) {
-			int totalIGT = LS_CumulativeTime( ls.modeLastIdx );
-			LS_FormatTime( totalIGT, timeBuf, sizeof( timeBuf ) );
+			int timerMs;
+			if ( ls_timingCvar && ls_timingCvar->integer == LS_TIMING_REALTIME ) {
+				timerMs = ls.runFinished ? ls.runSavedRealMs :
+						  ( ls.active ? ( Sys_Milliseconds() - ls.runStartRealMs ) : 0 );
+			} else {
+				timerMs = LS_CumulativeTime( ls.modeLastIdx );
+			}
+			LS_FormatTime( timerMs, timeBuf, sizeof( timeBuf ) );
 			if ( colAlign == 1 ) {
 				LS_DrawStringR( rightEdge, (int)( y + 1 ), LS_BIG_SZ, timeBuf,
 					ls.runFinished ? finishedC : timerColor );
@@ -5240,27 +7884,39 @@ static void LS_Draw( void ) {
 			y += 8 * LS_SCALE;
 		}
 
-		/* --- PB label row --- */
+		/* --- Comparison label row --- */
 		if ( showPb ) {
-			LS_DrawString( labelsX, (int)( y + 1 ), LS_SMALL_SZ, "PB:", labelColor );
-			if ( activeIdx >= 0 && ls.splits[activeIdx].d[di].pbSegmentMs > 0 ) {
-				LS_FormatTime( ls.splits[activeIdx].d[di].pbSegmentMs, timeBuf, sizeof( timeBuf ) );
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, timeBuf, timeWhite );
-			} else {
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, "-----", noDataColor );
+			int cmpSeg = ( fallbackIdx >= 0 ) ? LS_ComparisonSegment( fallbackIdx ) : 0;
+			const char *cmpLabel = "PB:";
+			const char *valStr;
+			float *valClr;
+			if ( ls_compareCvar ) {
+				switch ( ls_compareCvar->integer ) {
+				case LS_COMPARE_BEST:    cmpLabel = "Best:"; break;
+				case LS_COMPARE_AVERAGE: cmpLabel = "Avg:"; break;
+				}
 			}
+			if ( cmpSeg > 0 ) {
+				LS_FormatTime( cmpSeg, timeBuf, sizeof( timeBuf ) );
+				valStr = timeBuf; valClr = timeWhite;
+			} else {
+				valStr = "-----"; valClr = noDataColor;
+			}
+			LS_DrawLabelValue( leftEdge, rightEdge, colAlign, (int)( y + 1 ), cmpLabel, labelColor, valStr, valClr );
 			y += 5 * LS_SCALE;
 		}
 
 		/* --- Best label row (only in big-timer area when segment timer is hidden) --- */
 		if ( showBest && !showSeg ) {
-			LS_DrawString( labelsX, (int)( y + 1 ), LS_SMALL_SZ, "Best:", labelColor );
-			if ( activeIdx >= 0 && ls.splits[activeIdx].d[di].bestTimeMs > 0 ) {
-				LS_FormatTime( ls.splits[activeIdx].d[di].bestTimeMs, timeBuf, sizeof( timeBuf ) );
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, timeBuf, goldColor );
+			const char *valStr;
+			float *valClr;
+			if ( fallbackIdx >= 0 && ls.splits[fallbackIdx].d[di].bestTimeMs > 0 ) {
+				LS_FormatTime( ls.splits[fallbackIdx].d[di].bestTimeMs, timeBuf, sizeof( timeBuf ) );
+				valStr = timeBuf; valClr = goldColor;
 			} else {
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, "-----", noDataColor );
+				valStr = "-----"; valClr = noDataColor;
 			}
+			LS_DrawLabelValue( leftEdge, rightEdge, colAlign, (int)( y + 1 ), "Best:", labelColor, valStr, valClr );
 			y += 5 * LS_SCALE;
 		}
 	}
@@ -5269,6 +7925,7 @@ static void LS_Draw( void ) {
 	if ( showSeg ) {
 		int segTime = 0;
 		int activeIdx = LS_ActiveRealSplit();
+		int segFallback = ( activeIdx >= 0 ) ? activeIdx : LS_NextRealSplit( ls.modeFirstIdx - 1 );
 		float segFontSz = showTimer ? LS_MED_SZ : LS_BIG_SZ;
 		float segAreaH  = showTimer ? 7 * LS_SCALE : 7 * LS_SCALE;
 		int segTextOff = showTimer ? 1 : -3; /* move segment timer up when main timer hidden */
@@ -5285,13 +7942,15 @@ static void LS_Draw( void ) {
 		}
 
 		if ( showBest ) {
-			LS_DrawString( labelsX, (int)( y + 1 ), LS_SMALL_SZ, "Best:", labelColor );
-			if ( activeIdx >= 0 && ls.splits[activeIdx].d[di].bestTimeMs > 0 ) {
-				LS_FormatTime( ls.splits[activeIdx].d[di].bestTimeMs, timeBuf, sizeof( timeBuf ) );
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, timeBuf, goldColor );
+			const char *valStr;
+			float *valClr;
+			if ( segFallback >= 0 && ls.splits[segFallback].d[di].bestTimeMs > 0 ) {
+				LS_FormatTime( ls.splits[segFallback].d[di].bestTimeMs, timeBuf, sizeof( timeBuf ) );
+				valStr = timeBuf; valClr = goldColor;
 			} else {
-				LS_DrawStringR( labelsValR, (int)( y + 1 ), LS_SMALL_SZ, "-----", noDataColor );
+				valStr = "-----"; valClr = noDataColor;
 			}
+			LS_DrawLabelValue( leftEdge, rightEdge, colAlign, (int)( y + 1 ), "Best:", labelColor, valStr, valClr );
 		}
 		y += segAreaH;
 	}
@@ -5408,14 +8067,14 @@ static void LS_Draw( void ) {
 			 ls.splits[activeIdx].d[di].bestTimeMs > 0 ) {
 			int save = ls.splits[activeIdx].d[di].pbSegmentMs - ls.splits[activeIdx].d[di].bestTimeMs;
 			if ( save > 0 ) {
-				LS_FormatDelta( save, deltaBuf, sizeof( deltaBuf ) );
-				valW = (int)strlen( deltaBuf ) * (int)LS_SMALL_SZ;
+				LS_FormatTime( save, timeBuf, sizeof( timeBuf ) );
+				valW = (int)strlen( timeBuf ) * (int)LS_SMALL_SZ;
 				valX = (int)( x + LS_PANEL_W - 4 ) - valW;
-				LS_DrawString( valX, (int)( y + 1 ), LS_SMALL_SZ, deltaBuf, aheadColor );
+				LS_DrawString( valX, (int)( y + 1 ), LS_SMALL_SZ, timeBuf, timeWhite );
 			} else {
 				valW = 4 * (int)LS_SMALL_SZ;
 				valX = (int)( x + LS_PANEL_W - 4 ) - valW;
-				LS_DrawString( valX, (int)( y + 1 ), LS_SMALL_SZ, "0.00", goldColor );
+				LS_DrawString( valX, (int)( y + 1 ), LS_SMALL_SZ, "0.00", timeWhite );
 			}
 		} else {
 			valW = 5 * (int)LS_SMALL_SZ;
@@ -5496,14 +8155,14 @@ static void LS_Draw( void ) {
 			}
 		} else {
 			/* During run: show only current segment's per-map values.
-			   Subtract cumulative base (player->numSecretsFound is
-			   cumulative across all maps) to get per-map found count.
+			   liveSecretsFound is already per-map (resets each map
+			   load), so no base subtraction needed.
 			   Totals come from the hardcoded map table.
 			   0/0 = green (no collectibles on this map). */
 			int curIdx   = ls.currentMapIndex;
-			int segSecF  = ls.liveSecretsFound  - ls.baseSecretsFound;
+			int segSecF  = ls.liveSecretsFound;
 			int segSecT  = ( curIdx >= 0 && curIdx < ls.numMaps ) ? ls.splits[curIdx].secretsTotal : 0;
-			int segTresF = ls.liveTreasureFound - ls.baseTreasureFound;
+			int segTresF = ls.liveTreasureFound;
 			int segTresT = ( curIdx >= 0 && curIdx < ls.numMaps ) ? ls.splits[curIdx].treasureTotal : 0;
 			if ( segSecF  < 0 ) segSecF  = 0;
 			if ( segTresF < 0 ) segTresF = 0;
@@ -5596,6 +8255,10 @@ static void LS_DrawResetConfirmPopup( void ) {
 		float popY = ( 480.0f - popH ) * 0.5f - 40.0f;
 		float lineH = 12.0f;
 		float charSz = 6.0f;
+		const char *titleStr;
+		const char *subtitleStr;
+		char subBuf[64];
+		int titleLen, subLen;
 
 		vec4_t bgColor    = { 0.0f,  0.0f,  0.0f, 0.85f };
 		vec4_t borderClr  = { 0.8f,  0.6f,  0.0f, 0.90f };
@@ -5605,17 +8268,39 @@ static void LS_DrawResetConfirmPopup( void ) {
 		vec4_t noClr      = { 1.0f,  0.35f, 0.3f, 1.0f  };
 		vec4_t cancelClr  = { 0.6f,  0.6f,  0.6f, 1.0f  };
 
+		/* Build dynamic title & subtitle based on what's unsaved */
+		if ( ls.runFinished && LS_HasNewPB() ) {
+			int gc = LS_CountNewGolds();
+			titleStr = "NEW PB!";
+			if ( gc > 0 ) {
+				Com_sprintf( subBuf, sizeof( subBuf ), "PB + %d gold%s. Save?", gc, gc > 1 ? "s" : "" );
+			} else {
+				Q_strncpyz( subBuf, "Save new Personal Best?", sizeof( subBuf ) );
+			}
+			subtitleStr = subBuf;
+		} else if ( LS_HasNewGolds() ) {
+			int gc = LS_CountNewGolds();
+			Com_sprintf( subBuf, sizeof( subBuf ), "NEW GOLD x%d", gc );
+			titleStr = subBuf;
+			subtitleStr = "Save before reset?";
+		} else {
+			titleStr = "UNSAVED RUN!";
+			subtitleStr = "Save before reset?";
+		}
+		titleLen = (int)strlen( titleStr );
+		subLen = (int)strlen( subtitleStr );
+
 		/* Background */
 		SCR_FillRect( popX - 1, popY - 1, popW + 2, popH + 2, borderClr );
 		SCR_FillRect( popX, popY, popW, popH, bgColor );
 
 		/* Title */
-		SCR_DrawStringExt( (int)( popX + popW * 0.5f - 11 * charSz * 0.5f ),
-			(int)( popY + 6 ), (int)charSz, "UNSAVED RUN!", titleClr, qtrue );
+		SCR_DrawStringExt( (int)( popX + popW * 0.5f - titleLen * charSz * 0.5f ),
+			(int)( popY + 6 ), (int)charSz, titleStr, titleClr, qtrue );
 
 		/* Subtitle */
-		SCR_DrawStringExt( (int)( popX + popW * 0.5f - 15 * charSz * 0.5f ),
-			(int)( popY + 6 + lineH + 2 ), (int)charSz, "Save before reset?", textClr, qtrue );
+		SCR_DrawStringExt( (int)( popX + popW * 0.5f - subLen * charSz * 0.5f ),
+			(int)( popY + 6 + lineH + 2 ), (int)charSz, subtitleStr, textClr, qtrue );
 
 		/* Options */
 		SCR_DrawStringExt( (int)( popX + 20 ),
@@ -5641,10 +8326,8 @@ static void LS_DrawIGTTimer( void ) {
 	vec4_t shadowColor = { 0.0f, 0.0f, 0.0f, 0.65f };
 
 	if ( !ls_igttimerCvar || !ls_igttimerCvar->integer ) {
-		/* In external-only mode, force the IGT timer on even if ls_igttimer is 0 */
-		if ( !LS_ExtEnabled() ) return;
+		return;
 	}
-	if ( !ls.active && !ls.runFinished ) return;
 
 	timerX     = ls_igttimer_xCvar ? ls_igttimer_xCvar->value : 280.0f;
 	timerY     = ls_igttimer_yCvar ? ls_igttimer_yCvar->value : 440.0f;
@@ -5702,13 +8385,215 @@ static void LS_DrawIGTTimer( void ) {
 	}
 }
 
+/*
+===================
+LS_DrawCenterAlert
+
+Draws the centered alert with bounce-in + fade-out animation.
+Total duration: ~2.5s (0.3s bounce in, 1.5s hold, 0.7s fade out)
+===================
+*/
+static void LS_DrawCenterAlert( void ) {
+	int now, elapsed;
+	float alpha, scale, yOff;
+	float t;
+	int textLen, textW;
+	float boxW, boxH, boxX, boxY;
+	vec4_t bgColor, textColor;
+	const float charSz = 8.0f;
+
+	if ( !ls.alertStartMs ) return;
+
+	now = Sys_Milliseconds();
+	elapsed = now - ls.alertStartMs;
+
+	if ( elapsed > 2500 ) {
+		ls.alertStartMs = 0;
+		return;
+	}
+
+	/* Phase 1: Bounce in (0-300ms) */
+	if ( elapsed < 300 ) {
+		t = (float)elapsed / 300.0f;
+		/* Overshoot bounce: goes to 1.15 then settles to 1.0 */
+		if ( t < 0.6f ) {
+			scale = t / 0.6f * 1.15f;
+		} else {
+			scale = 1.15f - 0.15f * ( ( t - 0.6f ) / 0.4f );
+		}
+		alpha = t;
+	}
+	/* Phase 2: Hold (300-1800ms) */
+	else if ( elapsed < 1800 ) {
+		scale = 1.0f;
+		alpha = 1.0f;
+	}
+	/* Phase 3: Fade out (1800-2500ms) */
+	else {
+		t = (float)( elapsed - 1800 ) / 700.0f;
+		scale = 1.0f;
+		alpha = 1.0f - t;
+	}
+
+	if ( alpha <= 0.0f ) return;
+
+	textLen = (int)strlen( ls.alertText );
+	textW = (int)( textLen * charSz * scale );
+	boxW = textW + 24 * scale;
+	boxH = 20 * scale;
+	boxX = ( 640.0f - boxW ) * 0.5f;
+
+	/* Vertical position: slight slide up during bounce */
+	yOff = ( elapsed < 300 ) ? ( 1.0f - (float)elapsed / 300.0f ) * 8.0f : 0.0f;
+	boxY = 100.0f + yOff;
+
+	/* Background */
+	bgColor[0] = 0.0f; bgColor[1] = 0.0f; bgColor[2] = 0.0f;
+	bgColor[3] = 0.65f * alpha;
+	SCR_FillRect( boxX, boxY, boxW, boxH, bgColor );
+
+	/* Border (1px, same color as text) */
+	{
+		vec4_t borderClr;
+		borderClr[0] = ls.alertColor[0];
+		borderClr[1] = ls.alertColor[1];
+		borderClr[2] = ls.alertColor[2];
+		borderClr[3] = 0.6f * alpha;
+		SCR_FillRect( boxX, boxY, boxW, 1, borderClr );
+		SCR_FillRect( boxX, boxY + boxH - 1, boxW, 1, borderClr );
+		SCR_FillRect( boxX, boxY, 1, boxH, borderClr );
+		SCR_FillRect( boxX + boxW - 1, boxY, 1, boxH, borderClr );
+	}
+
+	/* Text */
+	textColor[0] = ls.alertColor[0];
+	textColor[1] = ls.alertColor[1];
+	textColor[2] = ls.alertColor[2];
+	textColor[3] = alpha;
+	{
+		float tx = boxX + ( boxW - textW ) * 0.5f;
+		float ty = boxY + ( boxH - charSz * scale ) * 0.5f;
+		/* Shadow */
+		vec4_t shadow = { 0.0f, 0.0f, 0.0f, 0.5f * alpha };
+		SCR_DrawStringExt( (int)( tx + 1 ), (int)( ty + 1 ), (int)( charSz * scale ), ls.alertText, shadow, qtrue );
+		SCR_DrawStringExt( (int)tx, (int)ty, (int)( charSz * scale ), ls.alertText, textColor, qtrue );
+	}
+}
+
 /* =====================================================================
    Main entry point
    ===================================================================== */
 
+/*
+===================
+LS_GetModifiedSettingsCount
+
+Returns the number of currently modified gameplay cvars (0 = clean).
+Called from cl_scrn.c to display the indicator.
+===================
+*/
+int LS_GetModifiedSettingsCount( void ) {
+	if ( !ls.initialized ) return 0;
+	return ls.settingsModCount;
+}
+
+/*
+===================
+LS_BuildDemoCvarString
+
+Builds an Info-string containing all tracked gameplay cvars that
+differ from their default values, plus sv_cheats.
+Used by the demo recording system to embed cvar state into the
+demo file (configstring CS_DEMO_CVARS).
+
+Format: \sv_cheats\<0|1>\<name>\<value>\...
+
+Returns the number of modified cvars written (excluding sv_cheats).
+===================
+*/
+int LS_BuildDemoCvarString( char *out, int outSize ) {
+	const lsCvarCheck_t *check;
+	char val[256];
+	int modified = 0;
+
+	out[0] = '\0';
+
+	/* Always include sv_cheats */
+	{
+		char svCheats[16];
+		Cvar_VariableStringBuffer( "sv_cheats", svCheats, sizeof( svCheats ) );
+		Info_SetValueForKey( out, "sv_cheats", svCheats );
+	}
+
+	/* Include all tracked cvars that differ from defaults */
+	for ( check = ls_settingsTable; check->name; check++ ) {
+		float fDefault, fActual, diff;
+		qboolean differs = qfalse;
+
+		Cvar_VariableStringBuffer( check->name, val, sizeof( val ) );
+		fDefault = atof( check->defaultVal );
+		fActual  = atof( val );
+
+		if ( fDefault == 0.0f && fActual == 0.0f ) {
+			if ( Q_stricmp( val, check->defaultVal ) != 0 &&
+				 Q_stricmp( val, "0" ) != 0 &&
+				 Q_stricmp( val, "0.0" ) != 0 &&
+				 Q_stricmp( val, "" ) != 0 ) {
+				differs = qtrue;
+			}
+		} else {
+			diff = fActual - fDefault;
+			if ( diff < 0 ) diff = -diff;
+			if ( diff > 0.001f ) differs = qtrue;
+		}
+
+		if ( differs ) {
+			Info_SetValueForKey( out, check->name, val );
+			modified++;
+		}
+	}
+
+	return modified;
+}
+
+/* Called synchronously from CL_Disconnect so that
+   disconnect;loadgame in the same frame still triggers
+   map-change detection (LS_Frame may never see the
+   disconnected state). */
+void SCR_LiveSplitNotifyDisconnect( void ) {
+	if ( !ls.initialized ) return;
+	ls.prevMapname[0] = '\0';
+}
+
 void SCR_LiveSplitDraw( void ) {
 	qboolean extEnabled = ( ls_typeCvar && ( ls_typeCvar->integer == LS_TYPE_EXTERNAL ||
 											 ls_typeCvar->integer == LS_TYPE_BOTH ) );
+
+	/* ---- Update shared memory for standalone LiveSplit exe ---- */
+	if ( ls.initialized ) {
+		LS_WindowUpdate();
+
+		/* Ghost segment time (total time the ghost took on the current map) */
+		{
+			volatile lsWndState_t *st = &lswnd_state;
+			st->ghostSegMs = -1;
+			st->ghostSegText[0] = '\0';
+			st->ghostSegFrac[0] = '\0';
+			if ( ls_ghost.playLoaded && ls_ghost.playCount > 0 ) {
+				int ghostTotal = ls_ghost.play[ls_ghost.playCount - 1].timeMs;
+				if ( ghostTotal > 0 ) {
+					st->ghostSegMs = ghostTotal;
+					LS_FormatTime( ghostTotal, (char *)st->ghostSegText, sizeof( st->ghostSegText ) );
+					{
+						char *dot = strchr( (char *)st->ghostSegText, '.' );
+						if ( dot ) {
+							Q_strncpyz( (char *)st->ghostSegFrac, dot, sizeof( st->ghostSegFrac ) );
+						}
+					}
+				}
+			}
+		}
+	}
 
 	if ( !cg_livesplit || !cg_livesplit->integer ) {
 		/* Even with cg_livesplit off, run timer logic if external LS is enabled */
@@ -5720,6 +8605,7 @@ void SCR_LiveSplitDraw( void ) {
 		LS_Frame();
 		LS_DrawIGTTimer();
 		LS_DrawResetConfirmPopup();
+		LS_DrawCenterAlert();
 		return;
 	}
 	if ( !ls.initialized ) return;
@@ -5734,6 +8620,9 @@ void SCR_LiveSplitDraw( void ) {
 	/* Always process reset confirmation popup */
 	LS_DrawResetConfirmPopup();
 
+	/* Centered alert (cheats / modified settings) */
+	LS_DrawCenterAlert();
+
 	/* External-only mode: skip panel, only IGT + reset popup */
 	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
 		return;
@@ -5747,10 +8636,11 @@ void SCR_LiveSplitDraw( void ) {
 			vec4_t indShadow = { 0.0f,  0.0f,  0.0f,  0.35f };
 
 			ix = 6;
-			/* Place below REC (y=4,h~12) and sv_cheats (y=16,h~12) */
+			/* Place below REC, sv_cheats, and CVAR indicators */
 			iy = 4;
 			if ( clc.demorecording ) iy += 12;
 			if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) iy += 12;
+			if ( ls.settingsModCount > 0 ) iy += 12;
 
 			SCR_DrawStringExt( ix + 1, iy + 1, 3, "LS RUNNING", indShadow, qtrue );
 			SCR_DrawStringExt( ix, iy, 3, "LS RUNNING", indColor, qtrue );
