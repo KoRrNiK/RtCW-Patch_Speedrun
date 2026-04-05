@@ -187,6 +187,10 @@ typedef enum {
 // RF
 #define CS_TAGCONNECTS      ( CS_SPLINES + MAX_SPLINE_CONFIGSTRINGS )
 
+// Demo cvar recording: stores serialized cvar state as Info string
+// during demo recording; read back during playback for verification.
+#define CS_DEMO_CVARS       2040
+
 //#define CS_MAX			(CS_LOCATIONS+MAX_LOCATIONS)
 //#define CS_MAX			(CS_PARTICLES+MAX_PARTICLES_AREAS)
 //#define CS_MAX				(CS_DLIGHTS+MAX_DLIGHT_CONFIGSTRINGS)			//----(SA)

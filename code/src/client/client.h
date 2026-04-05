@@ -224,6 +224,7 @@ typedef struct {
 	qboolean demoSeekInProgress;    // suppress rendering during backward seek
 	int demoSeekFileOffset;         // if >0, seek demo file to this offset before reading (fast backward seek)
 	qboolean demoFastRewind;        // if true, CL_ParseGamestate skips CL_InitDownloads (same-map rewind)
+	qboolean demoAtEnd;             // demo reached EOF and is auto-paused; cleared on any backward seek
 	int demoMapStartServerTime;     // serverTime at the start of the current map segment (for stage timer)
 	char demoCurrentMapname[64];    // current mapname during demo playback (for map-change detection)
 	int demoCurrentMapIndex;        // index into the scanned demo map list (-1 = unknown)
@@ -562,13 +563,16 @@ void    SCR_FillRect( float x, float y, float width, float height,
 void    SCR_LiveSplitInit( void );
 void    SCR_LiveSplitShutdown( void );
 void    SCR_LiveSplitDraw( void );
+void    SCR_LiveSplitNotifyDisconnect( void );
+int     LS_GetModifiedSettingsCount( void );
+int     LS_BuildDemoCvarString( char *out, int outSize );
 
 //
 // cl_update.c
 //
-void    SCR_UpdateInit( void );
-void    SCR_UpdateShutdown( void );
-void    SCR_UpdateDraw( void );
+void       SCR_UpdateInit( void );
+void       SCR_UpdateShutdown( void );
+void       SCR_UpdateDraw( void );
 
 //
 // cl_perf.c

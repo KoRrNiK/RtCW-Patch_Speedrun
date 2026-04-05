@@ -487,6 +487,18 @@ void CL_ParseGamestate( msg_t *msg ) {
 			MSG_WriteBigString( &gsBuf, gsStr );
 		}
 
+		// Demo cvar recording: snapshot current cvar state
+		{
+			char cvarData[MAX_INFO_STRING];
+			int nMod = LS_BuildDemoCvarString( cvarData, sizeof( cvarData ) );
+			if ( cvarData[0] ) {
+				MSG_WriteByte( &gsBuf, svc_configstring );
+				MSG_WriteShort( &gsBuf, CS_DEMO_CVARS );
+				MSG_WriteBigString( &gsBuf, cvarData );
+				Com_Printf( "^2Demo: recorded %d cvar(s) at map change\n", nMod );
+			}
+		}
+
 		// baselines
 		memset( &gsNullstate, 0, sizeof( gsNullstate ) );
 		for ( gsI = 0 ; gsI < MAX_GENTITIES ; gsI++ ) {

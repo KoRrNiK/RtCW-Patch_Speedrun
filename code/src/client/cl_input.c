@@ -1094,6 +1094,31 @@ void CL_UpdateDemoFreecam( int frameMsec ) {
 		VectorAdd( clc.demoFreecamPos, move, clc.demoFreecamPos );
 	}
 
+	/* Clamp freecam to maximum distance from the player.
+	   Entities in the demo are PVS-filtered based on the player's
+	   position so flying too far away leads to invisible entities. */
+	{
+		vec3_t playerOrigin, diff;
+		float dist, maxDist;
+		cvar_t *cv;
+
+		VectorCopy( cl.snap.ps.origin, playerOrigin );
+		playerOrigin[2] += cl.snap.ps.viewheight;
+
+		VectorSubtract( clc.demoFreecamPos, playerOrigin, diff );
+		dist = VectorLength( diff );
+
+		cv = Cvar_Get( "cl_freecamMaxDist", "4000", CVAR_ARCHIVE );
+		maxDist = cv->value;
+		if ( maxDist < 500 ) maxDist = 500;
+
+		if ( dist > maxDist ) {
+			/* Clamp position to the boundary sphere */
+			VectorScale( diff, maxDist / dist, diff );
+			VectorAdd( playerOrigin, diff, clc.demoFreecamPos );
+		}
+	}
+
 	/* Sync freecam state to cvars every frame so the cgame can use
 	   the correct camera position for ESP/TriggerVis rendering and
 	   world-to-screen projection (angles change even without movement

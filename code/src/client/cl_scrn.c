@@ -663,23 +663,96 @@ SCR_DrawSvCheats
 
 Shows "sv_cheats 1" warning below the REC indicator (if recording)
 or at the top-left corner if not recording.
+
+During demo playback, reads cheats and cvar state from the recorded
+configstrings (CS_SYSTEMINFO / CS_DEMO_CVARS) rather than live cvars.
 =================
 */
 void SCR_DrawSvCheats( void ) {
 	int x, y;
 	vec4_t cheatColor = { 1.0f, 0.85f, 0.0f, 0.90f };
-	vec4_t shadow     = { 0.0f, 0.0f,  0.0f, 0.35f };
-
-	if ( !Cvar_VariableIntegerValue( "sv_cheats" ) ) {
-		return;
-	}
+	vec4_t cvarColor  = { 1.0f, 0.6f, 0.2f, 0.90f };
+	vec4_t shadow     = { 0.0f, 0.0f, 0.0f, 0.35f };
 
 	x = 6;
 	/* Place below REC if recording, otherwise at the top */
 	y = clc.demorecording ? 16 : 4;
 
-	SCR_DrawStringExt( x + 1, y + 1, 3, "sv_cheats 1", shadow, qtrue );
-	SCR_DrawStringExt( x, y, 3, "sv_cheats 1", cheatColor, qtrue );
+	if ( clc.demoplaying ) {
+		/* ---- Demo playback: read from recorded gamestate ---- */
+		const char *systemInfo;
+		const char *demoCvars;
+		int svCheats = 0;
+		int modCount = 0;
+
+		/* sv_cheats from the demo's CS_SYSTEMINFO */
+		if ( cl.gameState.stringOffsets[CS_SYSTEMINFO] ) {
+			systemInfo = cl.gameState.stringData + cl.gameState.stringOffsets[CS_SYSTEMINFO];
+			svCheats = atoi( Info_ValueForKey( systemInfo, "sv_cheats" ) );
+		}
+
+		if ( svCheats ) {
+			SCR_DrawStringExt( x + 1, y + 1, 3, "sv_cheats 1", shadow, qtrue );
+			SCR_DrawStringExt( x, y, 3, "sv_cheats 1", cheatColor, qtrue );
+			y += 12;
+		}
+
+		/* Modified cvars from CS_DEMO_CVARS */
+		if ( cl.gameState.stringOffsets[CS_DEMO_CVARS] ) {
+			const char *p;
+			char key[MAX_INFO_KEY];
+			char value[MAX_INFO_VALUE];
+
+			demoCvars = cl.gameState.stringData + cl.gameState.stringOffsets[CS_DEMO_CVARS];
+
+			/* Count modified cvars (skip sv_cheats, it's shown separately) */
+			p = demoCvars;
+			while ( p ) {
+				Info_NextPair( &p, key, value );
+				if ( !key[0] ) break;
+				if ( Q_stricmp( key, "sv_cheats" ) == 0 ) continue;
+				modCount++;
+			}
+
+			if ( modCount > 0 ) {
+				char buf[32];
+				Com_sprintf( buf, sizeof( buf ), "CVAR (%d)", modCount );
+				SCR_DrawStringExt( x + 1, y + 1, 3, buf, shadow, qtrue );
+				SCR_DrawStringExt( x, y, 3, buf, cvarColor, qtrue );
+				y += 12;
+
+				/* List individual modified cvars */
+				p = demoCvars;
+				while ( p ) {
+					char line[128];
+					Info_NextPair( &p, key, value );
+					if ( !key[0] ) break;
+					if ( Q_stricmp( key, "sv_cheats" ) == 0 ) continue;
+					Com_sprintf( line, sizeof( line ), " %s = %s", key, value );
+					SCR_DrawStringExt( x + 1, y + 1, 3, line, shadow, qtrue );
+					SCR_DrawStringExt( x, y, 3, line, cvarColor, qtrue );
+					y += 10;
+				}
+			}
+		}
+	} else {
+		/* ---- Normal gameplay: check live cvars ---- */
+		int modCount;
+
+		if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+			SCR_DrawStringExt( x + 1, y + 1, 3, "sv_cheats 1", shadow, qtrue );
+			SCR_DrawStringExt( x, y, 3, "sv_cheats 1", cheatColor, qtrue );
+			y += 12;
+		}
+
+		modCount = LS_GetModifiedSettingsCount();
+		if ( modCount > 0 ) {
+			char buf[32];
+			Com_sprintf( buf, sizeof( buf ), "CVAR (%d)", modCount );
+			SCR_DrawStringExt( x + 1, y + 1, 3, buf, shadow, qtrue );
+			SCR_DrawStringExt( x, y, 3, buf, cvarColor, qtrue );
+		}
+	}
 }
 
 
@@ -839,8 +912,13 @@ void SCR_DrawDemoPlayback( void ) {
 			badge[0] = '\0';
 
 			if ( CL_DemoPaused() ) {
-				Q_strncpyz( badge + bpos, "PAUSE", sizeof(badge) - bpos );
-				bpos += 5;
+				if ( clc.demoAtEnd ) {
+					Q_strncpyz( badge + bpos, "END", sizeof(badge) - bpos );
+					bpos += 3;
+				} else {
+					Q_strncpyz( badge + bpos, "PAUSE", sizeof(badge) - bpos );
+					bpos += 5;
+				}
 				badgeColor = &pauseCol;
 			}
 			if ( clc.demoFreecam ) {
@@ -1201,12 +1279,37 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 //			}
 		case CA_LOADING:
 		case CA_PRIMED:
-			// draw the game information screen and loading progress
-			CL_CGameRendering( stereoFrame );
+			/* During demo playback loading (map change), draw a simple
+			   overlay instead of the UI connect screen which shows
+			   wrong/stale map images and briefing data. */
+			if ( clc.demoplaying ) {
+				static vec4_t loadBg   = { 0.02f, 0.02f, 0.03f, 0.92f };
+				static vec4_t loadText = { 0.70f, 0.90f, 0.50f, 0.95f };
+				static vec4_t loadDim  = { 0.40f, 0.50f, 0.35f, 0.60f };
 
-			// During demo playback, suppress the connect/loading screen
-			// which shows wrong map images and briefing data.
-			if ( !clc.demoplaying ) {
+				SCR_FillRect( 0, 0, 640, 480, loadBg );
+				{
+					const char *msg = "LOADING...";
+					int len = strlen( msg );
+					int charW = 8;
+					int sx = ( 640 - len * charW ) / 2;
+					SCR_DrawStringExt( sx, 228, charW, msg, loadText, qtrue );
+				}
+				/* Show the new map name from CS_SERVERINFO */
+				if ( cl.gameState.stringOffsets[CS_SERVERINFO] ) {
+					const char *info = cl.gameState.stringData
+									 + cl.gameState.stringOffsets[CS_SERVERINFO];
+					const char *mapName = Info_ValueForKey( info, "mapname" );
+					if ( mapName[0] ) {
+						int mlen = strlen( mapName );
+						int msx = ( 640 - mlen * 6 ) / 2;
+						SCR_DrawStringExt( msx, 246, 6, mapName, loadDim, qtrue );
+					}
+				}
+			} else {
+				// draw the game information screen and loading progress
+				CL_CGameRendering( stereoFrame );
+
 				// also draw the connection information, so it doesn't
 				// flash away too briefly on local or lan games
 				//if (!com_sv_running->value || Cvar_VariableIntegerValue("sv_cheats"))	// Ridah, don't draw useless text if not in dev mode

@@ -384,6 +384,19 @@ void CL_Record_f( void ) {
 		MSG_WriteBigString( &buf, s );
 	}
 
+	// Demo cvar recording: snapshot all tracked gameplay cvars
+	// and embed them as configstring CS_DEMO_CVARS in the gamestate.
+	{
+		char cvarData[MAX_INFO_STRING];
+		int nMod = LS_BuildDemoCvarString( cvarData, sizeof( cvarData ) );
+		if ( cvarData[0] ) {
+			MSG_WriteByte( &buf, svc_configstring );
+			MSG_WriteShort( &buf, CS_DEMO_CVARS );
+			MSG_WriteBigString( &buf, cvarData );
+			Com_Printf( "^2Demo: recorded %d cvar(s) in gamestate\n", nMod );
+		}
+	}
+
 	// baselines
 	memset( &nullstate, 0, sizeof( nullstate ) );
 	for ( i = 0; i < MAX_GENTITIES ; i++ ) {
@@ -576,6 +589,15 @@ void CL_DemoPause_f( void ) {
 		Com_Printf( "Not playing a demo.\n" );
 		return;
 	}
+	if ( cls.state != CA_ACTIVE ) return;
+
+	/* At demo end, don't allow unpause - there's nothing more to play.
+	   Guide the user to use rewind keys instead. */
+	if ( clc.demoAtEnd && demo_paused ) {
+		Com_Printf( "^3Demo is at end. Use Left/Right arrows to rewind, ESC to exit.\n" );
+		return;
+	}
+
 	demo_paused = !demo_paused;
 	if ( demo_paused ) {
 		demo_timescale_saved = demo_timescale;
@@ -595,6 +617,7 @@ void CL_DemoPause_f( void ) {
 static void CL_DemoUnpauseIfNeeded( void ) {
 	if ( demo_paused ) {
 		demo_paused = qfalse;
+		clc.demoAtEnd = qfalse;
 		Cvar_Set( "cl_freezeDemo", "0" );
 		CL_DemoResyncTime();
 	}
@@ -603,6 +626,7 @@ static void CL_DemoUnpauseIfNeeded( void ) {
 void CL_DemoSpeedUp_f( void ) {
 	int i;
 	if ( !clc.demoplaying ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 	CL_DemoUnpauseIfNeeded();
 	for ( i = 0; i < (int)DEMO_NUM_SPEEDS; i++ ) {
 		if ( demo_speed_steps[i] > demo_timescale + 0.001f ) {
@@ -618,6 +642,7 @@ void CL_DemoSpeedUp_f( void ) {
 void CL_DemoSlowDown_f( void ) {
 	int i;
 	if ( !clc.demoplaying ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 	CL_DemoUnpauseIfNeeded();
 	for ( i = (int)DEMO_NUM_SPEEDS - 1; i >= 0; i-- ) {
 		if ( demo_speed_steps[i] < demo_timescale - 0.001f ) {
@@ -632,6 +657,7 @@ void CL_DemoSlowDown_f( void ) {
 
 void CL_DemoFreecam_f( void ) {
 	if ( !clc.demoplaying ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 
 	if ( !clc.demoFreecam ) {
 		/* Entering freecam - copy current player viewpoint as starting position.
@@ -652,11 +678,17 @@ void CL_DemoFreecam_f( void ) {
 			clc.demoFreecamAngles[0], clc.demoFreecamAngles[1], clc.demoFreecamAngles[2] ) );
 		/* Disable PVS culling so the full map is visible from any camera position */
 		Cvar_Set( "r_novis", "1" );
+		/* Extend far clip plane and disable fog so the full map is visible
+		   even on foggy maps (e.g. Forest, Norway). */
+		Cvar_Set( "r_zfar", "131072" );
+		Cvar_Set( "r_wolffog", "0" );
 	} else {
 		clc.demoFreecam = qfalse;
 		Cvar_Set( "cg_thirdPerson", "0" );
 		Cvar_Set( "cl_freecamActive", "0" );
 		Cvar_Set( "r_novis", "0" );
+		Cvar_Set( "r_zfar", "0" );
+		Cvar_Set( "r_wolffog", "1" );
 	}
 }
 
@@ -664,6 +696,7 @@ void CL_DemoSkipForward_f( void ) {
 	int target, safety, skipMs;
 	if ( !clc.demoplaying ) return;
 	if ( clc.demoSeekInProgress ) return;  /* don't queue while seeking */
+	if ( cls.state != CA_ACTIVE ) return;
 	CL_DemoUnpauseIfNeeded();
 	/* Skip amount: optional argument in ms, default 5000 */
 	skipMs = 5000;
@@ -730,6 +763,7 @@ void CL_DemoSkipBackward_f( void ) {
 
 	if ( !clc.demoplaying ) return;
 	if ( clc.demoSeekInProgress ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 
 	CL_DemoUnpauseIfNeeded();
 
@@ -802,7 +836,20 @@ void CL_DemoSkipBackward_f( void ) {
 		while ( cl.snap.serverTime < targetTime && safety-- > 0 ) {
 			CL_ReadDemoMessage();
 			if ( !clc.demofile || cls.state < CA_CONNECTED ) break;
-			if ( cls.state != CA_ACTIVE ) break;
+			/* Handle save/load gamestates within the same map:
+			   state drops to CA_PRIMED, pump until CA_ACTIVE. */
+			if ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE ) {
+				int sr = 10000;
+				while ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE && sr-- > 0 ) {
+					CL_ReadDemoMessage();
+					if ( cl.newSnapshots ) {
+						cl.newSnapshots = qfalse;
+						CL_FirstSnapshot();
+					}
+					if ( !clc.demofile || cls.state < CA_CONNECTED ) break;
+				}
+				if ( cls.state != CA_ACTIVE ) break;
+			}
 		}
 
 		/* Reset cgame snapshot/command tracking to current position
@@ -1175,6 +1222,7 @@ void CL_DemoNextMap_f( void ) {
 
 	if ( !clc.demoplaying ) return;
 	if ( clc.demoSeekInProgress ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 
 	nextIdx = clc.demoCurrentMapIndex + 1;
 	if ( nextIdx < 0 || nextIdx >= s_demoTotalMaps ) {
@@ -1199,6 +1247,7 @@ void CL_DemoPrevMap_f( void ) {
 
 	if ( !clc.demoplaying ) return;
 	if ( clc.demoSeekInProgress ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 
 	if ( s_demoTotalMaps <= 0 ) {
 		Com_Printf( "^3Demo: no map data, restarting\n" );
@@ -1224,9 +1273,12 @@ void CL_DemoControlsReset( void ) {
 	demo_timescale = 1.0f;
 	demo_paused = qfalse;
 	demo_pauseServerTime = 0;
+	clc.demoAtEnd = qfalse;
 	if ( clc.demoFreecam ) {
 		Cvar_Set( "cg_thirdPerson", "0" );
 		Cvar_Set( "r_novis", "0" );
+		Cvar_Set( "r_zfar", "0" );
+		Cvar_Set( "r_wolffog", "1" );
 	}
 	clc.demoFreecam = qfalse;
 	clc.demoHideHUD = qfalse;
@@ -1245,6 +1297,7 @@ Toggle visibility of the LiveSplit panel and progress bar.
 */
 void CL_DemoToggleHUD_f( void ) {
 	if ( !clc.demoplaying ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 	clc.demoHideHUD = !clc.demoHideHUD;
 	Com_Printf( "^3Demo HUD: %s\n", clc.demoHideHUD ? "hidden" : "visible" );
 }
@@ -1262,6 +1315,7 @@ void CL_DemoStepFrame_f( void ) {
 
 	if ( !clc.demoplaying ) return;
 	if ( clc.demoSeekInProgress ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 
 	/* If not paused, pause first */
 	if ( !demo_paused ) {
@@ -1312,6 +1366,7 @@ void CL_DemoStepFrameBack_f( void ) {
 
 	if ( !clc.demoplaying ) return;
 	if ( clc.demoSeekInProgress ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 
 	/* If not paused, pause first */
 	if ( !demo_paused ) {
@@ -1321,6 +1376,9 @@ void CL_DemoStepFrameBack_f( void ) {
 	/* Step back one snapshot (~50ms) */
 	targetTime = clc.demoCurrentServerTime - 50;
 	mapIdx = clc.demoCurrentMapIndex;
+
+	/* Clear demoAtEnd so CL_SetCGameTime resumes reading normally */
+	clc.demoAtEnd = qfalse;
 
 	/* Same-map fast path (reuse backward seek logic) */
 	if ( targetTime > 0
@@ -1357,7 +1415,20 @@ void CL_DemoStepFrameBack_f( void ) {
 		while ( cl.snap.serverTime < targetTime && safety-- > 0 ) {
 			CL_ReadDemoMessage();
 			if ( !clc.demofile || cls.state < CA_CONNECTED ) break;
-			if ( cls.state != CA_ACTIVE ) break;
+			/* Handle save/load gamestates within the same map:
+			   state drops to CA_PRIMED, pump until CA_ACTIVE. */
+			if ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE ) {
+				int sr = 10000;
+				while ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE && sr-- > 0 ) {
+					CL_ReadDemoMessage();
+					if ( cl.newSnapshots ) {
+						cl.newSnapshots = qfalse;
+						CL_FirstSnapshot();
+					}
+					if ( !clc.demofile || cls.state < CA_CONNECTED ) break;
+				}
+				if ( cls.state != CA_ACTIVE ) break;
+			}
 		}
 
 		cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
@@ -1378,6 +1449,7 @@ Toggle visibility of the keybinds help box.
 
 void CL_DemoToggleBinds_f( void ) {
 	if ( !clc.demoplaying ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 	s_demoHideBinds = !s_demoHideBinds;
 }
 
@@ -1402,6 +1474,7 @@ void CL_DemoSeekPercent_f( void ) {
 
 	if ( !clc.demoplaying ) return;
 	if ( clc.demoSeekInProgress ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 	if ( Cmd_Argc() < 2 ) return;
 
 	percent = atoi( Cmd_Argv( 1 ) );
@@ -1548,6 +1621,7 @@ void CL_DemoSeekPercentRel_f( void ) {
 
 	if ( !clc.demoplaying ) return;
 	if ( clc.demoSeekInProgress ) return;
+	if ( cls.state != CA_ACTIVE ) return;
 	if ( Cmd_Argc() < 2 ) return;
 	if ( clc.demoFileLen <= 0 ) return;
 
@@ -1603,8 +1677,9 @@ void CL_DemoCompleted( void ) {
 		demo_paused = qtrue;
 		demo_timescale_saved = demo_timescale;
 		demo_pauseServerTime = cl.serverTime;
+		clc.demoAtEnd = qtrue;
 		Cvar_Set( "cl_freezeDemo", "1" );
-		Com_Printf( "^3Demo finished \u2014 PAUSED at end.  Press ESC to exit.\n" );
+		Com_Printf( "^3Demo finished \u2014 PAUSED at end.  Use Left/Right arrows to rewind, ESC to exit.\n" );
 	}
 }
 
@@ -1764,6 +1839,7 @@ void CL_PlayDemo_f( void ) {
 
 	cls.state = CA_CONNECTED;
 	clc.demoplaying = qtrue;
+	Cvar_Set( "cl_demoplaying", "1" );
 	Q_strncpyz( cls.servername, Cmd_Argv( 1 ), sizeof( cls.servername ) );
 
 	// Reset demo playback controls (speed, pause)
@@ -1959,6 +2035,7 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	   BEFORE memset(&clc,0) wipes the flags we need. */
 	if ( clc.demoplaying ) {
 		CL_DemoControlsReset();
+		Cvar_Set( "cl_demoplaying", "0" );
 		s_demoTotalMaps = 0;
 		s_demoLastServerTime = 0;
 		memset( s_demoMaps, 0, sizeof( s_demoMaps ) );
@@ -2006,8 +2083,19 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	// allow cheats locally
 #ifndef WOLF_SP_DEMO
 	// except for demo
-	Cvar_Set( "sv_cheats", "1" );
+	// Speedrun patch: do NOT enable cheats on disconnect.
+	// The original engine set sv_cheats=1 here so local play
+	// allowed cheat commands, but for speedrunning this causes
+	// loadgame to carry sv_cheats=1 into the next map, blocking
+	// the LiveSplit auto-start and tainting runs.
+	Cvar_Set( "sv_cheats", "0" );
 #endif
+
+	// Notify LiveSplit so it clears prevMapname synchronously.
+	// Without this, disconnect;loadgame in the same frame would
+	// skip map-change detection because LS_Frame never saw the
+	// disconnected state.
+	SCR_LiveSplitNotifyDisconnect();
 
 	// not connected to a pure server anymore
 	cl_connectedToPureServer = qfalse;

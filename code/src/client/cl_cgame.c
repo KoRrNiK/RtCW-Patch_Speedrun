@@ -1206,14 +1206,6 @@ void CL_FirstSnapshot( void ) {
 			/* Fill in the startServerTime for this map in the scan data
 			   (may already be set from the pre-scan, in which case it's a no-op) */
 			CL_DemoUpdateMapServerTime( clc.demoCurrentMapIndex, cl.snap.serverTime );
-
-			/* Auto-pause briefly on map transitions during normal forward
-			   playback so the viewer sees the very start of the new map.
-			   Skip this during seeks/rewinds and for the initial map. */
-			if ( isMapChange && !clc.demoSeekInProgress && !clc.demoFastRewind ) {
-				Cbuf_AddText( "demo_pause\n" );
-				Com_Printf( "^3Demo: new map '%s' - auto-paused.\n", mapname );
-			}
 		}
 
 		/* Re-sync freecam state after state transitions.
@@ -1428,6 +1420,15 @@ void CL_SetCGameTime( void ) {
 		}
 		clc.timeDemoFrames++;
 		cl.serverTime = clc.timeDemoBaseTime + clc.timeDemoFrames * 50;
+	}
+
+	/* When demo has reached EOF and is auto-paused, skip the read
+	   loop entirely.  This avoids a wasteful FS_Read at EOF every
+	   frame and prevents any state confusion while the user decides
+	   whether to rewind or exit. */
+	if ( clc.demoAtEnd ) {
+		clc.demoCurrentServerTime = cl.snap.serverTime;
+		return;
 	}
 
 	while ( cl.serverTime >= cl.snap.serverTime ) {
