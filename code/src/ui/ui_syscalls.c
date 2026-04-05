@@ -141,6 +141,10 @@ int trap_FS_Delete( const char *filename ) {
 	return syscall( UI_FS_DELETEFILE, filename );
 }
 
+int trap_FS_GetFileMTime( const char *qpath ) {
+	return syscall( UI_FS_GETFILEMTIME, qpath );
+}
+
 qhandle_t trap_R_RegisterModel( const char *name ) {
 	return syscall( UI_R_REGISTERMODEL, name );
 }

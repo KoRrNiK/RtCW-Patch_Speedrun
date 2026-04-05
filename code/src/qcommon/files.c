@@ -38,6 +38,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../game/q_shared.h"
 #include "qcommon.h"
+#include <sys/types.h>
+#include <sys/stat.h>
 #include "unzip.h"
 
 /*
@@ -1151,8 +1153,8 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 							 !Q_stricmp( pak->pakBasename, "sp_speedrun" ) &&
 							 ( !Q_stricmpn( filename, "gfx/2d/bigchars", 15 ) ||
 							   !Q_stricmpn( filename, "gfx/2d/hudchars", 15 ) ||
-							   !Q_stricmpn( filename, "gfx\\2d\\bigchars", 15 ) ||
-							   !Q_stricmpn( filename, "gfx\\2d\\hudchars", 15 ) ||
+							   !Q_stricmpn( filename, "gfx\\2d\\bigchars", 17 ) ||
+							   !Q_stricmpn( filename, "gfx\\2d\\hudchars", 17 ) ||
 							   !Q_stricmpn( filename, "fonts/", 6 ) ||
 							   !Q_stricmpn( filename, "fonts\\", 6 ) ) ) {
 							break;  // skip this pk3 match
@@ -1235,8 +1237,8 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 						 !Q_stricmp( pak->pakBasename, "sp_speedrun" ) &&
 						 ( !Q_stricmpn( filename, "gfx/2d/bigchars", 15 ) ||
 						   !Q_stricmpn( filename, "gfx/2d/hudchars", 15 ) ||
-						   !Q_stricmpn( filename, "gfx\\2d\\bigchars", 15 ) ||
-						   !Q_stricmpn( filename, "gfx\\2d\\hudchars", 15 ) ||
+						   !Q_stricmpn( filename, "gfx\\2d\\bigchars", 17 ) ||
+						   !Q_stricmpn( filename, "gfx\\2d\\hudchars", 17 ) ||
 						   !Q_stricmpn( filename, "fonts/", 6 ) ||
 						   !Q_stricmpn( filename, "fonts\\", 6 ) ) ) {
 						break;  // skip this pk3 match, fall through to next search path
@@ -1407,6 +1409,42 @@ int FS_Delete( char *filename ) {
 		return 1;
 	}
 
+
+	return 0;
+}
+
+
+/*
+=================
+FS_GetFileMTime
+
+Returns file modification time as seconds since epoch (truncated to int).
+Returns 0 on failure.  Uses the home path (fs_homepath / fs_gamedir).
+=================
+*/
+int FS_GetFileMTime( const char *qpath ) {
+	char *ospath;
+	struct _stat buf;
+
+	if ( !fs_searchpaths ) {
+		Com_Error( ERR_FATAL, "Filesystem call made without initialization\n" );
+	}
+
+	if ( !qpath || !qpath[0] ) {
+		return 0;
+	}
+
+	/* Try homepath first (user-writable directory) */
+	ospath = FS_BuildOSPath( fs_homepath->string, fs_gamedir, qpath );
+	if ( _stat( ospath, &buf ) == 0 ) {
+		return (int)buf.st_mtime;
+	}
+
+	/* Fall back to basepath (game install directory) */
+	ospath = FS_BuildOSPath( fs_basepath->string, fs_gamedir, qpath );
+	if ( _stat( ospath, &buf ) == 0 ) {
+		return (int)buf.st_mtime;
+	}
 
 	return 0;
 }

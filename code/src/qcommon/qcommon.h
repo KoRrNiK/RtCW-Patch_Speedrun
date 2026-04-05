@@ -573,6 +573,8 @@ int     FS_FileIsInPAK( const char *filename, int *pChecksum );
 
 int     FS_Delete( char *filename );    // only works inside the 'save' directory (for deleting savegames/images)
 
+int     FS_GetFileMTime( const char *qpath );   // returns file modification time (seconds since epoch), 0 on failure
+
 int     FS_Write( const void *buffer, int len, fileHandle_t f );
 
 int     FS_Read( void *buffer, int len, fileHandle_t f );

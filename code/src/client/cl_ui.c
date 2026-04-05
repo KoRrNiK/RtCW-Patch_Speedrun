@@ -1160,6 +1160,9 @@ int CL_UISystemCalls( int *args ) {
 		return CL_GetLimboString( args[1], VMA( 2 ) );
 		// -NERVE - SMF
 
+	case UI_FS_GETFILEMTIME:
+		return FS_GetFileMTime( VMA( 1 ) );
+
 	default:
 		Com_Error( ERR_DROP, "Bad UI system trap: %i", args[0] );
 
