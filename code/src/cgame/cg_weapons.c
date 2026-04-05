@@ -2091,6 +2091,10 @@ CG_AddWeaponWithPowerups
 */
 static void CG_AddWeaponWithPowerups( refEntity_t *gun, int powerups, playerState_t *ps, centity_t *cent ) {
 
+	// don't render weapon models when gun drawing is disabled (first person only)
+	if ( ps && !cg_drawGun.integer ) {
+		return;
+	}
 
 	// add powerup effects
 	if ( powerups & ( 1 << PW_INVIS ) ) {
@@ -3030,17 +3034,11 @@ void CG_AddViewWeapon(playerState_t* ps) {
 	}
 
 	// allow the gun to be completely removed
+	// (but flamethrower/tesla still need CG_AddPlayerWeapon for effects)
 	if (!cg_drawGun.integer) {
-		/*
-				vec3_t		origin;
-				if ( cg.predictedPlayerState.eFlags & EF_FIRING ) {
-					// special hack for lightning gun...
-					VectorCopy( cg.refdef.vieworg, origin );
-					VectorMA( origin, -8, cg.refdef.viewaxis[2], origin );
-					CG_LightningBolt( &cg_entities[ps->clientNum], origin );
-				}
-		*/
-		return;
+		if (ps->weapon != WP_FLAMETHROWER && ps->weapon != WP_TESLA) {
+			return;
+		}
 	}
 
 	// don't draw if testing a gun model
