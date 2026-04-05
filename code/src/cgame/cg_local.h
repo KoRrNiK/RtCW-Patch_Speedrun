@@ -1827,9 +1827,14 @@ extern vmCvar_t cg_crosshairSpread;
 extern vmCvar_t cg_drawTriggers;
 extern vmCvar_t cg_drawEnemies;
 extern vmCvar_t cg_drawItems;
+extern vmCvar_t cg_drawEnemySight;
+extern vmCvar_t cg_drawAIPath;
 extern vmCvar_t cg_triggerOpacity;
 extern vmCvar_t cg_enemyOpacity;
 extern vmCvar_t cg_itemOpacity;
+extern vmCvar_t cg_sightOpacity;
+extern vmCvar_t cg_sightRange;
+extern vmCvar_t cg_pathLength;
 extern vmCvar_t cg_drawPos;
 extern vmCvar_t cg_drawJumpStats;
 
@@ -2054,6 +2059,10 @@ void CG_DrawEnemyESP( void );
 void CG_DrawEnemyESPLabels( void );
 void CG_DrawItemESP( void );
 void CG_DrawItemESPLabels( void );
+void CG_DrawEnemySight( void );
+void CG_InitAIPath( void );
+void CG_DrawAIPath( void );
+void CG_DrawAIPathLabels( void );
 
 //
 // cg_movement.c

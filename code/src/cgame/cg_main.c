@@ -286,9 +286,14 @@ vmCvar_t cg_crosshairSpread;
 vmCvar_t cg_drawTriggers;
 vmCvar_t cg_drawEnemies;
 vmCvar_t cg_drawItems;
+vmCvar_t cg_drawEnemySight;
+vmCvar_t cg_drawAIPath;
 vmCvar_t cg_triggerOpacity;
 vmCvar_t cg_enemyOpacity;
 vmCvar_t cg_itemOpacity;
+vmCvar_t cg_sightOpacity;
+vmCvar_t cg_sightRange;
+vmCvar_t cg_pathLength;
 vmCvar_t cg_drawPos;
 vmCvar_t cg_drawJumpStats;
 
@@ -516,9 +521,14 @@ cvarTable_t cvarTable[] = {
 	{ &cg_drawTriggers, "cg_drawTriggers", "0", CVAR_ARCHIVE | CVAR_CHEAT },
 	{ &cg_drawEnemies, "cg_drawEnemies", "0", CVAR_ARCHIVE | CVAR_CHEAT },
 	{ &cg_drawItems, "cg_drawItems", "0", CVAR_ARCHIVE | CVAR_CHEAT },
+	{ &cg_drawEnemySight, "cg_drawEnemySight", "0", CVAR_ARCHIVE | CVAR_CHEAT },
+	{ &cg_drawAIPath, "cg_drawAIPath", "0", CVAR_ARCHIVE | CVAR_CHEAT },
 	{ &cg_triggerOpacity, "cg_triggerOpacity", "80", CVAR_ARCHIVE },
 	{ &cg_enemyOpacity, "cg_enemyOpacity", "255", CVAR_ARCHIVE },
 	{ &cg_itemOpacity, "cg_itemOpacity", "255", CVAR_ARCHIVE },
+	{ &cg_sightOpacity, "cg_sightOpacity", "40", CVAR_ARCHIVE },
+	{ &cg_sightRange, "cg_sightRange", "1500", CVAR_ARCHIVE },
+	{ &cg_pathLength, "cg_pathLength", "64", CVAR_ARCHIVE },
 	{ &cg_drawPos, "cg_drawPos", "0", CVAR_ARCHIVE },
 	{ &cg_drawJumpStats, "cg_drawJumpStats", "0", CVAR_ARCHIVE },
 
@@ -2438,6 +2448,16 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	memset( cg_weapons, 0, sizeof( cg_weapons ) );
 	memset( cg_items, 0, sizeof( cg_items ) );
 
+	/* Restore demoPlayback immediately after memset.  The engine sets
+	   cl_demoplaying=1 when a demo starts.  Without this, cg.demoPlayback
+	   stays 0 until the first CG_DrawActiveFrame call, and fade-to-black
+	   guards that check cg.demoPlayback fail during backward seek. */
+	{
+		char buf[4];
+		trap_Cvar_VariableStringBuffer( "cl_demoplaying", buf, sizeof( buf ) );
+		cg.demoPlayback = atoi( buf );
+	}
+
 	// RF, init the anim scripting
 	cgs.animScriptData.soundIndex = CG_SoundScriptPrecache;
 	cgs.animScriptData.playSound = CG_SoundPlayIndexedScript;
@@ -2522,6 +2542,7 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	CG_LoadingString( "enemy ESP" );
 
 	CG_InitEnemyESP();
+	CG_InitAIPath();
 
 	CG_LoadingString( "flamechunks" );
 
@@ -2609,6 +2630,13 @@ void CG_DemoReset( int serverMessageNum, int serverCommandSequence ) {
 	/* --- state that MUST be zeroed -------------------------------- */
 	memset( &cg, 0, sizeof( cg ) );                 /* snapshot tracking, refdef, etc. */
 	memset( cg_entities, 0, sizeof( cg_entities ) ); /* entity state */
+
+	/* Restore demoPlayback immediately - see CG_Init comment. */
+	{
+		char buf[4];
+		trap_Cvar_VariableStringBuffer( "cl_demoplaying", buf, sizeof( buf ) );
+		cg.demoPlayback = atoi( buf );
+	}
 
 	/* Re-sync processed-snapshot / server-command counters */
 	cgs.processedSnapshotNum  = serverMessageNum;

@@ -3712,6 +3712,58 @@ static void CG_Draw2D( void ) {
 
 	// Movement quality bar
 	CG_DrawMovementBar();
+
+	/* Freecam boundary warning - show when camera is near the max
+	   distance from the player.  The engine clamps the position, but
+	   a visual indicator helps the user understand why they can't
+	   move further. */
+	if ( cg.demoPlayback ) {
+		char buf[64];
+		trap_Cvar_VariableStringBuffer( "cl_freecamActive", buf, sizeof( buf ) );
+		if ( atoi( buf ) ) {
+			float fcX, fcY, fcZ, dist, maxDist;
+			vec3_t playerOrigin, diff;
+
+			trap_Cvar_VariableStringBuffer( "cl_freecamPos", buf, sizeof( buf ) );
+			if ( sscanf( buf, "%f %f %f", &fcX, &fcY, &fcZ ) == 3 ) {
+				VectorCopy( cg.snap->ps.origin, playerOrigin );
+				playerOrigin[2] += cg.snap->ps.viewheight;
+
+				diff[0] = fcX - playerOrigin[0];
+				diff[1] = fcY - playerOrigin[1];
+				diff[2] = fcZ - playerOrigin[2];
+				dist = VectorLength( diff );
+
+				trap_Cvar_VariableStringBuffer( "cl_freecamMaxDist", buf, sizeof( buf ) );
+				maxDist = atof( buf );
+				if ( maxDist < 500 ) maxDist = 4000;
+
+				if ( dist > maxDist * 0.85f ) {
+					vec4_t warnColor;
+					float alpha;
+					const char *warnText;
+					int textW;
+
+					/* Fade warning from 85% to 100% of max distance */
+					alpha = ( dist - maxDist * 0.85f ) / ( maxDist * 0.15f );
+					if ( alpha > 1.0f ) alpha = 1.0f;
+
+					/* Pulsing effect */
+					alpha *= 0.6f + 0.4f * sin( cg.time * 0.005f );
+
+					warnColor[0] = 1.0f;
+					warnColor[1] = 0.2f;
+					warnColor[2] = 0.2f;
+					warnColor[3] = alpha;
+
+					warnText = "Freecam Boundary";
+					textW = CG_DrawStrlen( warnText ) * 8;
+					CG_DrawStringExt( 320 - textW / 2, 100, warnText,
+						warnColor, qtrue, qtrue, 8, 12, 0, ALIGN_TOPLEFT );
+				}
+			}
+		}
+	}
 }
 
 /*
@@ -3969,6 +4021,12 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 	// Draw item ESP (adds polys to scene, visible through walls)
 	CG_DrawItemESP();
 
+	// Draw enemy sight/FOV cones (adds polys to scene, visible through walls)
+	CG_DrawEnemySight();
+
+	// Draw AI path routing visualization
+	CG_DrawAIPath();
+
 	trap_R_RenderScene( &cg.refdef );
 
 	// restore original viewpoint if running stereo
@@ -3990,6 +4048,9 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 
 	// Item ESP labels (2D text overlay, after render scene)
 	CG_DrawItemESPLabels();
+
+	// AI path labels (2D text overlay, after render scene)
+	CG_DrawAIPathLabels();
 }
 
 

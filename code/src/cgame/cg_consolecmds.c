@@ -91,6 +91,38 @@ static void CG_Viewpos_f( void ) {
 			   (int)cg.refdefViewAngles[YAW] );
 }
 
+/*
+=============
+CG_Teleport_f
+
+Shortcut for setviewpos: tp x y z [yaw]
+=============
+*/
+static void CG_Teleport_f( void ) {
+	int argc = trap_Argc();
+	char x[32], y[32], z[32], yaw[32];
+
+	if ( argc < 4 ) {
+		CG_Printf( "usage: tp x y z [yaw]\n" );
+		CG_Printf( "current pos: (%i %i %i) yaw: %i\n",
+			(int)cg.refdef.vieworg[0], (int)cg.refdef.vieworg[1],
+			(int)cg.refdef.vieworg[2], (int)cg.refdefViewAngles[YAW] );
+		return;
+	}
+
+	trap_Argv( 1, x, sizeof( x ) );
+	trap_Argv( 2, y, sizeof( y ) );
+	trap_Argv( 3, z, sizeof( z ) );
+
+	if ( argc >= 5 ) {
+		trap_Argv( 4, yaw, sizeof( yaw ) );
+	} else {
+		Com_sprintf( yaw, sizeof( yaw ), "%i", (int)cg.refdefViewAngles[YAW] );
+	}
+
+	trap_SendConsoleCommand( va( "setviewpos %s %s %s %s\n", x, y, z, yaw ) );
+}
+
 
 static void CG_ScoresDown_f( void ) {
 	if ( cg.scoresRequestTime + 2000 < cg.time ) {
@@ -454,6 +486,7 @@ static consoleCommand_t commands[] = {
 	{ "loaddeferred", CG_LoadDeferredPlayers },  // spelling fixed (SA)
 	{ "camera", CG_Camera_f },   // duffy
 	{ "fade", CG_Fade_f },   // duffy
+	{ "tp", CG_Teleport_f },
 
 	// NERVE - SMF
 	{ "mp_QuickMessage", CG_QuickMessage_f },
