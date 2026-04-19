@@ -694,6 +694,8 @@ typedef struct {
 
 	qtime_t tm;
 
+	qboolean favourite;             // user-marked favourite (shown at top, highlighted yellow)
+
 } savegameInfo;
 //----(SA)	end
 

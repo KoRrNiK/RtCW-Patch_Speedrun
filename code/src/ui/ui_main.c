@@ -4371,6 +4371,14 @@ static int QDECL UI_SavegamesQsortCompare( const void *arg1, const void *arg2 ) 
 	sg = &uiInfo.savegameList[*eb];
 	sg2 = &uiInfo.savegameList[*ea];
 
+	/* Favourites always sort to the top regardless of sort direction */
+	if ( sg->favourite && !sg2->favourite ) {
+		return 1;
+	}
+	if ( !sg->favourite && sg2->favourite ) {
+		return -1;
+	}
+
 	if ( uiInfo.savegameStatus.sortKey == SORT_SAVENAME ) {
 		ret = Q_stricmp( &sg->savegameName[0], &sg2->savegameName[0] );
 
@@ -4654,6 +4662,109 @@ void UI_ParseSavegame( int index ) {
 
 /*
 ==============
+UI_Favourites
+
+Manage the favourite saves list stored in save/favourites.txt
+==============
+*/
+#define MAX_FAVOURITES 64
+static char uiFavourites[MAX_FAVOURITES][64];
+static int  uiFavouriteCount = 0;
+
+static void UI_LoadFavourites( void ) {
+	fileHandle_t f;
+	int len;
+	char buf[4096];
+	char *p, *line;
+
+	uiFavouriteCount = 0;
+	len = trap_FS_FOpenFile( "save/favourites.txt", &f, FS_READ );
+	if ( !f || len <= 0 ) {
+		if ( f ) {
+			trap_FS_FCloseFile( f );
+		}
+		return;
+	}
+	if ( len >= (int)sizeof( buf ) ) {
+		len = sizeof( buf ) - 1;
+	}
+	trap_FS_Read( buf, len, f );
+	buf[len] = '\0';
+	trap_FS_FCloseFile( f );
+
+	p = buf;
+	while ( *p && uiFavouriteCount < MAX_FAVOURITES ) {
+		line = p;
+		while ( *p && *p != '\n' && *p != '\r' ) p++;
+		if ( *p ) {
+			*p = '\0';
+			p++;
+			while ( *p == '\n' || *p == '\r' ) p++;
+		}
+		if ( line[0] ) {
+			Q_strncpyz( uiFavourites[uiFavouriteCount], line, sizeof( uiFavourites[0] ) );
+			uiFavouriteCount++;
+		}
+	}
+}
+
+static void UI_SaveFavourites( void ) {
+	fileHandle_t f;
+	int i;
+
+	trap_FS_FOpenFile( "save/favourites.txt", &f, FS_WRITE );
+	if ( !f ) return;
+	for ( i = 0; i < uiFavouriteCount; i++ ) {
+		trap_FS_Write( uiFavourites[i], strlen( uiFavourites[i] ), f );
+		trap_FS_Write( "\n", 1, f );
+	}
+	trap_FS_FCloseFile( f );
+}
+
+static qboolean UI_IsFavourite( const char *savegameFile ) {
+	int i;
+	for ( i = 0; i < uiFavouriteCount; i++ ) {
+		if ( Q_stricmp( uiFavourites[i], savegameFile ) == 0 ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+static void UI_ToggleFavourite( void ) {
+	int idx, realIdx, i;
+
+	idx = UI_SavegameIndexFromName( ui_savegameName.string );
+	if ( idx < 0 || idx >= uiInfo.savegameCount ) return;
+	realIdx = uiInfo.savegameStatus.displaySavegames[idx];
+
+	if ( uiInfo.savegameList[realIdx].favourite ) {
+		/* Remove from favourites */
+		uiInfo.savegameList[realIdx].favourite = qfalse;
+		for ( i = 0; i < uiFavouriteCount; i++ ) {
+			if ( Q_stricmp( uiFavourites[i], uiInfo.savegameList[realIdx].savegameFile ) == 0 ) {
+				uiFavouriteCount--;
+				for ( ; i < uiFavouriteCount; i++ ) {
+					Q_strncpyz( uiFavourites[i], uiFavourites[i + 1], sizeof( uiFavourites[0] ) );
+				}
+				break;
+			}
+		}
+	} else {
+		/* Add to favourites */
+		if ( uiFavouriteCount < MAX_FAVOURITES ) {
+			uiInfo.savegameList[realIdx].favourite = qtrue;
+			Q_strncpyz( uiFavourites[uiFavouriteCount], uiInfo.savegameList[realIdx].savegameFile, sizeof( uiFavourites[0] ) );
+			uiFavouriteCount++;
+		}
+	}
+
+	UI_SaveFavourites();
+	UI_SavegameSort( uiInfo.savegameStatus.sortKey, qtrue );
+}
+
+/*
+==============
 UI_LoadSavegames
 ==============
 */
@@ -4661,6 +4772,8 @@ static void UI_LoadSavegames( char *dir ) {
 	char sglist[4096];
 	char    *sgname;
 	int i, len;
+
+	UI_LoadFavourites();
 
 	if ( dir ) {
 		uiInfo.savegameCount = trap_FS_GetFileList( va( "save/%s", dir ), "svg", sglist, 4096 );
@@ -4702,6 +4815,9 @@ static void UI_LoadSavegames( char *dir ) {
 
 			// read savegame and get needed info
 			UI_ParseSavegame( i );
+
+			// mark favourite status
+			uiInfo.savegameList[i].favourite = UI_IsFavourite( uiInfo.savegameList[i].savegameFile );
 
 			if ( uiInfo.savegameList[i].episode != -1 ) {
 				uiInfo.savegameList[i].sshotImage = trap_R_RegisterShaderNoMip( va( "levelshots/episodeshots/e%d.tga", uiInfo.savegameList[i].episode + 1 ) );
@@ -5704,6 +5820,8 @@ static void UI_RunMenuScript( char **args ) {
 			} else {
 				UI_DelSavegame();
 			}
+		} else if ( Q_stricmp( name, "ToggleFavourite" ) == 0 ) {
+			UI_ToggleFavourite();
 		} else if ( Q_stricmp( name, "SavegameSort" ) == 0 ) {
 			int sortColumn;
 			if ( Int_Parse( args, &sortColumn ) ) {
@@ -6902,18 +7020,31 @@ static const char *UI_FeederItemText( float feederID, int index, int column, qha
 	} else if ( feederID == FEEDER_SAVEGAMES ) {
 		if ( index >= 0 && index < uiInfo.savegameCount ) {
 //			int ping, game;
+			static char favBuf[256];
+			int ri;
+
 			if ( lastSaveColumn != column ) {
 //				trap_LAN_GetServerInfo(ui_netSource.integer, uiInfo.serverStatus.displayServers[index], info, MAX_STRING_CHARS);
 				lastSaveColumn = column;
 				lastSaveTime = uiInfo.uiDC.realTime;
 			}
 
+			ri = uiInfo.savegameStatus.displaySavegames[index];
+
 			switch ( column ) {
 			case SORT_SAVENAME:
-				return uiInfo.savegameList[uiInfo.savegameStatus.displaySavegames[index]].savegameName;
+				if ( uiInfo.savegameList[ri].favourite ) {
+					Com_sprintf( favBuf, sizeof( favBuf ), "^3%s", uiInfo.savegameList[ri].savegameName );
+					return favBuf;
+				}
+				return uiInfo.savegameList[ri].savegameName;
 				break;
 			case SORT_SAVETIME:
-				return uiInfo.savegameList[uiInfo.savegameStatus.displaySavegames[index]].time;
+				if ( uiInfo.savegameList[ri].favourite ) {
+					Com_sprintf( favBuf, sizeof( favBuf ), "^3%s", uiInfo.savegameList[ri].time );
+					return favBuf;
+				}
+				return uiInfo.savegameList[ri].time;
 				break;
 
 			}
