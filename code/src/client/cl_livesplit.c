@@ -331,6 +331,7 @@ typedef struct {
 	int mode;
 	int diffIdx;
 	int missionNum;
+	int mapIdx;          /* IL: source map index; -1 for FG/Mission */
 } lsOrphanSegTime_t;
 
 typedef struct {
@@ -436,6 +437,15 @@ typedef struct {
 	int         alertStartMs;       /* Sys_Milliseconds when alert was triggered */
 	char        alertText[128];     /* text to display */
 	float       alertColor[4];      /* RGBA color */
+
+	/* Run-finish verification overlay */
+	int         verifyStartMs;      /* Sys_Milliseconds when triggered (0 = inactive) */
+	qboolean    verifyValid;        /* all checks passed? */
+	int         verifyModCount;     /* number of modified settings */
+	qboolean    verifyCheats;       /* sv_cheats was used during run */
+	int         verifyPauses;
+	int         verifyUndos;
+	int         verifySkips;
 
 	/* Pre-run PB snapshot (for nosave restore) */
 	int         savedPBMs;
@@ -564,6 +574,7 @@ static void LS_OrphanSegTimesEnsure( int needed ) {
 }
 
 static int LS_DiffIdx( int skill ); /* forward declaration */
+static void LS_DemoWriteUpdate( void ); /* forward declaration */
 
 /* Find the highest attemptId across all history entries and reset attempts
    for a given mode/difficulty/mission. Returns 0 if none exist. */
@@ -667,11 +678,10 @@ static cvar_t *ls_igtsegtimer = NULL; /* 0=off, 1=on */
 /* Reset confirmation state */
 static int ls_resetPending = 0; /* 0=none, 1=waiting for user confirm */
 
-/* ls_type cvar: 0=in-game only, 1=external LiveSplit only, 2=both */
+/* ls_type cvar: 0=in-game only, 1=external LiveSplit only */
 static cvar_t *ls_typeCvar = NULL;
 #define LS_TYPE_INGAME   0
 #define LS_TYPE_EXTERNAL 1
-#define LS_TYPE_BOTH     2
 
 /* Keystroke overlay cvars (engine-side, read by cgame) */
 static cvar_t *ks_xCvar       = NULL;
@@ -697,6 +707,7 @@ static void LS_CompleteSplit( int idx, int nowReal );
 static void LS_DoResetSaveEx( qboolean fromExternal );
 static void LS_DoResetSave( void );
 static void LS_TriggerAlert( const char *text, float r, float g, float b );
+static void LS_TriggerVerify( void );
 static void LS_QuickCheckSettings( void );
 
 #ifdef _WIN32
@@ -723,14 +734,12 @@ static qboolean lsext_timerStarted = qfalse;
 
 static qboolean LS_ExtEnabled( void ) {
 	if ( !ls_typeCvar ) return qfalse;
-	return ( ls_typeCvar->integer == LS_TYPE_EXTERNAL ||
-			 ls_typeCvar->integer == LS_TYPE_BOTH );
+	return ( ls_typeCvar->integer == LS_TYPE_EXTERNAL );
 }
 
 static qboolean LS_InGameEnabled( void ) {
 	if ( !ls_typeCvar ) return qtrue;
-	return ( ls_typeCvar->integer == LS_TYPE_INGAME ||
-			 ls_typeCvar->integer == LS_TYPE_BOTH );
+	return ( ls_typeCvar->integer == LS_TYPE_INGAME );
 }
 
 static void LS_ExtConnect( void ) {
@@ -814,6 +823,10 @@ static void LS_ExtSend( const char *cmd ) {
 	len = strlen( buf );
 	sent = send( lsext_socket, buf, len, 0 );
 	if ( sent == SOCKET_ERROR ) {
+		int err = WSAGetLastError();
+		if ( err == WSAEWOULDBLOCK ) {
+			return; /* buffer full, skip this send - next frame will retry */
+		}
 		Com_Printf( "^3LiveSplit: Lost connection to external LiveSplit Server\n" );
 		LS_ExtDisconnect();
 	}
@@ -941,15 +954,12 @@ static void LS_ExtFrame( void ) {
 		}
 	}
 
-	/* Send current game time each frame if run is active.
-	   Game-time is always paused in ext LS (paused right after starttimer)
-	   so LiveSplit never ticks on its own - we just set the exact value
-	   every frame for a perfect 1:1 match with the in-game timer. */
+	/* Reconnect mid-run: if the connection dropped and came back,
+	   re-issue initgametime/starttimer/pausegametime so the external
+	   timer stays in sync.  The actual per-frame setgametime is sent
+	   later in LS_Frame, AFTER IGT accumulation, so the external timer
+	   always has the same value as the in-game display. */
 	if ( lsext_connected && ls.active && !ls.runFinished ) {
-		/* If we haven't sent starttimer on this connection yet (e.g.
-		   the connection dropped and reconnected mid-run, or the
-		   auto-start's send was silently lost), start the external
-		   timer now so it stays in sync with the in-game timer. */
 		if ( !lsext_timerStarted ) {
 			lsext_recvLen = 0;
 			LS_ExtSend( "initgametime" );
@@ -957,10 +967,6 @@ static void LS_ExtFrame( void ) {
 			LS_ExtSend( "pausegametime" );
 			lsext_timerStarted = qtrue;
 			lsext_lastPollMs = Sys_Milliseconds() + LSEXT_POLL_GRACE;
-		}
-		{
-			int igtMs = LS_CumulativeTime( ls.modeLastIdx );
-			LS_ExtSendGameTime( igtMs );
 		}
 	}
 
@@ -2451,21 +2457,88 @@ static void LS_GetCategoryDisplayName( char *out, int outSize, int mode, int dif
 	}
 }
 
-/* --- XML write helper (converts \n to \r\n for LiveSplit compatibility) --- */
+/* --- Buffered write system for .lss files ---
+   Accumulates all output in memory, then writes once at file close.
+   This avoids hundreds of small FS_Write syscalls per save. */
+
+#define LS_WBUF_INIT_SIZE  (128 * 1024)  /* 128 KB initial buffer */
+
+typedef struct {
+	char *data;
+	int   len;
+	int   capacity;
+} lsWriteBuf_t;
+
+static lsWriteBuf_t ls_wbuf;
+
+static void LS_WBufInit( void ) {
+	ls_wbuf.capacity = LS_WBUF_INIT_SIZE;
+	ls_wbuf.data = (char *)Z_Malloc( ls_wbuf.capacity );
+	ls_wbuf.len = 0;
+}
+
+static void LS_WBufFree( void ) {
+	if ( ls_wbuf.data ) {
+		Z_Free( ls_wbuf.data );
+		ls_wbuf.data = NULL;
+	}
+	ls_wbuf.len = 0;
+	ls_wbuf.capacity = 0;
+}
+
+static void LS_WBufGrow( int needed ) {
+	int newCap = ls_wbuf.capacity;
+	char *newData;
+	while ( newCap < needed ) newCap *= 2;
+	newData = (char *)Z_Malloc( newCap );
+	if ( ls_wbuf.data ) {
+		memcpy( newData, ls_wbuf.data, ls_wbuf.len );
+		Z_Free( ls_wbuf.data );
+	}
+	ls_wbuf.data = newData;
+	ls_wbuf.capacity = newCap;
+}
+
+/* Append string to write buffer, converting \n to \r\n */
 static void LS_WriteStr( fileHandle_t f, const char *s ) {
 	const char *p = s;
+	(void)f; /* buffer-based; fileHandle used at flush time */
 	while ( *p ) {
 		const char *nl = strchr( p, '\n' );
 		if ( !nl ) {
-			FS_Write( p, (int)strlen( p ), f );
+			int slen = (int)strlen( p );
+			if ( ls_wbuf.len + slen > ls_wbuf.capacity ) {
+				LS_WBufGrow( ls_wbuf.len + slen );
+			}
+			memcpy( ls_wbuf.data + ls_wbuf.len, p, slen );
+			ls_wbuf.len += slen;
 			break;
 		}
 		if ( nl > p ) {
-			FS_Write( p, (int)( nl - p ), f );
+			int chunk = (int)( nl - p );
+			if ( ls_wbuf.len + chunk + 2 > ls_wbuf.capacity ) {
+				LS_WBufGrow( ls_wbuf.len + chunk + 2 );
+			}
+			memcpy( ls_wbuf.data + ls_wbuf.len, p, chunk );
+			ls_wbuf.len += chunk;
+		} else {
+			if ( ls_wbuf.len + 2 > ls_wbuf.capacity ) {
+				LS_WBufGrow( ls_wbuf.len + 2 );
+			}
 		}
-		FS_Write( "\r\n", 2, f );
+		ls_wbuf.data[ls_wbuf.len]     = '\r';
+		ls_wbuf.data[ls_wbuf.len + 1] = '\n';
+		ls_wbuf.len += 2;
 		p = nl + 1;
 	}
+}
+
+/* Flush the entire buffer to disk in one write and free it */
+static void LS_WBufFlush( fileHandle_t f ) {
+	if ( ls_wbuf.data && ls_wbuf.len > 0 ) {
+		FS_Write( ls_wbuf.data, ls_wbuf.len, f );
+	}
+	LS_WBufFree();
 }
 
 /* --- Get segment range for a given mode/mission --- */
@@ -2569,8 +2642,15 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 		return;
 	}
 
-	/* UTF-8 BOM */
-	FS_Write( "\xEF\xBB\xBF", 3, f );
+	/* Initialize write buffer - all LS_WriteStr calls go here */
+	LS_WBufInit();
+
+	/* UTF-8 BOM (written directly to buffer) */
+	if ( ls_wbuf.len + 3 > ls_wbuf.capacity ) {
+		LS_WBufGrow( ls_wbuf.len + 3 );
+	}
+	memcpy( ls_wbuf.data + ls_wbuf.len, "\xEF\xBB\xBF", 3 );
+	ls_wbuf.len += 3;
 
 	/* XML header */
 	LS_WriteStr( f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" );
@@ -2606,6 +2686,7 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 		/* Filter reset attempts matching this category */
 		int *filteredResets = NULL;
 		int numFilteredResets = 0;
+		int resetStartOfs = 0;  /* offset into filteredResets to skip old entries */
 		int compIdx = 0, resetIdx = 0;
 
 		if ( ls.numResetAttempts > 0 ) {
@@ -2619,10 +2700,19 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 			}
 		}
 
+		/* Keep only the last 2000 reset attempts per category.
+		   Completed runs (with GameTime/RealTime) are always kept in full
+		   since they contain data used for PB/gold/history display.
+		   Reset attempts only store start/end timestamps with no useful
+		   timing data, so capping them prevents unbounded file growth. */
+		if ( numFilteredResets > 2000 ) {
+			resetStartOfs = numFilteredResets - 2000;
+		}
+
 		/* Merge completed runs and resets in ascending attemptId order.
 		   Both filtered lists are already in load order (ascending id). */
 		compIdx = 0;
-		resetIdx = 0;
+		resetIdx = resetStartOfs;
 		while ( compIdx < numFilteredRuns || resetIdx < numFilteredResets ) {
 			int compId  = ( compIdx < numFilteredRuns )
 				? ls.history[filteredIndices[compIdx]].attemptId : 0x7FFFFFFF;
@@ -2777,6 +2867,7 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 					if ( o->mode != mode ) continue;
 					if ( o->diffIdx != diffIdx ) continue;
 					if ( mode == LS_MODE_MISSION && o->missionNum != missionGroup + 1 ) continue;
+					if ( mode == LS_MODE_IL && o->mapIdx != mapIdx ) continue;
 					if ( o->segIdx != segN ) continue;
 					Com_sprintf( buf, sizeof( buf ), "        <Time id=\"%d\">\n", o->attemptId );
 					LS_WriteStr( f, buf );
@@ -2805,6 +2896,8 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 	LS_WriteStr( f, "  <AutoSplitterSettings />\n" );
 	LS_WriteStr( f, "</Run>\n" );
 
+	/* Flush buffered output to disk in one write */
+	LS_WBufFlush( f );
 	FS_FCloseFile( f );
 	Z_Free( filteredIndices );
 }
@@ -3095,6 +3188,11 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 		/* Track which history entries belong to this file for segment history */
 		int historyBaseIdx = ls.numHistoryRuns - 0; /* we'll compute actual base below */
 
+		/* Build a fast attemptId -> history index lookup table to avoid O(n^2)
+		   linear searches in SegmentHistory parsing. */
+		int *idLookup = NULL;     /* idLookup[attemptId] = histIdx + 1 (0 = not found) */
+		int  idLookupSize = 0;
+
 		/* Find the index of the first history entry we added from this file.
 		   We added them above; count backwards by completions. */
 		{
@@ -3112,6 +3210,26 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 			}
 			historyBaseIdx = ls.numHistoryRuns - completions;
 			if ( historyBaseIdx < 0 ) historyBaseIdx = 0;
+		}
+
+		/* Build the lookup table: find max attemptId, allocate, populate */
+		{
+			int k, maxId = 0;
+			for ( k = historyBaseIdx; k < ls.numHistoryRuns; k++ ) {
+				if ( ls.history[k].attemptId > maxId )
+					maxId = ls.history[k].attemptId;
+			}
+			if ( maxId > 0 && maxId < 1000000 ) {  /* sanity cap */
+				idLookupSize = maxId + 1;
+				idLookup = (int *)Z_Malloc( idLookupSize * sizeof( int ) );
+				memset( idLookup, 0, idLookupSize * sizeof( int ) );
+				for ( k = historyBaseIdx; k < ls.numHistoryRuns; k++ ) {
+					int aid = ls.history[k].attemptId;
+					if ( aid >= 0 && aid < idLookupSize ) {
+						idLookup[aid] = k + 1;  /* +1 so 0 means "not found" */
+					}
+				}
+			}
 		}
 
 		pos = segPos + 10; /* skip "<Segments>" */
@@ -3206,9 +3324,14 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 
 							/* Find history entry whose attemptId matches the
 							   SegmentHistory Time id (which is the Attempt id
-							   from AttemptHistory, NOT a sequential index). */
+							   from AttemptHistory, NOT a sequential index).
+							   Uses O(1) lookup table when available, falls back
+							   to linear scan for very large attemptIds. */
 							histIdx = -1;
-							{
+							if ( idLookup && timeId >= 0 && timeId < idLookupSize ) {
+								int v = idLookup[timeId];
+								if ( v > 0 ) histIdx = v - 1;
+							} else {
 								int k;
 								for ( k = historyBaseIdx; k < ls.numHistoryRuns; k++ ) {
 									if ( ls.history[k].attemptId == timeId ) {
@@ -3239,6 +3362,7 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 										o->mode       = mode;
 										o->diffIdx    = diffIdx;
 										o->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
+										o->mapIdx     = ( mode == LS_MODE_IL ) ? mapIdx : -1;
 										ls.numOrphanSegTimes++;
 									}
 								}
@@ -3251,6 +3375,10 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 
 			segN++;
 			pos = segEnd + 10; /* skip "</Segment>" */
+		}
+
+		if ( idLookup ) {
+			Z_Free( idLookup );
 		}
 	}
 
@@ -3269,6 +3397,8 @@ static void LS_SaveState( void ) {
 
 	FS_FOpenFileByMode( LS_STATE_FILE, &f, FS_WRITE );
 	if ( !f ) return;
+
+	LS_WBufInit();
 
 	if ( ls.active && !ls.runFinished ) {
 		rgtElapsed = Sys_Milliseconds() - ls.runStartRealMs;
@@ -3297,6 +3427,7 @@ static void LS_SaveState( void ) {
 		LS_WriteStr( f, buf );
 	}
 
+	LS_WBufFlush( f );
 	FS_FCloseFile( f );
 }
 
@@ -3424,33 +3555,66 @@ static void LS_SaveHistory( void ) {
 	/* History is now embedded in .lss files - LS_Save handles it */
 }
 
-/* Load all .lss files + state */
-static void LS_Load( void ) {
+/* =================================================================
+   Lazy loading: only load .lss files for the active mode at startup;
+   other modes are loaded on demand when the user switches to them.
+   This avoids a 30+ second freeze when many large .lss files exist.
+   ================================================================= */
+static qboolean lssLoadedFg = qfalse;   /* fullgame files loaded */
+static qboolean lssLoadedMs = qfalse;   /* mission files loaded */
+static qboolean lssLoadedIl = qfalse;   /* IL files loaded */
+
+/* Load .lss files for a specific mode (if not already loaded). */
+static void LS_LoadMode( int mode ) {
 	int di, gi, mi;
 	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
 
-	/* Load fullgame .lss files */
-	for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-		LS_ReadLss( LS_MODE_FULLGAME, di, -1, -1, p100 );
-	}
-
-	/* Load mission .lss files */
-	for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
+	switch ( mode ) {
+	case LS_MODE_FULLGAME:
+		if ( lssLoadedFg ) return;
 		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-			LS_ReadLss( LS_MODE_MISSION, di, gi, -1, p100 );
+			LS_ReadLss( LS_MODE_FULLGAME, di, -1, -1, p100 );
 		}
-	}
-
-	/* Load IL .lss files */
-	for ( mi = 0; mi < ls.numMaps; mi++ ) {
-		if ( ls.splits[mi].cutscene ) continue;
-		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-			LS_ReadLss( LS_MODE_IL, di, -1, mi, p100 );
+		lssLoadedFg = qtrue;
+		break;
+	case LS_MODE_MISSION:
+		if ( lssLoadedMs ) return;
+		for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
+			for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+				LS_ReadLss( LS_MODE_MISSION, di, gi, -1, p100 );
+			}
 		}
+		lssLoadedMs = qtrue;
+		break;
+	case LS_MODE_IL:
+		if ( lssLoadedIl ) return;
+		for ( mi = 0; mi < ls.numMaps; mi++ ) {
+			if ( ls.splits[mi].cutscene ) continue;
+			for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+				LS_ReadLss( LS_MODE_IL, di, -1, mi, p100 );
+			}
+		}
+		lssLoadedIl = qtrue;
+		break;
 	}
+}
 
-	/* Load transient state */
+/* Reset lazy-loading flags (on 100% toggle or full reload). */
+static void LS_ResetLoadedFlags( void ) {
+	lssLoadedFg = qfalse;
+	lssLoadedMs = qfalse;
+	lssLoadedIl = qfalse;
+}
+
+/* Load state + active mode's .lss files (lazy: others on demand). */
+static void LS_Load( void ) {
+	LS_ResetLoadedFlags();
+
+	/* Load transient state first so we know the active mode */
 	LS_LoadState();
+
+	/* Only load the active mode's files; others load on demand */
+	LS_LoadMode( ls.runMode );
 
 	Com_Printf( "^2LiveSplit: .lss files loaded (%d history runs)\n", ls.numHistoryRuns );
 }
@@ -3749,7 +3913,10 @@ static void LS_DoResetSaveEx( qboolean fromExternal ) {
 	} else {
 		ls.prevMapname[0] = '\0';
 	}
-	if ( ls_modeCvar ) LS_SetupMode( ls_modeCvar->integer, ls_missionCvar ? ls_missionCvar->integer : 1 );
+	if ( ls_modeCvar ) {
+		LS_SetupMode( ls_modeCvar->integer, ls_missionCvar ? ls_missionCvar->integer : 1 );
+		LS_LoadMode( ls_modeCvar->integer );
+	}
 
 	LS_Save();
 }
@@ -3833,12 +4000,19 @@ static void LS_DoResetNoSave( void ) {
 	} else {
 		ls.prevMapname[0] = '\0';
 	}
-	if ( ls_modeCvar ) LS_SetupMode( ls_modeCvar->integer, ls_missionCvar ? ls_missionCvar->integer : 1 );
+	if ( ls_modeCvar ) {
+		LS_SetupMode( ls_modeCvar->integer, ls_missionCvar ? ls_missionCvar->integer : 1 );
+		LS_LoadMode( ls_modeCvar->integer );
+	}
 
 	LS_Save();
 }
 
 static void LS_Reset_f( void ) {
+	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
+		Com_Printf( "^3LiveSplit: Binds disabled in External mode - use External LiveSplit controls\n" );
+		return;
+	}
 	if ( ls.active || ls.runFinished ) {
 		/* Finished run with new PB -> prompt */
 		if ( ls.runFinished && LS_HasNewPB() ) {
@@ -3860,6 +4034,10 @@ static void LS_Reset_f( void ) {
 }
 
 static void LS_ResetNoSave_f( void ) {
+	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
+		Com_Printf( "^3LiveSplit: Binds disabled in External mode - use External LiveSplit controls\n" );
+		return;
+	}
 	if ( ls.active || ls.runFinished ) {
 		/* Finished run with new PB -> prompt */
 		if ( ls.runFinished && LS_HasNewPB() ) {
@@ -3899,6 +4077,10 @@ static void LS_ResetCancel_f( void ) {
 
 static void LS_Start_f( void ) {
 	int nowReal, newIdx;
+	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
+		Com_Printf( "^3LiveSplit: Binds disabled in External mode - use External LiveSplit controls\n" );
+		return;
+	}
 	if ( !ls.initialized ) return;
 
 	nowReal = Sys_Milliseconds();
@@ -4083,6 +4265,10 @@ static void LS_BackupFile( const char *filename ) {
 static void LS_ResetBests_f( void ) {
 	int i, di, gi;
 
+	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
+		Com_Printf( "^3LiveSplit: Binds disabled in External mode - use External LiveSplit controls\n" );
+		return;
+	}
 	/* create backups of current category .lss before wiping */
 	{
 		char lssPath[256];
@@ -4155,6 +4341,10 @@ static void LS_ResetCategory_f( void ) {
 	const char *modeName;
 	const char *skillName;
 
+	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
+		Com_Printf( "^3LiveSplit: Binds disabled in External mode - use External LiveSplit controls\n" );
+		return;
+	}
 	{
 		char lssPath[256];
 		LS_GetCurrentLssPath( lssPath, sizeof( lssPath ) );
@@ -4252,6 +4442,10 @@ static void LS_ResetCategory_f( void ) {
 static void LS_Pause_f( void ) {
 	int nowReal;
 
+	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
+		Com_Printf( "^3LiveSplit: Binds disabled in External mode - use External LiveSplit controls\n" );
+		return;
+	}
 	if ( !ls.initialized || !ls.active || ls.runFinished ) {
 		Com_Printf( "^2LiveSplit: No active run to pause\n" );
 		return;
@@ -4283,6 +4477,10 @@ static void LS_Pause_f( void ) {
 static void LS_Undo_f( void ) {
 	int idx, di;
 
+	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
+		Com_Printf( "^3LiveSplit: Binds disabled in External mode - use External LiveSplit controls\n" );
+		return;
+	}
 	if ( !ls.initialized ) return;
 	if ( !ls.active && !ls.runFinished ) {
 		Com_Printf( "^2LiveSplit: No active/finished run to undo\n" );
@@ -4368,6 +4566,10 @@ static void LS_Undo_f( void ) {
 static void LS_Skip_f( void ) {
 	int idx, nextIdx;
 
+	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
+		Com_Printf( "^3LiveSplit: Binds disabled in External mode - use External LiveSplit controls\n" );
+		return;
+	}
 	if ( !ls.initialized || !ls.active || ls.runFinished ) {
 		Com_Printf( "^2LiveSplit: No active run / cannot skip\n" );
 		return;
@@ -4830,6 +5032,9 @@ static void SV_Refresh( void ) {
 
 	if ( !ls.initialized ) return;
 
+	/* Ensure the viewed mode's .lss files are loaded (lazy) */
+	LS_LoadMode( sv_viewMode );
+
 	di = SV_DiffSlot();
 
 	SV_GatherVisible();
@@ -5288,6 +5493,9 @@ void SCR_LiveSplitInit( void ) {
 	ls_timingCvar     = Cvar_Get( "ls_timing",     "0", CVAR_ARCHIVE ); /* 0=Game Time, 1=Real Time */
 	ls_100pctCvar     = Cvar_Get( "ls_100pct",     "0", CVAR_ARCHIVE );
 
+	/* UI state indicator: 1 when a run is active (used by menu disableCvar) */
+	Cvar_Get( "ls_running", "0", 0 );
+
 	/* Color customization */
 	ls_clr_aheadCvar  = Cvar_Get( "ls_clr_ahead",  "",  CVAR_ARCHIVE );
 	ls_clr_behindCvar = Cvar_Get( "ls_clr_behind", "",  CVAR_ARCHIVE );
@@ -5312,6 +5520,10 @@ void SCR_LiveSplitInit( void ) {
 
 	/* External LiveSplit type */
 	ls_typeCvar    = Cvar_Get( "ls_type",    "0",   CVAR_ARCHIVE );
+	/* Clamp old "Both" (2) values to "In-Game Only" (0) */
+	if ( ls_typeCvar->integer > LS_TYPE_EXTERNAL ) {
+		Cvar_Set( "ls_type", "0" );
+	}
 
 	/* External window geometry is now managed by the standalone exe */
 
@@ -5346,7 +5558,10 @@ void SCR_LiveSplitInit( void ) {
 		/* active run: use saved mode/mission */
 		LS_SetupMode( ls.runMode, ls.runMission );
 	} else {
-		LS_SetupMode( ls_modeCvar->integer, ls_missionCvar->integer );
+		int initMode = ls_modeCvar ? ls_modeCvar->integer : 0;
+		LS_SetupMode( initMode, ls_missionCvar ? ls_missionCvar->integer : 1 );
+		/* Ensure the cvar-selected mode is loaded (may differ from state file) */
+		LS_LoadMode( initMode );
 	}
 
 	if ( ls.currentMapIndex >= 0 && ls.currentMapIndex < ls.numMaps ) {
@@ -5588,6 +5803,23 @@ static void LS_TriggerAlert( const char *text, float r, float g, float b ) {
 
 /*
 ===================
+LS_TriggerVerify
+
+Triggers the run-finish verification overlay showing config check results.
+===================
+*/
+static void LS_TriggerVerify( void ) {
+	ls.verifyStartMs  = Sys_Milliseconds();
+	ls.verifyValid    = ( !ls.settingsModified && !ls.cheatsUsed ) ? qtrue : qfalse;
+	ls.verifyModCount = ls.settingsModCount;
+	ls.verifyCheats   = ls.cheatsUsed;
+	ls.verifyPauses   = ls.totalPauses;
+	ls.verifyUndos    = ls.totalUndos;
+	ls.verifySkips    = ls.totalSkips;
+}
+
+/*
+===================
 LS_QuickCheckSettings
 
 Lightweight per-frame cvar check (no console spam).
@@ -5652,9 +5884,10 @@ static void LS_FinishRun( int nowReal ) {
 
 	finalIGT = ls.runTotalIGTMs;
 
-	/* Send final game-time to external LiveSplit and trigger the final split */
+	/* Send final game-time to external LiveSplit and trigger the final split.
+	   Use LS_CumulativeTime for the send (same source as in-game HUD). */
 	if ( LS_ExtEnabled() ) {
-		LS_ExtSendGameTime( finalIGT );
+		LS_ExtSendGameTime( LS_CumulativeTime( ls.modeLastIdx ) );
 		LS_ExtSend( "split" );
 	}
 
@@ -5809,6 +6042,7 @@ static void LS_FinishRun( int nowReal ) {
 
 	/* Auto-check settings on run finish */
 	LS_CheckSettings();
+	LS_TriggerVerify();
 
 	/* Record in history (dynamic, no fixed limit) */
 	LS_HistoryEnsure( ls.numHistoryRuns + 1 );
@@ -5921,18 +6155,21 @@ static void LS_CompleteSplit( int idx, int nowReal ) {
 	Com_Printf( "^5LiveSplit: splitSeqNum=%d (map=%s idx=%d t=%d)\n",
 			ls_aslState.splitSeqNum, ls.splits[idx].mapname, idx, t );
 
-	/* Notify external LiveSplit Server */
-	{
-		char gtBuf[64];
-		Com_sprintf( gtBuf, sizeof( gtBuf ), "setgametime %.3f",
-					 (float)ls.runTotalIGTMs / 1000.0f );
-		LS_ExtSend( gtBuf );
-		LS_ExtSend( "split" );
-	}
+	/* Notify external LiveSplit Server.
+	   Use LS_CumulativeTime (same source as in-game HUD) so the split
+	   records the exact value the player sees on screen. */
+	LS_ExtSendGameTime( LS_CumulativeTime( ls.modeLastIdx ) );
+	LS_ExtSend( "split" );
+
+	/* Write updated state to demo file if recording */
+	LS_DemoWriteUpdate();
 
 	/* Check if this was the end map for the current mode */
 	if ( idx == ls.modeEndMapIdx ) {
 		LS_FinishRun( nowReal );
+		/* Write final "finished" state to demo so playback shows the
+		   completed run (runFinished=true, final PB data, etc.) */
+		LS_DemoWriteUpdate();
 	}
 }
 
@@ -5949,8 +6186,38 @@ static void LS_Frame( void ) {
 
 	if ( !ls.initialized ) return;
 
+	/* Keep ls_running cvar in sync for UI disableCvar checks */
+	{
+		static int prevRunning = -1;
+		int curRunning = ( ls.active && !ls.runFinished ) ? 1 : 0;
+		if ( curRunning != prevRunning ) {
+			Cvar_Set( "ls_running", curRunning ? "1" : "0" );
+			prevRunning = curRunning;
+		}
+	}
+
 	/* External LiveSplit connection / per-frame game-time sync */
 	LS_ExtFrame();
+
+	/* ---- Transitional state guard ----
+	   During map loading, the renderer fires updatescreen callbacks
+	   which invoke LS_Frame() while cl.mapname is still empty (zeroed
+	   by CL_ClearState, not yet set by CL_InitCGame).  Running the
+	   full LS_Frame in this state causes:
+	   (a) IGT accumulation of loading time (Guard 1 lets it through
+	       because empty igtMap[0] doesn't trigger the mismatch check)
+	   (b) prevMapname gets cleared by the cl.mapname=='' early return
+	       later in this function, which then triggers spurious map-
+	       change detection on the first valid frame
+	   (c) Mode/difficulty/settings checks may misfire during the
+	       unstable transitional state
+	   Fix: bail immediately, only updating lastRealTimeMs to avoid a
+	   time spike when the next valid frame arrives.  This does NOT
+	   affect quickloads (SV_MapRestart_f never clears cl.mapname). */
+	if ( cls.state >= CA_CONNECTED && cl.mapname[0] == '\0' ) {
+		ls.lastRealTimeMs = Sys_Milliseconds();
+		return;
+	}
 
 	/* ---- IGT accumulation (runs BEFORE any early returns) ----
 	   Timer ticks every frame so quickloads / death-reloads keep it
@@ -6100,10 +6367,98 @@ static void LS_Frame( void ) {
 		ls.lastRealTimeMs = Sys_Milliseconds();
 	}
 
+	/* ---- Per-frame external LiveSplit game-time sync ----
+	   Sent here (AFTER IGT accumulation) so the external timer receives
+	   the exact same cumulative value that the in-game HUD displays.
+	   Previously this was in LS_ExtFrame (before accumulation), causing
+	   the external timer to lag one frame behind (~8-16 ms) and visibly
+	   "stop and add a few ms" during map changes. */
+	if ( lsext_connected && ls.active && !ls.runFinished ) {
+		LS_ExtSendGameTime( LS_CumulativeTime( ls.modeLastIdx ) );
+	}
+
+	/* ---- Periodic demo state update ----
+	   Write the current LS state to the demo file every ~500 ms so that
+	   playback-side timer interpolation stays tightly synchronised with
+	   the actual recorded IGT.  Without this, the demo timer drifts
+	   between infrequent state snapshots because the recording uses
+	   Sys_Milliseconds() (wall-clock) for IGT while playback uses
+	   cl.serverTime for interpolation. */
+	if ( clc.demorecording && ls.active && !ls.runFinished ) {
+		static int lsDemoLastWriteMs = 0;
+		int demoNow = Sys_Milliseconds();
+		if ( demoNow - lsDemoLastWriteMs >= 500 ) {
+			LS_DemoWriteUpdate();
+			lsDemoLastWriteMs = demoNow;
+		}
+	}
+
 	/* Skip the rest of LS_Frame during savegame loading to avoid
 	   unstable engine state.  IGT accumulation above already ran. */
-	if ( Cvar_VariableIntegerValue( "savegame_loading" ) ) {
-		return;
+	{
+		static int prevSavegameLoading = 0;
+		int curSavegameLoading = Cvar_VariableIntegerValue( "savegame_loading" );
+		if ( curSavegameLoading ) {
+			prevSavegameLoading = curSavegameLoading;
+			return;
+		}
+		/* Savegame load completed: savegame_loading transitioned to 0.
+		   Clear mapLoadFreeze and ls_loading that may have been set by
+		   a previous/interrupted map transition.  Without this, the
+		   timer stays frozen permanently after quickload/load because
+		   playerstart (which normally clears ls_loading) never fires
+		   during a savegame restore.
+		   NOTE: savegame_loading can go to 0 before cls.state reaches
+		   CA_ACTIVE (it's cleared in game init, before first snapshot).
+		   Keep prevSavegameLoading alive until CA_ACTIVE so the fix
+		   fires on the right frame. */
+		if ( prevSavegameLoading && ls.active ) {
+			if ( cls.state >= CA_ACTIVE ) {
+				char sgMap[LS_MAX_MAPNAME];
+				int sgIdx;
+				if ( ls.mapLoadFreeze || Cvar_VariableIntegerValue( "ls_loading" ) ) {
+					ls.mapLoadFreeze = qfalse;
+					Cvar_Set( "ls_loading", "0" );
+				}
+				/* Sync prevMapname/actualMapname to the loaded map so
+				   map-change detection (later in this function) does
+				   NOT fire.  Without this, a different-map save load
+				   would re-trigger auto-start (timer reset) or re-set
+				   the freeze flags.  Also advance currentMapIndex so
+				   IGT accumulates on the correct split. */
+				LS_ExtractMapname( cl.mapname, sgMap, sizeof( sgMap ) );
+				if ( sgMap[0] ) {
+					Q_strncpyz( ls.prevMapname, sgMap, LS_MAX_MAPNAME );
+					Q_strncpyz( ls.actualMapname, sgMap, LS_MAX_MAPNAME );
+					sgIdx = LS_FindMapIndex( sgMap );
+					if ( sgIdx >= 0 && sgIdx != ls.currentMapIndex ) {
+						ls.currentMapIndex = sgIdx;
+						LS_UpdateCurVisRow();
+						/* In IL mode, move the target so the IL
+						   auto-update code doesn't misfire and
+						   restart the timer on this map. */
+						if ( ls.runMode == LS_MODE_IL ) {
+							ls.modeFirstIdx  = sgIdx;
+							ls.modeLastIdx   = sgIdx;
+							ls.modeEndMapIdx = sgIdx;
+						}
+					}
+				}
+				ls.lastRealTimeMs = Sys_Milliseconds();
+				prevSavegameLoading = 0;
+			}
+			/* else: CA_ACTIVE not reached yet - keep prevSavegameLoading
+			   so we retry next frame.  Return early like savegame_loading
+			   was still active to avoid running map-change detection in
+			   an intermediate state.  Update lastRealTimeMs to avoid
+			   a large IGT jump when the fix finally fires. */
+			else {
+				ls.lastRealTimeMs = Sys_Milliseconds();
+				return;
+			}
+		} else {
+			prevSavegameLoading = 0;
+		}
 	}
 
 	/* Deferred Full Game start: the run begins when the player clicks
@@ -6220,6 +6575,8 @@ static void LS_Frame( void ) {
 				}
 			}
 			LS_SetupMode( curMode, curMission );
+			/* Ensure the new mode's .lss files are loaded (lazy) */
+			LS_LoadMode( curMode );
 			/* Keep prevMapname = current map so auto-start only fires
 			   on an actual level load, not while already on the map.
 			   NOTE: currentMap isn't populated yet at this point, so
@@ -6668,17 +7025,31 @@ static void LS_Frame( void ) {
 		isSpTransition = Cvar_VariableIntegerValue( "sv_spTransition" ) ? qtrue : qfalse;
 		Cvar_Set( "sv_spTransition", "0" );
 
-		/* ---- Guard: keep timer running on backward map change ----
-		   During an active (non-finished) run, if the player navigates
-		   to a map that is NOT the next sequential split (e.g., they
-		   accidentally typed devmap/spmap to an earlier stage), undo
-		   the loading freeze and skip all auto-start / transition
-		   logic so the timer keeps running on the current split.
-		   Use ls_reset to intentionally restart the run. */
+		/* ---- Guard: non-sequential map change during active run ----
+		   If the player quickloads, devmaps, or otherwise navigates
+		   to a map that is NOT the next sequential split, move the
+		   split pointer to the actual map.  Accumulated split times
+		   are PRESERVED - only the explicit reset bind should zero
+		   them.  This allows the player to continue the run after
+		   an accidental map change.
+		   mapLoadFreeze stays set (prevents counting loading time).
+		   ls_loading is cleared immediately so the freeze auto-clears
+		   once CA_ACTIVE is reached - no briefing screen will fire
+		   playerstart during quickloads/devmaps/non-sequential jumps. */
 		if ( ls.active && !ls.runFinished && newIdx >= 0 &&
 			 newIdx != ls.currentMapIndex + 1 ) {
-			ls.mapLoadFreeze = qfalse;
+			/* Non-sequential jump during active run: move the split
+			   pointer WITHOUT resetting any accumulated times.
+			   The run continues - only an explicit reset bind should
+			   zero times.  Un-mark splitDone on the destination so
+			   IGT can accumulate on the new current split. */
+			ls.splits[newIdx].splitDone = qfalse;
+			ls.currentMapIndex = newIdx;
+			ls.endCutsceneArmed  = qfalse;
+			ls.endCutsceneSnapMs = -1;
+			ls.endCutscenePrevLB = qfalse;
 			Cvar_Set( "ls_loading", "0" );
+			LS_UpdateCurVisRow();
 			goto afterMapChange;
 		}
 
@@ -6881,7 +7252,15 @@ static void LS_Frame( void ) {
 			return;
 		}
 
-		if ( !isSpTransition ) goto afterMapChange;
+		if ( !isSpTransition ) {
+			/* Non-spTransition during active run (devmap, console map,
+			   chapter select): no briefing screen will fire playerstart.
+			   Clear ls_loading so mapLoadFreeze auto-clears at CA_ACTIVE. */
+			if ( ls.active && !ls.runFinished ) {
+				Cvar_Set( "ls_loading", "0" );
+			}
+			goto afterMapChange;
+		}
 
 		/* ========== Natural sequential transition (active run) ========== */
 		if ( ls.active && ls.currentMapIndex >= 0 &&
@@ -6977,6 +7356,12 @@ static void LS_Frame( void ) {
 			}
 
 			LS_Save();
+
+			/* Write updated LS state to demo now that currentMapIndex
+			   has advanced.  The earlier CL_ParseGamestate injection
+			   had the OLD index; this mid-stream update gives the demo
+			   the correct current-map and segment-time snapshot. */
+			LS_DemoWriteUpdate();
 		}
 	}
 
@@ -8326,7 +8711,12 @@ static void LS_DrawIGTTimer( void ) {
 	vec4_t shadowColor = { 0.0f, 0.0f, 0.0f, 0.65f };
 
 	if ( !ls_igttimerCvar || !ls_igttimerCvar->integer ) {
-		return;
+		/* In external mode, always show IGT timer when a run is active
+		   (the panel is hidden, so this is the only on-screen time). */
+		if ( !( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL &&
+				ls.active && !ls.runFinished ) ) {
+			return;
+		}
 	}
 
 	timerX     = ls_igttimer_xCvar ? ls_igttimer_xCvar->value : 280.0f;
@@ -8480,6 +8870,151 @@ static void LS_DrawCenterAlert( void ) {
 	}
 }
 
+/*
+===================
+LS_DrawVerifyOverlay
+
+Draws the run-finish verification overlay (multi-line config check results).
+===================
+*/
+static void LS_DrawVerifyOverlay( void ) {
+	int now, elapsed;
+	float alpha, t;
+	float boxW, boxH, boxX, boxY;
+	float lineH, titleH, padX, padY;
+	int numLines;
+	vec4_t bgColor, borderColor, shadow;
+	char lines[6][64];
+	float lineColors[6][4];
+	int i;
+
+	if ( !ls.verifyStartMs ) return;
+
+	now = Sys_Milliseconds();
+	elapsed = now - ls.verifyStartMs;
+
+	/* Total 5000ms: 400ms fade-in, 3600ms hold, 1000ms fade-out */
+	if ( elapsed > 5000 ) {
+		ls.verifyStartMs = 0;
+		return;
+	}
+
+	if ( elapsed < 400 ) {
+		t = (float)elapsed / 400.0f;
+		alpha = t * t; /* ease-in */
+	} else if ( elapsed < 4000 ) {
+		alpha = 1.0f;
+	} else {
+		t = (float)( elapsed - 4000 ) / 1000.0f;
+		alpha = 1.0f - t * t; /* ease-out */
+	}
+
+	if ( alpha <= 0.0f ) return;
+
+	/* Build content lines */
+	numLines = 0;
+
+	if ( ls.verifyValid ) {
+		Q_strncpyz( lines[numLines], "RUN VERIFIED", sizeof( lines[0] ) );
+		lineColors[numLines][0] = 0.2f;
+		lineColors[numLines][1] = 1.0f;
+		lineColors[numLines][2] = 0.3f;
+		lineColors[numLines][3] = 1.0f;
+		numLines++;
+
+		Q_strncpyz( lines[numLines], "All settings at default values", sizeof( lines[0] ) );
+		lineColors[numLines][0] = 0.7f;
+		lineColors[numLines][1] = 0.9f;
+		lineColors[numLines][2] = 0.7f;
+		lineColors[numLines][3] = 0.8f;
+		numLines++;
+	} else {
+		Q_strncpyz( lines[numLines], "RUN NOT VERIFIED", sizeof( lines[0] ) );
+		lineColors[numLines][0] = 1.0f;
+		lineColors[numLines][1] = 0.3f;
+		lineColors[numLines][2] = 0.2f;
+		lineColors[numLines][3] = 1.0f;
+		numLines++;
+
+		if ( ls.verifyCheats ) {
+			Q_strncpyz( lines[numLines], "sv_cheats was used", sizeof( lines[0] ) );
+			lineColors[numLines][0] = 1.0f;
+			lineColors[numLines][1] = 0.4f;
+			lineColors[numLines][2] = 0.3f;
+			lineColors[numLines][3] = 0.9f;
+			numLines++;
+		}
+		if ( ls.verifyModCount > 0 ) {
+			Com_sprintf( lines[numLines], sizeof( lines[0] ), "%d setting%s modified",
+				ls.verifyModCount, ls.verifyModCount > 1 ? "s" : "" );
+			lineColors[numLines][0] = 1.0f;
+			lineColors[numLines][1] = 0.85f;
+			lineColors[numLines][2] = 0.2f;
+			lineColors[numLines][3] = 0.9f;
+			numLines++;
+		}
+	}
+
+	if ( ls.verifyPauses || ls.verifyUndos || ls.verifySkips ) {
+		Com_sprintf( lines[numLines], sizeof( lines[0] ), "Pauses:%d  Undos:%d  Skips:%d",
+			ls.verifyPauses, ls.verifyUndos, ls.verifySkips );
+		lineColors[numLines][0] = 0.9f;
+		lineColors[numLines][1] = 0.8f;
+		lineColors[numLines][2] = 0.4f;
+		lineColors[numLines][3] = 0.8f;
+		numLines++;
+	}
+
+	/* Layout */
+	titleH = 10.0f;
+	lineH  = 9.0f;
+	padX   = 16.0f;
+	padY   = 10.0f;
+	boxW   = 240.0f;
+	boxH   = padY * 2 + titleH + ( numLines - 1 ) * ( lineH + 3 );
+	boxX   = ( 640.0f - boxW ) * 0.5f;
+	boxY   = 130.0f;
+
+	/* Background */
+	bgColor[0] = 0.0f; bgColor[1] = 0.0f; bgColor[2] = 0.0f;
+	bgColor[3] = 0.72f * alpha;
+	SCR_FillRect( boxX, boxY, boxW, boxH, bgColor );
+
+	/* Border */
+	if ( ls.verifyValid ) {
+		borderColor[0] = 0.2f; borderColor[1] = 0.8f; borderColor[2] = 0.3f;
+	} else {
+		borderColor[0] = 1.0f; borderColor[1] = 0.3f; borderColor[2] = 0.2f;
+	}
+	borderColor[3] = 0.7f * alpha;
+	SCR_FillRect( boxX, boxY, boxW, 1, borderColor );
+	SCR_FillRect( boxX, boxY + boxH - 1, boxW, 1, borderColor );
+	SCR_FillRect( boxX, boxY, 1, boxH, borderColor );
+	SCR_FillRect( boxX + boxW - 1, boxY, 1, boxH, borderColor );
+
+	/* Draw lines */
+	shadow[0] = 0.0f; shadow[1] = 0.0f; shadow[2] = 0.0f; shadow[3] = 0.5f * alpha;
+	for ( i = 0; i < numLines; i++ ) {
+		vec4_t clr;
+		float textW, tx, ty, sz;
+		int textLen;
+
+		sz = ( i == 0 ) ? titleH : lineH - 2;
+		textLen = (int)strlen( lines[i] );
+		textW = textLen * sz;
+		tx = boxX + ( boxW - textW ) * 0.5f;
+		ty = boxY + padY + (float)i * ( lineH + 3 );
+
+		clr[0] = lineColors[i][0];
+		clr[1] = lineColors[i][1];
+		clr[2] = lineColors[i][2];
+		clr[3] = lineColors[i][3] * alpha;
+
+		SCR_DrawStringExt( (int)( tx + 1 ), (int)( ty + 1 ), (int)sz, lines[i], shadow, qtrue );
+		SCR_DrawStringExt( (int)tx, (int)ty, (int)sz, lines[i], clr, qtrue );
+	}
+}
+
 /* =====================================================================
    Main entry point
    ===================================================================== */
@@ -8495,6 +9030,742 @@ Called from cl_scrn.c to display the indicator.
 int LS_GetModifiedSettingsCount( void ) {
 	if ( !ls.initialized ) return 0;
 	return ls.settingsModCount;
+}
+
+/* =====================================================================
+   Demo LiveSplit recording & playback
+   ===================================================================== */
+
+/*
+===================
+LS_DemoBuildState
+
+Serialize the current LiveSplit state into an Info-string for
+embedding in demos via CS_DEMO_LIVESPLIT.
+
+Keys:
+  a  = active (0/1)
+  f  = finished (0/1)
+  m  = mode (0=FG, 1=MS, 2=IL)
+  d  = difficulty (1-3)
+  ms = mission group (1-5)
+  igt= total IGT so far (ms) - sum of completed splits
+  sg = current segment time (ms) on the active split
+  si = current split index
+  st = cl.serverTime at capture
+  nm = numMaps
+  nv = numVisible
+  ci = currentMapIndex
+  mf = modeFirstIdx
+  ml = modeLastIdx
+  me = modeEndMapIdx
+  fp = com_maxfps at capture (recording FPS)
+===================
+*/
+void LS_DemoBuildState( char *out, int outSize ) {
+	char tmp[32];
+
+	out[0] = '\0';
+
+	if ( !ls.initialized || !ls.active ) return;
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.active ? 1 : 0 );
+	Info_SetValueForKey( out, "a", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.runFinished ? 1 : 0 );
+	Info_SetValueForKey( out, "f", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.runMode );
+	Info_SetValueForKey( out, "m", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.currentDifficulty );
+	Info_SetValueForKey( out, "d", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.runMission );
+	Info_SetValueForKey( out, "ms", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.runTotalIGTMs );
+	Info_SetValueForKey( out, "igt", tmp );
+
+	/* Current segment time on the active (non-done) split */
+	{
+		int segMs = 0;
+		int ci = ls.currentMapIndex;
+		if ( ci >= 0 && ci < ls.numMaps && !ls.splits[ci].splitDone ) {
+			if ( ls.splits[ci].cutscene ) {
+				/* Cutscene: attribute time to adjacent real split */
+				int ri = ( ci == ls.modeFirstIdx ) ? LS_NextRealSplit( ci ) : LS_PrevRealSplit( ci );
+				if ( ri >= 0 && !ls.splits[ri].splitDone )
+					segMs = ls.splits[ri].currentTimeMs;
+			} else {
+				segMs = ls.splits[ci].currentTimeMs;
+			}
+		}
+		Com_sprintf( tmp, sizeof( tmp ), "%d", segMs );
+		Info_SetValueForKey( out, "sg", tmp );
+	}
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.currentMapIndex );
+	Info_SetValueForKey( out, "si", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", cl.serverTime );
+	Info_SetValueForKey( out, "st", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.numMaps );
+	Info_SetValueForKey( out, "nm", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.numVisible );
+	Info_SetValueForKey( out, "nv", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.currentMapIndex );
+	Info_SetValueForKey( out, "ci", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.modeFirstIdx );
+	Info_SetValueForKey( out, "mf", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.modeLastIdx );
+	Info_SetValueForKey( out, "ml", tmp );
+
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.modeEndMapIdx );
+	Info_SetValueForKey( out, "me", tmp );
+
+	/* Recording FPS */
+	Com_sprintf( tmp, sizeof( tmp ), "%d", Cvar_VariableIntegerValue( "com_maxfps" ) );
+	Info_SetValueForKey( out, "fp", tmp );
+}
+
+/*
+===================
+LS_DemoBuildTimes
+
+Serialize completed split times and PB/gold comparison data into
+a compact string for CS_DEMO_LIVESPLIT_TIMES.
+
+Format: semicolon-separated entries, one per split in the active range:
+  <splitIdx>:<done>:<igtMs>:<pbMs>:<goldMs>
+
+where:
+  splitIdx = index in splits[] (global map index)
+  done     = 1 if split completed, 0 if not
+  igtMs    = segment IGT in milliseconds (0 if not done)
+  pbMs     = PB cumulative time for comparison (0 if no PB)
+  goldMs   = best segment time (gold) for this split (0 if none)
+
+Example: "1:1:12345:11000:10500;2:1:8000:19000:7500;3:0:0:25000:5000"
+===================
+*/
+void LS_DemoBuildTimes( char *out, int outSize ) {
+	int i, di, len;
+	char entry[64];
+
+	out[0] = '\0';
+	len = 0;
+
+	if ( !ls.initialized || !ls.active ) return;
+
+	di = LS_CurDiffIdx();
+
+	for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
+		int done, igtMs, pbCumMs, goldMs;
+		int entryLen;
+
+		if ( ls.splits[i].cutscene ) continue;
+
+		done   = ls.splits[i].splitDone ? 1 : 0;
+		igtMs  = ls.splits[i].currentTimeMs;
+		goldMs = ls.splits[i].d[di].bestTimeMs;
+
+		/* PB cumulative: sum of PB segments up to and including this split */
+		pbCumMs = LS_CumulativePB( i );
+
+		Com_sprintf( entry, sizeof( entry ), "%d:%d:%d:%d:%d;",
+			i, done, igtMs, pbCumMs, goldMs );
+
+		entryLen = (int)strlen( entry );
+		if ( len + entryLen >= outSize - 1 ) break;
+
+		Q_strcat( out, outSize, entry );
+		len += entryLen;
+	}
+
+	/* Remove trailing semicolon */
+	if ( len > 0 && out[len - 1] == ';' ) {
+		out[len - 1] = '\0';
+	}
+}
+
+/*
+===================
+LS_DemoWriteUpdate
+
+Called during demo recording when split state changes (e.g. split
+completed). Writes updated CS_DEMO_LIVESPLIT and CS_DEMO_LIVESPLIT_TIMES
+configstrings into the demo file mid-stream.
+===================
+*/
+static void LS_DemoWriteUpdate( void ) {
+	char lsState[MAX_INFO_STRING];
+	char lsTimes[MAX_INFO_STRING];
+
+	if ( !clc.demorecording ) return;
+
+	LS_DemoBuildState( lsState, sizeof( lsState ) );
+	LS_DemoBuildTimes( lsTimes, sizeof( lsTimes ) );
+
+	if ( lsState[0] ) {
+		CL_DemoWriteConfigstring( CS_DEMO_LIVESPLIT, lsState );
+	}
+	if ( lsTimes[0] ) {
+		CL_DemoWriteConfigstring( CS_DEMO_LIVESPLIT_TIMES, lsTimes );
+	}
+}
+
+/* =====================================================================
+   Demo LiveSplit playback renderer
+   ===================================================================== */
+
+/* Parsed demo LS state (rebuilt from configstrings each frame) */
+typedef struct {
+	qboolean valid;
+	int      active;
+	int      finished;
+	int      mode;          /* 0=FG 1=MS 2=IL */
+	int      difficulty;    /* 1-3 */
+	int      mission;       /* 1-5 */
+	int      totalIGTMs;    /* accumulated IGT at capture */
+	int      segTimeMs;     /* current segment time at capture */
+	int      captureServerTime; /* cl.serverTime when state was captured */
+	int      currentMapIndex;
+	int      numMaps;
+	int      numVisible;
+	int      modeFirstIdx;
+	int      modeLastIdx;
+	int      modeEndMapIdx;
+	int      recordFps;     /* com_maxfps during recording */
+} lsDemoState_t;
+
+typedef struct {
+	int splitIdx;
+	int done;
+	int igtMs;          /* segment time */
+	int pbCumMs;        /* PB cumulative */
+	int goldMs;         /* best segment (gold) */
+} lsDemoSplit_t;
+
+#define LS_DEMO_MAX_SPLITS 40
+
+/*
+===================
+LS_DemoParseTimes
+
+Parse the CS_DEMO_LIVESPLIT_TIMES configstring into an array
+of lsDemoSplit_t entries.
+Returns the number of entries parsed.
+===================
+*/
+static int LS_DemoParseTimes( const char *str, lsDemoSplit_t *splits, int maxSplits ) {
+	int count = 0;
+	const char *p = str;
+	char token[64];
+	int  tlen;
+
+	while ( *p && count < maxSplits ) {
+		int idx, done, igt, pb, gold;
+
+		/* Read one entry up to ';' or end */
+		tlen = 0;
+		while ( *p && *p != ';' ) {
+			if ( tlen < (int)sizeof( token ) - 1 ) token[tlen++] = *p;
+			p++;
+		}
+		token[tlen] = '\0';
+		if ( *p == ';' ) p++;
+
+		if ( tlen == 0 ) continue;
+
+		/* Parse idx:done:igt:pb:gold */
+		if ( sscanf( token, "%d:%d:%d:%d:%d", &idx, &done, &igt, &pb, &gold ) == 5 ) {
+			splits[count].splitIdx = idx;
+			splits[count].done     = done;
+			splits[count].igtMs    = igt;
+			splits[count].pbCumMs  = pb;
+			splits[count].goldMs   = gold;
+			count++;
+		}
+	}
+	return count;
+}
+
+/*
+===================
+LS_DemoParseState
+
+Parse the CS_DEMO_LIVESPLIT configstring into an lsDemoState_t.
+===================
+*/
+static void LS_DemoParseState( const char *str, lsDemoState_t *st ) {
+	memset( st, 0, sizeof( *st ) );
+
+	if ( !str || !str[0] ) return;
+
+	st->valid              = qtrue;
+	st->active             = atoi( Info_ValueForKey( str, "a" ) );
+	st->finished           = atoi( Info_ValueForKey( str, "f" ) );
+	st->mode               = atoi( Info_ValueForKey( str, "m" ) );
+	st->difficulty         = atoi( Info_ValueForKey( str, "d" ) );
+	st->mission            = atoi( Info_ValueForKey( str, "ms" ) );
+	st->totalIGTMs         = atoi( Info_ValueForKey( str, "igt" ) );
+	st->segTimeMs          = atoi( Info_ValueForKey( str, "sg" ) );
+	st->currentMapIndex    = atoi( Info_ValueForKey( str, "si" ) );
+	st->captureServerTime  = atoi( Info_ValueForKey( str, "st" ) );
+	st->numMaps            = atoi( Info_ValueForKey( str, "nm" ) );
+	st->numVisible         = atoi( Info_ValueForKey( str, "nv" ) );
+	st->modeFirstIdx       = atoi( Info_ValueForKey( str, "mf" ) );
+	st->modeLastIdx        = atoi( Info_ValueForKey( str, "ml" ) );
+	st->modeEndMapIdx      = atoi( Info_ValueForKey( str, "me" ) );
+	st->recordFps          = atoi( Info_ValueForKey( str, "fp" ) );
+}
+
+/*
+===================
+LS_DemoCumulativeTime
+
+Compute cumulative IGT for a given split from the parsed demo splits.
+Sums up segment times for all done splits from first to upTo (inclusive).
+===================
+*/
+static int LS_DemoCumulativeTime( const lsDemoSplit_t *splits, int numSplits,
+								  int modeFirst, int upToIdx ) {
+	int i, sum = 0;
+	for ( i = 0; i < numSplits; i++ ) {
+		if ( splits[i].splitIdx < modeFirst ) continue;
+		if ( splits[i].splitIdx > upToIdx ) break;
+		if ( splits[i].done ) sum += splits[i].igtMs;
+	}
+	return sum;
+}
+
+/*
+===================
+LS_DemoFindSplit
+
+Find a demo split entry by split index. Returns NULL if not found.
+===================
+*/
+static const lsDemoSplit_t *LS_DemoFindSplit( const lsDemoSplit_t *splits,
+											  int numSplits, int splitIdx ) {
+	int i;
+	for ( i = 0; i < numSplits; i++ ) {
+		if ( splits[i].splitIdx == splitIdx ) return &splits[i];
+	}
+	return NULL;
+}
+
+/*
+===================
+LS_DemoDrawPlayback
+
+Main demo playback renderer. Parses CS_DEMO_LIVESPLIT and
+CS_DEMO_LIVESPLIT_TIMES from cl.gameState, calculates running
+timers, and draws a simplified LiveSplit panel.
+===================
+*/
+static void LS_DemoDrawPlayback( void ) {
+	const char *stateStr;
+	const char *timesStr;
+	lsDemoState_t dst;
+	lsDemoSplit_t dsplits[LS_DEMO_MAX_SPLITS];
+	int numDSplits;
+	int stateOfs, timesOfs;
+	int liveIGT, segTime;
+	int i, vi;
+	char timeBuf[32], deltaBuf[32];
+
+	/* Layout variables */
+	float x, y, panelW, charSz, smallSz, rowH, scaleF;
+	int timeRight;
+
+	/* Colours */
+	vec4_t panelBg     = { 0.04f, 0.04f, 0.06f, 0.82f };
+	vec4_t panelBorder = { 0.20f, 0.35f, 0.15f, 0.08f };
+	vec4_t headerColor = { 0.35f, 0.75f, 0.20f, 1.00f };
+	vec4_t currentMapC = { 1.00f, 1.00f, 0.60f, 1.00f };
+	vec4_t completedC  = { 0.72f, 0.72f, 0.72f, 0.80f };
+	vec4_t futureMap   = { 0.36f, 0.36f, 0.40f, 0.48f };
+	vec4_t aheadColor  = { 0.25f, 0.85f, 0.25f, 1.00f };
+	vec4_t behindColor = { 0.85f, 0.25f, 0.25f, 1.00f };
+	vec4_t goldColor   = { 1.00f, 0.85f, 0.20f, 1.00f };
+	vec4_t timeWhite   = { 0.85f, 0.88f, 0.85f, 0.90f };
+	vec4_t timeDim     = { 0.48f, 0.48f, 0.50f, 0.52f };
+	vec4_t timerColor  = { 0.85f, 0.95f, 0.80f, 1.00f };
+	vec4_t finishedC   = { 0.25f, 0.85f, 0.25f, 1.00f };
+	vec4_t finishBad   = { 0.85f, 0.25f, 0.25f, 1.00f };
+	vec4_t sepColor    = { 0.22f, 0.38f, 0.12f, 0.18f };
+	vec4_t hlBg        = { 0.10f, 0.20f, 0.06f, 0.32f };
+	vec4_t labelColor  = { 0.42f, 0.48f, 0.38f, 0.62f };
+	vec4_t segTimerClr = { 0.62f, 0.65f, 0.62f, 0.82f };
+	vec4_t demoTag     = { 0.90f, 0.65f, 0.15f, 0.80f };
+	vec4_t mapNameClr  = { 0.55f, 0.62f, 0.50f, 0.85f };
+
+	/* Read configstrings */
+	stateOfs = cl.gameState.stringOffsets[CS_DEMO_LIVESPLIT];
+	timesOfs = cl.gameState.stringOffsets[CS_DEMO_LIVESPLIT_TIMES];
+
+	stateStr = stateOfs ? ( cl.gameState.stringData + stateOfs ) : "";
+	timesStr = timesOfs ? ( cl.gameState.stringData + timesOfs ) : "";
+
+	if ( !stateStr[0] ) return; /* no LS data in this demo */
+
+	LS_DemoParseState( stateStr, &dst );
+	if ( !dst.valid || !dst.active ) return;
+
+	numDSplits = LS_DemoParseTimes( timesStr, dsplits, LS_DEMO_MAX_SPLITS );
+
+	/* ---- Compute live IGT ---- */
+	/* totalIGTMs = sum of completed splits at capture.
+	   segTimeMs  = segment time on the active split at capture.
+	   captureServerTime = cl.serverTime at capture.
+	   elapsed    = time since capture (from demo's server time).
+	   Running timer = totalIGT + segTime + elapsed.
+
+	   After a map change the gamestate is rebuilt.  CS_DEMO_LIVESPLIT
+	   may carry stale data (captureServerTime from the old map) until
+	   the first LS_DemoWriteUpdate arrives on the new map (~500ms).
+	   During this gap, elapsed would be huge and the timer would show
+	   a wrong value.  Detect this by capping elapsed at 2 seconds
+	   (well above the normal 500ms capture interval).  When capped,
+	   show the snapshot's totalIGTMs without adding elapsed so the
+	   timer stays at the last valid total until fresh data arrives. */
+	if ( dst.finished ) {
+		liveIGT = dst.totalIGTMs;
+		segTime = 0;
+	} else {
+		int elapsed = cl.serverTime - dst.captureServerTime;
+		if ( elapsed < 0 ) elapsed = 0;
+		if ( elapsed > 2000 ) {
+			/* Stale capture - show frozen total, don't add elapsed */
+			segTime = dst.segTimeMs;
+			liveIGT = dst.totalIGTMs + segTime;
+		} else {
+			segTime = dst.segTimeMs + elapsed;
+			liveIGT = dst.totalIGTMs + segTime;
+		}
+	}
+
+	/* ---- Layout ---- */
+	scaleF = 1.0f;
+	charSz  = 5.0f * scaleF;
+	smallSz = 4.5f * scaleF;
+	rowH    = 10.0f * scaleF;
+	panelW  = 178.0f;
+	x       = 8.0f;
+	y       = 80.0f;
+	timeRight = (int)( x + panelW - 4 );
+
+	/* Use layout cvars if available */
+	if ( ls_scaleCvar && ls_scaleCvar->value > 0 ) {
+		scaleF = ls_scaleCvar->value;
+		if ( scaleF < 0.5f ) scaleF = 0.5f;
+		if ( scaleF > 3.0f ) scaleF = 3.0f;
+		charSz  = 5.0f * scaleF;
+		smallSz = 4.5f * scaleF;
+		rowH    = 10.0f * scaleF;
+	}
+	if ( ls_xCvar ) x = ls_xCvar->value;
+	if ( ls_yCvar ) y = ls_yCvar->value;
+	if ( ls_wCvar ) panelW = ls_wCvar->value;
+	timeRight = (int)( x + panelW - 4 );
+
+	/* Alignment: mirror to right if ls_align 1 */
+	if ( ls_alignCvar && ls_alignCvar->integer == 1 ) {
+		x = 640.0f - x - panelW;
+		timeRight = (int)( x + panelW - 4 );
+	}
+
+	/* ---- Count rows ---- */
+	{
+		float panelH;
+		int visRows = 0;
+		int scrollStart, scrollEnd;
+		int maxRows = 6;
+		qboolean pinLast = qfalse;
+
+		/* Build visible row list from map defs (non-cutscene in mode range) */
+		int visMap[LS_DEMO_MAX_SPLITS];
+		int curVisRow = -1;
+
+		for ( i = dst.modeFirstIdx; i <= dst.modeLastIdx && i < (int)( sizeof(ls_mapDefs)/sizeof(ls_mapDefs[0]) - 1 ); i++ ) {
+			if ( ls_mapDefs[i].cutscene ) continue;
+			if ( i == dst.currentMapIndex ) curVisRow = visRows;
+			visMap[visRows++] = i;
+		}
+
+		if ( visRows <= 0 ) return;
+
+		/* ---- Scrolling ---- */
+		if ( ls_maxrowsCvar && ls_maxrowsCvar->integer >= 2 )
+			maxRows = ls_maxrowsCvar->integer;
+
+		if ( visRows <= maxRows ) {
+			scrollStart = 0;
+			scrollEnd   = visRows - 1;
+		} else {
+			int scrollSize = maxRows - 1;
+			scrollStart = curVisRow - ( scrollSize / 2 );
+			if ( scrollStart < 0 ) scrollStart = 0;
+			scrollEnd = scrollStart + scrollSize - 1;
+			if ( scrollEnd >= visRows - 2 ) {
+				scrollEnd = visRows - 1;
+				scrollStart = scrollEnd - scrollSize;
+				if ( scrollStart < 0 ) scrollStart = 0;
+			} else {
+				pinLast = qtrue;
+			}
+		}
+
+		{
+			int totalRows = ( scrollEnd - scrollStart + 1 ) + ( pinLast ? 1 : 0 );
+			panelH = 14 * scaleF + 2 * scaleF;     /* header + sep */
+			panelH += 6 * scaleF + 2 * scaleF;      /* column header + sep */
+			panelH += totalRows * rowH;              /* split rows */
+			if ( visRows > maxRows && scrollStart > 0 ) panelH += 6 * scaleF;
+			if ( pinLast ) panelH += 2 * scaleF;
+			panelH += 2 * scaleF;                    /* sep before timer */
+			panelH += 8 * scaleF;                    /* timer */
+			panelH += 7 * scaleF;                    /* seg timer */
+			panelH += 6 * scaleF;                    /* DEMO tag */
+		}
+
+		/* ---- Draw background ---- */
+		SCR_FillRect( x, y, panelW, panelH, panelBg );
+		/* Border */
+		SCR_FillRect( x, y, panelW, 1, panelBorder );
+		SCR_FillRect( x, y + panelH - 1, panelW, 1, panelBorder );
+		SCR_FillRect( x, y, 1, panelH, panelBorder );
+		SCR_FillRect( x + panelW - 1, y, 1, panelH, panelBorder );
+
+		/* ---- Header ---- */
+		{
+			const char *modeStr;
+			const char *skillName;
+			char headerBuf[64];
+			const char *diffTag;
+			char diffBuf[12];
+			int headerX, tagX;
+
+			switch ( dst.mode ) {
+			case LS_MODE_MISSION:
+				if ( dst.mission >= 1 && dst.mission <= LS_NUM_MISSION_GROUPS )
+					modeStr = ls_missionGroups[dst.mission - 1].shortName;
+				else
+					modeStr = "Mission";
+				break;
+			case LS_MODE_IL:
+				modeStr = "Individual Level";
+				break;
+			default:
+				modeStr = "Full Game";
+				break;
+			}
+
+			switch ( dst.difficulty ) {
+			case 1: skillName = "DHM"; break;
+			case 3: skillName = "IADI"; break;
+			default: skillName = "BEO"; break;
+			}
+
+			Q_strncpyz( headerBuf, modeStr, sizeof( headerBuf ) );
+			diffTag = skillName;
+			Com_sprintf( diffBuf, sizeof( diffBuf ), "[%s]", diffTag );
+
+			/* Status dot */
+			{
+				float *dotClr = dst.finished ? finishedC : headerColor;
+				SCR_DrawStringExt( (int)( x + 3 ), (int)( y + 4 ), charSz, "\x07", dotClr, qtrue );
+			}
+
+			headerX = (int)( x + 3 + charSz * 1.4f );
+			SCR_DrawStringExt( headerX, (int)( y + 4 ), charSz, headerBuf, headerColor, qtrue );
+
+			tagX = headerX + (int)strlen( headerBuf ) * (int)charSz + (int)( charSz * 0.6f );
+			SCR_DrawStringExt( tagX, (int)( y + 4 ), smallSz, diffBuf, headerColor, qtrue );
+		}
+		y += 14 * scaleF;
+
+		/* Separator */
+		SCR_FillRect( x + 2, y, panelW - 4, 1, sepColor );
+		y += 2 * scaleF;
+
+		/* Column header */
+		{
+			int hdrY = (int)( y + 1 );
+			int trRight = timeRight;
+			int wDelta = (int)( 7 * smallSz + 4 );
+			int drRight = trRight - (int)( 8 * charSz + 4 ) - 2;
+			(void)wDelta;
+			(void)drRight;
+			SCR_DrawStringExt( trRight - (int)( 4 * smallSz ), hdrY, smallSz, "Time", labelColor, qtrue );
+		}
+		y += 6 * scaleF;
+		SCR_FillRect( x + 2, y, panelW - 4, 1, sepColor );
+		y += 2 * scaleF;
+
+		/* ---- Split rows ---- */
+		if ( scrollStart > 0 ) {
+			SCR_DrawStringExt( (int)( x + panelW / 2 - 6 ), (int)y, smallSz, "...", timeDim, qtrue );
+			y += 6 * scaleF;
+		}
+
+		for ( vi = scrollStart; vi <= scrollEnd; vi++ ) {
+			int splitIdx = visMap[vi];
+			const lsDemoSplit_t *ds = LS_DemoFindSplit( dsplits, numDSplits, splitIdx );
+			qboolean isCur  = ( splitIdx == dst.currentMapIndex );
+			qboolean isDone = ( ds && ds->done );
+			float *nameClr;
+			const char *name;
+
+			if ( isCur ) {
+				SCR_FillRect( x + 1, y, panelW - 2, rowH, hlBg );
+			}
+
+			if ( isCur )       nameClr = currentMapC;
+			else if ( isDone ) nameClr = completedC;
+			else               nameClr = futureMap;
+
+			/* Get display name from mapDefs */
+			name = ls_mapDefs[splitIdx].shortName;
+			if ( !name ) name = ls_mapDefs[splitIdx].displayName;
+			if ( !name ) name = ls_mapDefs[splitIdx].name;
+			if ( !name ) name = "???";
+
+			SCR_DrawStringExt( (int)( x + 3 ), (int)( y + 1 ), charSz, name, nameClr, qtrue );
+
+			/* Time column */
+			if ( isDone && ds ) {
+				int cumTime = LS_DemoCumulativeTime( dsplits, numDSplits, dst.modeFirstIdx, splitIdx );
+				if ( cumTime > 0 ) {
+					/* Delta vs PB */
+					if ( ds->pbCumMs > 0 ) {
+						int delta = cumTime - ds->pbCumMs;
+						float *deltaClr;
+						if ( delta < 0 )      deltaClr = aheadColor;
+						else if ( delta > 0 ) deltaClr = behindColor;
+						else                  deltaClr = timeDim;
+
+						if ( delta != 0 ) {
+							LS_FormatDelta( delta, deltaBuf, sizeof( deltaBuf ) );
+						} else {
+							Q_strncpyz( deltaBuf, "---", sizeof( deltaBuf ) );
+						}
+						{
+							int deltaRight = timeRight - (int)( 8 * charSz + 4 ) - 2;
+							SCR_DrawStringExt( deltaRight - (int)strlen( deltaBuf ) * (int)smallSz,
+								(int)( y + 2 ), smallSz, deltaBuf, deltaClr, qtrue );
+						}
+					}
+
+					LS_FormatTime( cumTime, timeBuf, sizeof( timeBuf ) );
+					SCR_DrawStringExt( timeRight - (int)strlen( timeBuf ) * (int)charSz,
+						(int)( y + 1 ), charSz, timeBuf, timeWhite, qtrue );
+				}
+			} else if ( isCur && ds && ds->pbCumMs > 0 ) {
+				/* Show PB target time for current map */
+				LS_FormatTime( ds->pbCumMs, timeBuf, sizeof( timeBuf ) );
+				SCR_DrawStringExt( timeRight - (int)strlen( timeBuf ) * (int)charSz,
+					(int)( y + 1 ), charSz, timeBuf, currentMapC, qtrue );
+			} else if ( ds && ds->pbCumMs > 0 ) {
+				/* Future: show PB cumulative dimmed */
+				LS_FormatTime( ds->pbCumMs, timeBuf, sizeof( timeBuf ) );
+				SCR_DrawStringExt( timeRight - (int)strlen( timeBuf ) * (int)charSz,
+					(int)( y + 1 ), charSz, timeBuf, timeDim, qtrue );
+			}
+			y += rowH;
+		}
+
+		/* Pinned last row */
+		if ( pinLast ) {
+			int splitIdx = visMap[visRows - 1];
+			const lsDemoSplit_t *ds = LS_DemoFindSplit( dsplits, numDSplits, splitIdx );
+			qboolean isDone = ( ds && ds->done );
+			const char *name;
+
+			SCR_FillRect( x + 2, y, panelW - 4, 1, sepColor );
+			y += 2 * scaleF;
+
+			name = ls_mapDefs[splitIdx].shortName;
+			if ( !name ) name = ls_mapDefs[splitIdx].displayName;
+			if ( !name ) name = ls_mapDefs[splitIdx].name;
+			if ( !name ) name = "???";
+
+			SCR_DrawStringExt( (int)( x + 3 ), (int)( y + 1 ), charSz, name,
+				isDone ? completedC : futureMap, qtrue );
+
+			if ( isDone && ds ) {
+				int cumTime = LS_DemoCumulativeTime( dsplits, numDSplits, dst.modeFirstIdx, splitIdx );
+				if ( cumTime > 0 ) {
+					LS_FormatTime( cumTime, timeBuf, sizeof( timeBuf ) );
+					SCR_DrawStringExt( timeRight - (int)strlen( timeBuf ) * (int)charSz,
+						(int)( y + 1 ), charSz, timeBuf, timeWhite, qtrue );
+				}
+			} else if ( ds && ds->pbCumMs > 0 ) {
+				LS_FormatTime( ds->pbCumMs, timeBuf, sizeof( timeBuf ) );
+				SCR_DrawStringExt( timeRight - (int)strlen( timeBuf ) * (int)charSz,
+					(int)( y + 1 ), charSz, timeBuf, timeDim, qtrue );
+			}
+			y += rowH;
+		}
+
+		/* ---- Separator before timers ---- */
+		SCR_FillRect( x + 2, y, panelW - 4, 1, sepColor );
+		y += 2 * scaleF;
+
+		/* ---- Main Timer ---- */
+		{
+			float *tClr;
+			if ( dst.finished ) {
+				/* Check if final time is worse than PB for colour */
+				/* Find last split's PB cumulative */
+				const lsDemoSplit_t *lastSplit = NULL;
+				int lastIdx = visMap[visRows - 1];
+				lastSplit = LS_DemoFindSplit( dsplits, numDSplits, lastIdx );
+				if ( lastSplit && lastSplit->pbCumMs > 0 && liveIGT > lastSplit->pbCumMs ) {
+					tClr = finishBad;
+				} else {
+					tClr = finishedC;
+				}
+			} else {
+				tClr = timerColor;
+			}
+
+			LS_FormatTime( liveIGT, timeBuf, sizeof( timeBuf ) );
+			SCR_DrawStringExt( timeRight - (int)strlen( timeBuf ) * (int)( 8 * scaleF ),
+				(int)y, 8 * scaleF, timeBuf, tClr, qtrue );
+			y += 8 * scaleF;
+		}
+
+		/* ---- Segment Timer ---- */
+		if ( !dst.finished ) {
+			char segBuf[32];
+			LS_FormatTime( segTime, segBuf, sizeof( segBuf ) );
+			SCR_DrawStringExt( timeRight - (int)strlen( segBuf ) * (int)( 5 * scaleF ),
+				(int)( y + 1 ), 5 * scaleF, segBuf, segTimerClr, qtrue );
+		}
+		y += 7 * scaleF;
+
+		/* ---- DEMO playback tag + recording FPS ---- */
+		{
+			const char *tag = "DEMO";
+			SCR_DrawStringExt( (int)( x + 3 ), (int)( y + 1 ), smallSz, tag, demoTag, qtrue );
+
+			/* Show recording FPS on the right side */
+			if ( dst.recordFps > 0 ) {
+				char fpsBuf[32];
+				Com_sprintf( fpsBuf, sizeof( fpsBuf ), "REC %d fps", dst.recordFps );
+				SCR_DrawStringExt( timeRight - (int)strlen( fpsBuf ) * (int)smallSz,
+					(int)( y + 1 ), smallSz, fpsBuf, demoTag, qtrue );
+			}
+		}
+	}
 }
 
 /*
@@ -8566,8 +9837,7 @@ void SCR_LiveSplitNotifyDisconnect( void ) {
 }
 
 void SCR_LiveSplitDraw( void ) {
-	qboolean extEnabled = ( ls_typeCvar && ( ls_typeCvar->integer == LS_TYPE_EXTERNAL ||
-											 ls_typeCvar->integer == LS_TYPE_BOTH ) );
+	qboolean extEnabled = ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL );
 
 	/* ---- Update shared memory for standalone LiveSplit exe ---- */
 	if ( ls.initialized ) {
@@ -8595,22 +9865,33 @@ void SCR_LiveSplitDraw( void ) {
 		}
 	}
 
+	/* ---- Demo playback: render LS panel from demo data, bypass live state ----
+	   Demo LS display only requires renderer and cg_livesplit; it does NOT
+	   need ls.initialized (no live LS session) or external LS connection.
+	   This check must come BEFORE any ls.initialized / extEnabled guards
+	   so that demos recorded with LS data are always playable. */
+	if ( clc.demoplaying ) {
+		if ( cls.rendererStarted && ( !cg_livesplit || cg_livesplit->integer ) ) {
+			LS_DemoDrawPlayback();
+		}
+		return;
+	}
+
 	if ( !cg_livesplit || !cg_livesplit->integer ) {
 		/* Even with cg_livesplit off, run timer logic if external LS is enabled */
 		if ( !extEnabled ) return;
 		if ( !ls.initialized ) return;
 		if ( !cls.rendererStarted ) return;
-		if ( clc.demoplaying ) return;
 
 		LS_Frame();
 		LS_DrawIGTTimer();
 		LS_DrawResetConfirmPopup();
 		LS_DrawCenterAlert();
+		LS_DrawVerifyOverlay();
 		return;
 	}
 	if ( !ls.initialized ) return;
 	if ( !cls.rendererStarted ) return;
-	if ( clc.demoplaying ) return;  /* LiveSplit disabled during demo playback */
 
 	LS_Frame();
 
@@ -8622,6 +9903,9 @@ void SCR_LiveSplitDraw( void ) {
 
 	/* Centered alert (cheats / modified settings) */
 	LS_DrawCenterAlert();
+
+	/* Run-finish verification overlay */
+	LS_DrawVerifyOverlay();
 
 	/* External-only mode: skip panel, only IGT + reset popup */
 	if ( ls_typeCvar && ls_typeCvar->integer == LS_TYPE_EXTERNAL ) {
