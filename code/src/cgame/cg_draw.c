@@ -4204,7 +4204,7 @@ static void CG_DrawKeystrokeOverlay( void ) {
 	pressed[2] = ( cmd.forwardmove < 0 );                                    // S
 	pressed[3] = ( cmd.rightmove > 0 );                                      // D
 	pressed[5] = ( cmd.wbuttons & WBUTTON_CROUCH ) ? qtrue : qfalse;         // DUCK
-	pressed[4] = ( cmd.upmove > 0 ) || ( cmd.upmove == 0 && pressed[5] );   // JUMP
+	pressed[4] = ( cmd.wbuttons & WBUTTON_JUMP ) ? qtrue : qfalse;          // JUMP
 	pressed[6] = ( cmd.buttons & BUTTON_ATTACK ) ? qtrue : qfalse;           // LMB
 	pressed[7] = ( cmd.buttons & BUTTON_SPRINT ) ? qtrue : qfalse;           // Run/Sprint
 	pressed[8] = qfalse;  /* mouse dir X (handled separately) */

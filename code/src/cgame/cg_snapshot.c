@@ -360,9 +360,16 @@ static snapshot_t *CG_ReadNextSnapshot( void ) {
 		cgs.processedSnapshotNum++;
 		r = trap_GetSnapshot( cgs.processedSnapshotNum, dest );
 
-		// FIXME: why would trap_GetSnapshot return a snapshot with the same server time
-		if ( cg.snap && r && dest->serverTime == cg.snap->serverTime ) {
-			//continue;
+		// During demo playback at high recording FPS (e.g. 142fps with
+		// sv_fps 20), the server sends ~7 snapshots per tick that all
+		// share the same serverTime.  These are redundant for rendering
+		// (entity states only change at sv_fps rate).  Skipping them:
+		//  - saves ~6/7 of snapshot transitions per tick
+		//  - prevents wasting PACKET_BACKUP buffer slots
+		//  - ensures nextSnap always has a DIFFERENT serverTime from
+		//    snap, giving proper interpolation (delta != 0)
+		if ( cg.demoPlayback && cg.snap && r && dest->serverTime == cg.snap->serverTime ) {
+			continue;
 		}
 
 		// if it succeeded, return

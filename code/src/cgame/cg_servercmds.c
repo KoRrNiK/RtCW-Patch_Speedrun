@@ -993,6 +993,21 @@ static void CG_ServerCommand( void ) {
 		return;
 	}
 
+	if ( !strcmp( cmd, "clearsounds" ) ) {
+		int i;
+		trap_S_ClearLoopingSounds( qtrue );
+		for ( i = 0; i < MAX_CLIENTS; i++ ) {
+			trap_S_StopStreamingSound( i );
+		}
+		trap_S_StopBackgroundTrack();
+		trap_S_FadeAllSound( 0.0f, 0 );
+		trap_S_FadeAllSound( 1.0f, 50 );
+		CG_InitMarkPolys();
+		CG_InitLocalEntities();
+		CG_ClearParticles();
+		return;
+	}
+
 	if ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to begin.
 		if ( !cg.demoPlayback ) {
 			CG_Fade( 0, 0, 0, 255, cg.time, 0 );      // go black
