@@ -409,21 +409,41 @@ menuDef {
 //	}
 //
 //
-// delete
+// favourite / delete
 //
 
 	itemDef {
-		name del
-		text "Delete..."
+		name fav
+		text "Fav"
 		type ITEM_TYPE_BUTTON
-   		rect 302 30 148 18
+   		rect 302 30 50 18
 		textscale .25
 		style 1
 		border 1
 		bordercolor .5 .5 .5 .5        
 		backcolor 0 0 0 .25
 		textaligny 13
-		textalignx 80
+		textalignx 25
+		textalign ITEM_ALIGN_CENTER
+		forecolor 1 .85 0 1
+		mouseEnter { setitemcolor fav backcolor .4 .35 .0 .25 }
+      	mouseExit { setitemcolor fav backcolor 0 0 0 .25 }
+		action { uiScript ToggleFavourite }
+		visible 1
+	}
+
+	itemDef {
+		name del
+		text "Delete..."
+		type ITEM_TYPE_BUTTON
+   		rect 354 30 96 18
+		textscale .25
+		style 1
+		border 1
+		bordercolor .5 .5 .5 .5        
+		backcolor 0 0 0 .25
+		textaligny 13
+		textalignx 48
 		textalign ITEM_ALIGN_CENTER
 		mouseEnter { setitemcolor del backcolor .3 .5 .2 .25 }
       	mouseExit { setitemcolor del backcolor 0 0 0 .25 }

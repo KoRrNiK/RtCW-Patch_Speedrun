@@ -290,6 +290,27 @@ itemDef {
 			}
 		}
 
+	itemDef {
+		name favbtn
+		text "Fav"
+		textscale .22
+		style 0
+		type ITEM_TYPE_BUTTON
+		textfont UI_FONT_NORMAL
+		textstyle 6
+		rect 340 134 30 20
+		textalign 1
+		textalignx 15
+		textaligny 12
+		backcolor 0 0 0 0
+		forecolor 1 .85 0 1
+		visible MENU_TRUE
+		action {
+			play "sound/misc/kcswish.wav";
+			uiScript ToggleFavourite
+			}
+		}
+
 
 ////////////
 
