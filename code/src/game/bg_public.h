@@ -191,6 +191,11 @@ typedef enum {
 // during demo recording; read back during playback for verification.
 #define CS_DEMO_CVARS       2040
 
+// Demo LiveSplit recording: embeds timer state and split times
+// into the demo so the LiveSplit panel is visible during playback.
+#define CS_DEMO_LIVESPLIT       2041   // main state: mode, active, finished, IGT, etc.
+#define CS_DEMO_LIVESPLIT_TIMES 2042   // completed split times + PB/gold for comparison
+
 //#define CS_MAX			(CS_LOCATIONS+MAX_LOCATIONS)
 //#define CS_MAX			(CS_PARTICLES+MAX_PARTICLES_AREAS)
 //#define CS_MAX				(CS_DLIGHTS+MAX_DLIGHT_CONFIGSTRINGS)			//----(SA)

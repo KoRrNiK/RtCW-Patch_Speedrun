@@ -105,10 +105,6 @@ qboolean    CheatsOk( gentity_t *ent ) {
 		trap_SendServerCommand( ent - g_entities, va( "print \"Cheats are not enabled on this server.\n\"" ) );
 		return qfalse;
 	}
-	if ( ent->health <= 0 ) {
-		trap_SendServerCommand( ent - g_entities, va( "print \"You must be alive to use this command.\n\"" ) );
-		return qfalse;
-	}
 	return qtrue;
 }
 
@@ -1222,6 +1218,692 @@ void Cmd_SetViewpos_f( gentity_t *ent ) {
 
 /*
 =================
+Cmd_SavePos_f / Cmd_LoadPos_f
+
+In-memory game state snapshot for instant practice teleportation.
+Saves all entities, clients, and AI states to static buffers.
+On load, restores everything and re-links entities - no VM restart,
+no file I/O, no rendering freeze.
+Supports slots 0-8 (default = 0 if no number given).
+=================
+*/
+#include "../game/botlib.h"
+#include "../game/be_aas.h"
+#include "../game/be_ea.h"
+#include "../game/be_ai_gen.h"
+#include "../game/be_ai_goal.h"
+#include "../game/be_ai_move.h"
+#include "../botai/botai.h"
+#include "ai_cast.h"
+
+extern void G_SetAASBlockingEntity( gentity_t *ent, qboolean blocking );
+
+#define SP_MAX_SLOTS 9
+
+typedef struct {
+	gentity_t    entities[MAX_GENTITIES];
+	gclient_t    clients[MAX_CLIENTS];
+	cast_state_t caststates[MAX_CLIENTS];
+	int          numEntities;
+	int          levelTime;
+	int          numConnectedClients;
+	qboolean     valid;
+} stateSnapshot_t;
+
+static stateSnapshot_t *sp_slots[SP_MAX_SLOTS];  /* allocated on first use */
+
+/*
+=================
+Rewind ring buffer - records player-only state every frame.
+Full-state snapshots recorded every 500ms for "rewind N full" mode.
+=================
+*/
+#define REWIND_BUFFER_SIZE  4000 /* player-only ring buffer (~64s at 62hz recording) */
+#define REWIND_RECORD_INTERVAL 16 /* ms between player-only recordings (62hz, FPS-independent) */
+#define REWIND_FULL_SIZE     64  /* full-state snapshots (~32s at 500ms interval) */
+#define REWIND_FULL_INTERVAL 500 /* ms between full snapshots */
+#define REWIND_GRACE_START  500  /* don't record first 500ms of level (entities spawning) */
+
+typedef struct {
+	vec3_t        origin;
+	vec3_t        velocity;
+	vec3_t        viewangles;
+	int           levelTime;
+	int           health;
+	int           weapon;
+	int           weaponstate;
+	int           ammo[MAX_WEAPONS];
+	int           ammoclip[MAX_WEAPONS];
+	int           weapons[MAX_WEAPONS / ( sizeof( int ) * 8 )];
+	int           stats[MAX_STATS];
+	int           pm_flags;
+	int           pm_time;
+	int           groundEntityNum;
+	int           eFlags;
+	int           legsAnim;
+	int           legsTimer;
+	int           torsoAnim;
+	int           torsoTimer;
+	int           pm_type;
+} rewindFrame_t;
+
+static rewindFrame_t rw_buffer[REWIND_BUFFER_SIZE];
+static int           rw_head = 0;      /* next write position */
+static int           rw_count = 0;     /* total frames stored */
+static int           rw_lastTime = 0;  /* levelTime of last player-only recording */
+
+/* Full-state ring buffer - one snapshot every REWIND_FULL_INTERVAL ms */
+static stateSnapshot_t *rwf_buffer[REWIND_FULL_SIZE]; /* malloc'd on demand */
+static int              rwf_times[REWIND_FULL_SIZE];  /* levelTime of each snapshot */
+static int              rwf_head = 0;
+static int              rwf_count = 0;
+static int              rwf_lastTime = 0;   /* levelTime of last full snapshot */
+
+static int SP_ParseSlot( void ) {
+	char arg[4];
+	int slot;
+
+	if ( trap_Argc() < 2 ) {
+		return 0;
+	}
+	trap_Argv( 1, arg, sizeof( arg ) );
+	slot = atoi( arg );
+	if ( slot < 0 || slot >= SP_MAX_SLOTS ) {
+		return -1;
+	}
+	return slot;
+}
+
+void Cmd_SavePos_f( gentity_t *ent ) {
+	int i;
+	int slot;
+	stateSnapshot_t *sp;
+
+	if ( !CheatsOk( ent ) ) {
+		return;
+	}
+
+	slot = SP_ParseSlot();
+	if ( slot < 0 ) {
+		trap_SendServerCommand( ent - g_entities, va( "print \"Invalid slot. Use 0-%d.\n\"", SP_MAX_SLOTS - 1 ) );
+		return;
+	}
+
+	/* Allocate slot on first use */
+	if ( !sp_slots[slot] ) {
+		sp_slots[slot] = malloc( sizeof( stateSnapshot_t ) );
+		if ( !sp_slots[slot] ) {
+			trap_SendServerCommand( ent - g_entities, "print \"Out of memory.\n\"" );
+			return;
+		}
+		memset( sp_slots[slot], 0, sizeof( stateSnapshot_t ) );
+	}
+	sp = sp_slots[slot];
+
+	/* Snapshot entities */
+	sp->numEntities = level.num_entities;
+	memcpy( sp->entities, g_entities, sizeof( gentity_t ) * MAX_GENTITIES );
+
+	/* Snapshot clients */
+	memcpy( sp->clients, level.clients, sizeof( gclient_t ) * level.maxclients );
+
+	/* Snapshot AI cast states */
+	sp->numConnectedClients = level.numConnectedClients;
+	for ( i = 0; i < aicast_maxclients; i++ ) {
+		memcpy( &sp->caststates[i], &caststates[i], sizeof( cast_state_t ) );
+	}
+
+	/* Snapshot timing */
+	sp->levelTime = level.time;
+	sp->valid = qtrue;
+
+	trap_SendServerCommand( ent - g_entities, va( "print \"Slot %d saved (%.1f %.1f %.1f)\n\"", slot, ent->client->ps.origin[0], ent->client->ps.origin[1], ent->client->ps.origin[2] ) );
+}
+
+void Cmd_LoadPos_f( gentity_t *ent ) {
+	int i;
+	int slot;
+	int timeDelta;
+	gentity_t *e;
+	stateSnapshot_t *sp;
+	qboolean wasBot[MAX_CLIENTS];
+
+	if ( !CheatsOk( ent ) ) {
+		return;
+	}
+
+	slot = SP_ParseSlot();
+	if ( slot < 0 ) {
+		trap_SendServerCommand( ent - g_entities, va( "print \"Invalid slot. Use 0-%d.\n\"", SP_MAX_SLOTS - 1 ) );
+		return;
+	}
+
+	if ( !sp_slots[slot] || !sp_slots[slot]->valid ) {
+		trap_SendServerCommand( ent - g_entities, va( "print \"Slot %d empty. Use 'savepos %d' first.\n\"", slot, slot ) );
+		return;
+	}
+	sp = sp_slots[slot];
+
+	/* Calculate time offset between now and save moment */
+	timeDelta = level.time - sp->levelTime;
+
+	/* Remember which client slots have bots before restore */
+	for ( i = 1; i < level.maxclients; i++ ) {
+		wasBot[i] = ( g_entities[i].inuse && ( g_entities[i].r.svFlags & SVF_BOT ) );
+	}
+
+	/* Reset AAS blocking before restore */
+	trap_AAS_SetAASBlockingEntity( vec3_origin, vec3_origin, -1 );
+
+	/* Restore entities */
+	level.num_entities = sp->numEntities;
+	memcpy( g_entities, sp->entities, sizeof( gentity_t ) * MAX_GENTITIES );
+
+	/* Restore clients */
+	memcpy( level.clients, sp->clients, sizeof( gclient_t ) * level.maxclients );
+
+	/* Free server-side bot slots that no longer exist in restored state */
+	for ( i = 1; i < level.maxclients; i++ ) {
+		qboolean isBot = ( g_entities[i].inuse && ( g_entities[i].r.svFlags & SVF_BOT ) );
+		if ( wasBot[i] && !isBot ) {
+			trap_BotFreeClient( i );
+		}
+	}
+
+	/* Restore AI cast states */
+	for ( i = 0; i < aicast_maxclients; i++ ) {
+		memcpy( &caststates[i], &sp->caststates[i], sizeof( cast_state_t ) );
+		if ( caststates[i].bs && !caststates[i].deathTime ) {
+			memset( g_entities[caststates[i].entityNum].client->ps.delta_angles, 0, sizeof( g_entities[caststates[i].entityNum].client->ps.delta_angles ) );
+			VectorCopy( caststates[i].ideal_viewangles, caststates[i].viewangles );
+			VectorCopy( caststates[i].ideal_viewangles, g_entities[caststates[i].entityNum].client->ps.viewangles );
+			memcpy( &caststates[i].bs->cur_ps, &g_entities[caststates[i].entityNum].client->ps, sizeof( playerState_t ) );
+			caststates[i].lastThink = -9999;
+			trap_EA_ResetInput( caststates[i].entityNum, NULL );
+		}
+	}
+
+	/* Shift all entity think times forward by the time delta so they
+	   fire at the correct relative moment from now, not from the past */
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		e = &g_entities[i];
+		if ( !e->inuse ) {
+			continue;
+		}
+		if ( e->nextthink > 0 ) {
+			e->nextthink += timeDelta;
+		}
+	}
+
+	/* Fix player commandTime to match current server time so Pmove
+	   doesn't get a huge time delta on the next frame */
+	g_entities[0].client->ps.commandTime = level.time - 16;
+
+	/* Re-link all active entities and fix up movers/AAS */
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		e = &g_entities[i];
+		if ( !e->inuse ) {
+			continue;
+		}
+		if ( e->r.linked ) {
+			trap_LinkEntity( e );
+		} else {
+			trap_UnlinkEntity( e );
+		}
+		/* Restore AAS blocking */
+		if ( e->AASblocking ) {
+			G_SetAASBlockingEntity( e, qtrue );
+		}
+	}
+
+	/* Fix player state - sync view angles and origin with server */
+	ent = &g_entities[0];
+	VectorCopy( ent->client->ps.origin, ent->r.currentOrigin );
+	VectorCopy( ent->client->ps.origin, ent->s.origin );
+	trap_LinkEntity( ent );
+	SetClientViewAngle( ent, ent->client->ps.viewangles );
+
+	/* toggle teleport bit so client snaps to new angles/origin */
+	ent->client->ps.eFlags ^= EF_TELEPORT_BIT;
+	BG_PlayerStateToEntityState( &ent->client->ps, &ent->s, qtrue );
+
+	/* Clear any pending events that could cause glitches */
+	memset( ent->client->ps.events, 0, sizeof( ent->client->ps.events ) );
+	memset( ent->client->ps.eventParms, 0, sizeof( ent->client->ps.eventParms ) );
+	ent->client->ps.eventSequence = 0;
+	ent->client->ps.oldEventSequence = 0;
+
+	/* Notify server of potential entity count change */
+	trap_LocateGameData( level.gentities, level.num_entities, sizeof( gentity_t ),
+		&level.clients[0].ps, sizeof( level.clients[0] ) );
+
+	trap_SendServerCommand( 0, "clearsounds" );
+	trap_SendServerCommand( 0, va( "print \"Slot %d loaded.\n\"", slot ) );
+}
+
+/*
+=================
+Rewind system - record & restore player state.
+Ring buffer of ~30s. Multiple rewind presses stack - each one
+goes further back. Recording pauses while in rewound state
+and resumes after a short grace period.
+
+"rewind <ms>"      - player position/velocity only (lightweight)
+"rewind <ms> full" - full game state: entities, AI, triggers (like loadpos)
+=================
+*/
+
+static void RWF_SaveSnapshot( void ) {
+	int i;
+	int idx;
+	stateSnapshot_t *sp;
+
+	idx = rwf_head;
+
+	if ( !rwf_buffer[idx] ) {
+		rwf_buffer[idx] = malloc( sizeof( stateSnapshot_t ) );
+		if ( !rwf_buffer[idx] ) {
+			return;
+		}
+	}
+	sp = rwf_buffer[idx];
+
+	sp->numEntities = level.num_entities;
+	memcpy( sp->entities, g_entities, sizeof( gentity_t ) * MAX_GENTITIES );
+	memcpy( sp->clients, level.clients, sizeof( gclient_t ) * level.maxclients );
+	sp->numConnectedClients = level.numConnectedClients;
+	for ( i = 0; i < aicast_maxclients; i++ ) {
+		memcpy( &sp->caststates[i], &caststates[i], sizeof( cast_state_t ) );
+	}
+	sp->levelTime = level.time;
+	sp->valid = qtrue;
+
+	rwf_times[idx] = level.time;
+	rwf_head = ( rwf_head + 1 ) % REWIND_FULL_SIZE;
+	if ( rwf_count < REWIND_FULL_SIZE ) {
+		rwf_count++;
+	}
+}
+
+static void RWF_RestoreSnapshot( gentity_t *ent, int idx ) {
+	int i;
+	int timeDelta;
+	gentity_t *e;
+	stateSnapshot_t *sp;
+	qboolean wasBot[MAX_CLIENTS];
+
+	sp = rwf_buffer[idx];
+
+	timeDelta = level.time - sp->levelTime;
+
+	/* Remember which client slots have bots before restore */
+	for ( i = 1; i < level.maxclients; i++ ) {
+		wasBot[i] = ( g_entities[i].inuse && ( g_entities[i].r.svFlags & SVF_BOT ) );
+	}
+
+	trap_AAS_SetAASBlockingEntity( vec3_origin, vec3_origin, -1 );
+
+	level.num_entities = sp->numEntities;
+	memcpy( g_entities, sp->entities, sizeof( gentity_t ) * MAX_GENTITIES );
+	memcpy( level.clients, sp->clients, sizeof( gclient_t ) * level.maxclients );
+
+	/* Free server-side bot slots that no longer exist in restored state */
+	for ( i = 1; i < level.maxclients; i++ ) {
+		qboolean isBot = ( g_entities[i].inuse && ( g_entities[i].r.svFlags & SVF_BOT ) );
+		if ( wasBot[i] && !isBot ) {
+			trap_BotFreeClient( i );
+		}
+	}
+
+	for ( i = 0; i < aicast_maxclients; i++ ) {
+		memcpy( &caststates[i], &sp->caststates[i], sizeof( cast_state_t ) );
+		if ( caststates[i].bs && !caststates[i].deathTime ) {
+			memset( g_entities[caststates[i].entityNum].client->ps.delta_angles, 0, sizeof( g_entities[caststates[i].entityNum].client->ps.delta_angles ) );
+			VectorCopy( caststates[i].ideal_viewangles, caststates[i].viewangles );
+			VectorCopy( caststates[i].ideal_viewangles, g_entities[caststates[i].entityNum].client->ps.viewangles );
+			memcpy( &caststates[i].bs->cur_ps, &g_entities[caststates[i].entityNum].client->ps, sizeof( playerState_t ) );
+			caststates[i].lastThink = -9999;
+			trap_EA_ResetInput( caststates[i].entityNum, NULL );
+		}
+	}
+
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		e = &g_entities[i];
+		if ( !e->inuse ) {
+			continue;
+		}
+		if ( e->nextthink > 0 ) {
+			e->nextthink += timeDelta;
+		}
+	}
+
+	g_entities[0].client->ps.commandTime = level.time - 16;
+
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		e = &g_entities[i];
+		if ( !e->inuse ) {
+			continue;
+		}
+		if ( e->r.linked ) {
+			trap_LinkEntity( e );
+		} else {
+			trap_UnlinkEntity( e );
+		}
+		if ( e->AASblocking ) {
+			G_SetAASBlockingEntity( e, qtrue );
+		}
+	}
+
+	ent = &g_entities[0];
+	VectorCopy( ent->client->ps.origin, ent->r.currentOrigin );
+	VectorCopy( ent->client->ps.origin, ent->s.origin );
+	trap_LinkEntity( ent );
+	SetClientViewAngle( ent, ent->client->ps.viewangles );
+
+	/* toggle teleport bit so client snaps to new angles/origin */
+	ent->client->ps.eFlags ^= EF_TELEPORT_BIT;
+	BG_PlayerStateToEntityState( &ent->client->ps, &ent->s, qtrue );
+
+	memset( ent->client->ps.events, 0, sizeof( ent->client->ps.events ) );
+	memset( ent->client->ps.eventParms, 0, sizeof( ent->client->ps.eventParms ) );
+	ent->client->ps.eventSequence = 0;
+	ent->client->ps.oldEventSequence = 0;
+
+	trap_LocateGameData( level.gentities, level.num_entities, sizeof( gentity_t ),
+		&level.clients[0].ps, sizeof( level.clients[0] ) );
+}
+
+void G_RewindRecord( void ) {
+	gentity_t *ent;
+	rewindFrame_t *frame;
+
+	ent = &g_entities[0];
+	if ( !ent->inuse || !ent->client ) {
+		return;
+	}
+
+	/* Don't record while dead - preserve last alive frames */
+	if ( ent->client->ps.pm_type == PM_DEAD ) {
+		return;
+	}
+
+	/* Skip first 500ms of level so all entities/AI finish spawning */
+	if ( level.time < REWIND_GRACE_START ) {
+		return;
+	}
+
+	/* Record player-only frame at fixed interval (FPS-independent) */
+	if ( level.time - rw_lastTime < REWIND_RECORD_INTERVAL ) {
+		goto record_full;
+	}
+
+	frame = &rw_buffer[rw_head];
+	VectorCopy( ent->client->ps.origin, frame->origin );
+	VectorCopy( ent->client->ps.velocity, frame->velocity );
+	VectorCopy( ent->client->ps.viewangles, frame->viewangles );
+	frame->levelTime = level.time;
+	frame->health = ent->client->ps.stats[STAT_HEALTH];
+	frame->weapon = ent->client->ps.weapon;
+	frame->weaponstate = ent->client->ps.weaponstate;
+	memcpy( frame->ammo, ent->client->ps.ammo, sizeof( frame->ammo ) );
+	memcpy( frame->ammoclip, ent->client->ps.ammoclip, sizeof( frame->ammoclip ) );
+	memcpy( frame->weapons, ent->client->ps.weapons, sizeof( frame->weapons ) );
+	memcpy( frame->stats, ent->client->ps.stats, sizeof( frame->stats ) );
+	frame->pm_flags = ent->client->ps.pm_flags;
+	frame->pm_time = ent->client->ps.pm_time;
+	frame->groundEntityNum = ent->client->ps.groundEntityNum;
+	frame->eFlags = ent->client->ps.eFlags;
+	frame->legsAnim = ent->client->ps.legsAnim;
+	frame->legsTimer = ent->client->ps.legsTimer;
+	frame->torsoAnim = ent->client->ps.torsoAnim;
+	frame->torsoTimer = ent->client->ps.torsoTimer;
+	frame->pm_type = ent->client->ps.pm_type;
+
+	rw_head = ( rw_head + 1 ) % REWIND_BUFFER_SIZE;
+	if ( rw_count < REWIND_BUFFER_SIZE ) {
+		rw_count++;
+	}
+	rw_lastTime = level.time;
+
+record_full:
+	/* Record full-state snapshot every REWIND_FULL_INTERVAL ms */
+	if ( level.time - rwf_lastTime >= REWIND_FULL_INTERVAL ) {
+		RWF_SaveSnapshot();
+		rwf_lastTime = level.time;
+	}
+}
+
+static void Cmd_Rewind_Player( gentity_t *ent, int msec ) {
+	int framesBack;
+	int idx;
+	int startIdx;
+	int available;
+	int accum;
+	int oldest;
+	rewindFrame_t *frame;
+
+	if ( rw_count == 0 ) {
+		trap_SendServerCommand( ent - g_entities, "print \"No rewind data.\n\"" );
+		return;
+	}
+
+	/* Always start from latest recorded frame */
+	startIdx = ( rw_head - 1 + REWIND_BUFFER_SIZE ) % REWIND_BUFFER_SIZE;
+
+	oldest = ( rw_head - rw_count + REWIND_BUFFER_SIZE ) % REWIND_BUFFER_SIZE;
+	if ( startIdx >= oldest ) {
+		available = startIdx - oldest;
+	} else {
+		available = REWIND_BUFFER_SIZE - oldest + startIdx;
+	}
+
+	if ( available <= 0 ) {
+		trap_SendServerCommand( ent - g_entities, "print \"Can't rewind further.\n\"" );
+		return;
+	}
+
+	framesBack = 0;
+	idx = startIdx;
+	accum = 0;
+	while ( framesBack < available ) {
+		int prev = ( idx - 1 + REWIND_BUFFER_SIZE ) % REWIND_BUFFER_SIZE;
+		int frameDelta;
+
+		/* Hard stop: don't go past the oldest frame */
+		if ( prev == oldest ) {
+			break;
+		}
+
+		frameDelta = rw_buffer[idx].levelTime - rw_buffer[prev].levelTime;
+		/* Gap from rewind trim boundary - skip without accumulating */
+		if ( frameDelta <= 0 || frameDelta > 100 ) {
+			idx = prev;
+			framesBack++;
+			continue;
+		}
+		accum += frameDelta;
+		idx = prev;
+		framesBack++;
+		if ( accum >= msec ) {
+			break;
+		}
+	}
+
+	frame = &rw_buffer[idx];
+
+	VectorCopy( frame->origin, ent->client->ps.origin );
+	VectorCopy( frame->velocity, ent->client->ps.velocity );
+	VectorCopy( frame->origin, ent->r.currentOrigin );
+	VectorCopy( frame->origin, ent->s.origin );
+	memcpy( ent->client->ps.ammo, frame->ammo, sizeof( frame->ammo ) );
+	memcpy( ent->client->ps.ammoclip, frame->ammoclip, sizeof( frame->ammoclip ) );
+	memcpy( ent->client->ps.weapons, frame->weapons, sizeof( frame->weapons ) );
+	memcpy( ent->client->ps.stats, frame->stats, sizeof( frame->stats ) );
+	ent->client->ps.weapon = frame->weapon;
+	ent->client->ps.weaponstate = frame->weaponstate;
+	ent->client->ps.pm_flags = frame->pm_flags;
+	ent->client->ps.pm_time = frame->pm_time;
+	ent->client->ps.groundEntityNum = frame->groundEntityNum;
+	ent->client->ps.eFlags = frame->eFlags;
+	ent->client->ps.legsAnim = frame->legsAnim;
+	ent->client->ps.legsTimer = frame->legsTimer;
+	ent->client->ps.torsoAnim = frame->torsoAnim;
+	ent->client->ps.torsoTimer = frame->torsoTimer;
+	ent->client->ps.pm_type = frame->pm_type;
+	ent->client->ps.commandTime = level.time - 16;
+	ent->health = frame->health;
+	ent->takedamage = qtrue;
+	ent->client->ps.pm_flags &= ~PMF_LIMBO;
+
+	SetClientViewAngle( ent, frame->viewangles );
+
+	/* toggle teleport bit so client snaps to new angles/origin */
+	ent->client->ps.eFlags ^= EF_TELEPORT_BIT;
+	BG_PlayerStateToEntityState( &ent->client->ps, &ent->s, qtrue );
+
+	trap_LinkEntity( ent );
+
+	memset( ent->client->ps.events, 0, sizeof( ent->client->ps.events ) );
+	memset( ent->client->ps.eventParms, 0, sizeof( ent->client->ps.eventParms ) );
+	ent->client->ps.eventSequence = 0;
+	ent->client->ps.oldEventSequence = 0;
+
+	/* Trim buffer: new recording starts from rewind target */
+	rw_head = ( idx + 1 ) % REWIND_BUFFER_SIZE;
+	if ( idx >= oldest ) {
+		rw_count = idx - oldest + 1;
+	} else {
+		rw_count = REWIND_BUFFER_SIZE - oldest + idx + 1;
+	}
+
+	trap_SendServerCommand( ent - g_entities, "clearsounds" );
+	trap_SendServerCommand( ent - g_entities, va( "print \"Rewound %dms (player only)\n\"", accum ) );
+}
+
+static void Cmd_Rewind_Full( gentity_t *ent, int msec ) {
+	int idx;
+	int startIdx;
+	int available;
+	int framesBack;
+	int accum;
+	int oldest;
+
+	if ( rwf_count == 0 ) {
+		trap_SendServerCommand( ent - g_entities, "print \"No full rewind data.\n\"" );
+		return;
+	}
+
+	/* Always start from latest */
+	startIdx = ( rwf_head - 1 + REWIND_FULL_SIZE ) % REWIND_FULL_SIZE;
+
+	oldest = ( rwf_head - rwf_count + REWIND_FULL_SIZE ) % REWIND_FULL_SIZE;
+	if ( startIdx >= oldest ) {
+		available = startIdx - oldest;
+	} else {
+		available = REWIND_FULL_SIZE - oldest + startIdx;
+	}
+
+	if ( available <= 0 ) {
+		trap_SendServerCommand( ent - g_entities, "print \"Can't rewind further (full).\n\"" );
+		return;
+	}
+
+	/* Walk back snapshots by time */
+	framesBack = 0;
+	idx = startIdx;
+	accum = 0;
+	while ( framesBack < available ) {
+		int prev = ( idx - 1 + REWIND_FULL_SIZE ) % REWIND_FULL_SIZE;
+		int frameDelta;
+
+		/* Hard stop: don't go past the oldest snapshot */
+		if ( prev == oldest ) {
+			break;
+		}
+
+		if ( !rwf_buffer[prev] || !rwf_buffer[prev]->valid ) {
+			break;
+		}
+		frameDelta = rwf_times[idx] - rwf_times[prev];
+		/* Gap from rewind trim boundary - skip without accumulating */
+		if ( frameDelta <= 0 || frameDelta > 1000 ) {
+			idx = prev;
+			framesBack++;
+			continue;
+		}
+		accum += frameDelta;
+		idx = prev;
+		framesBack++;
+		if ( accum >= msec ) {
+			break;
+		}
+	}
+
+	if ( !rwf_buffer[idx] || !rwf_buffer[idx]->valid ) {
+		trap_SendServerCommand( ent - g_entities, "print \"No valid snapshot at that time.\n\"" );
+		return;
+	}
+
+	RWF_RestoreSnapshot( ent, idx );
+
+	/* Trim full buffer: new recording starts from rewind target */
+	rwf_head = ( idx + 1 ) % REWIND_FULL_SIZE;
+	if ( idx >= oldest ) {
+		rwf_count = idx - oldest + 1;
+	} else {
+		rwf_count = REWIND_FULL_SIZE - oldest + idx + 1;
+	}
+
+	/* Also trim player-only buffer to match */
+	rw_head = 0;
+	rw_count = 0;
+
+	trap_SendServerCommand( 0, "clearsounds" );
+	trap_SendServerCommand( 0, va( "print \"Rewound %dms (full state)\n\"", accum ) );
+}
+
+void Cmd_Rewind_f( gentity_t *ent ) {
+	char arg[16];
+	char arg2[16];
+	int msec;
+	qboolean fullMode;
+
+	if ( !CheatsOk( ent ) ) {
+		return;
+	}
+
+	/* Parse ms argument */
+	if ( trap_Argc() < 2 ) {
+		msec = 1000;
+	} else {
+		trap_Argv( 1, arg, sizeof( arg ) );
+		msec = atoi( arg );
+		if ( msec < 50 ) {
+			msec = 50;
+		}
+		if ( msec > 30000 ) {
+			msec = 30000;
+		}
+	}
+
+	/* Check for "full" parameter */
+	fullMode = qfalse;
+	if ( trap_Argc() >= 3 ) {
+		trap_Argv( 2, arg2, sizeof( arg2 ) );
+		if ( Q_stricmp( arg2, "full" ) == 0 ) {
+			fullMode = qtrue;
+		}
+	}
+
+	if ( fullMode ) {
+		Cmd_Rewind_Full( ent, msec );
+	} else {
+		Cmd_Rewind_Player( ent, msec );
+	}
+}
+
+/*
+=================
 Cmd_StartCamera_f
 =================
 */
@@ -2169,6 +2851,12 @@ void ClientCommand( int clientNum ) {
 		Cmd_InterruptCamera_f( ent );
 	} else if ( Q_stricmp( cmd, "setviewpos" ) == 0 )  {
 		Cmd_SetViewpos_f( ent );
+	} else if ( Q_stricmp( cmd, "savepos" ) == 0 )  {
+		Cmd_SavePos_f( ent );
+	} else if ( Q_stricmp( cmd, "loadpos" ) == 0 )  {
+		Cmd_LoadPos_f( ent );
+	} else if ( Q_stricmp( cmd, "rewind" ) == 0 )  {
+		Cmd_Rewind_f( ent );
 	} else if ( Q_stricmp( cmd, "entitycount" ) == 0 )  {
 		Cmd_EntityCount_f( ent );
 	} else if ( Q_stricmp( cmd, "setspawnpt" ) == 0 )  {

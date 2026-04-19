@@ -549,11 +549,13 @@ static qboolean PM_CheckJump( void ) {
 	}
 
 	if ( bh_autojump_integer ) {
-		// HL1-style bhop: WBUTTON_CROUCH is set by the engine when crouch key is held.
-		// When both jump+crouch are held, upmove cancels to 0 but WBUTTON_CROUCH stays set.
+		// HL1-style bhop: when both jump+crouch are held, upmove cancels to 0.
+		// Require both WBUTTON_JUMP and WBUTTON_CROUCH to distinguish this from
+		// duck-only at a frame boundary (where CL_KeyState returns 0).
 		qboolean wantsJump = ( pm->cmd.upmove >= 10 ) ||
-			( pm->cmd.upmove == 0 && ( pm->cmd.wbuttons & WBUTTON_CROUCH ) );
-		if ( !wantsJump && !( pm->ps->pm_flags & PMF_JUMP_HELD ) ) {
+			( pm->cmd.upmove == 0 && ( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
+			  ( pm->cmd.wbuttons & WBUTTON_JUMP ) );
+		if ( !wantsJump ) {
 			return qfalse;
 		}
 	} else {
@@ -1810,8 +1812,9 @@ static void PM_CheckDuck( void ) {
 		// Crouch key held alone
 		pm->ps->pm_flags |= PMF_DUCKED;
 	} else if ( bh_autojump_integer && pm->cmd.upmove == 0 &&
-				( pm->cmd.wbuttons & WBUTTON_CROUCH ) ) {
-		// HL1-style bhop: jump+crouch both held (upmove cancelled to 0, WBUTTON_CROUCH confirms crouch)
+				( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
+				( pm->cmd.wbuttons & WBUTTON_JUMP ) ) {
+		// HL1-style bhop: jump+crouch both held (upmove cancelled to 0, both flags confirm)
 		pm->ps->pm_flags |= PMF_DUCKED;
 	} else
 	{   // stand up if possible
@@ -4358,8 +4361,9 @@ void PmoveSingle( pmove_t *pmove ) {
 	if ( pm->cmd.upmove < 10 ) {
 		// HL1-style bhop: preserve JUMP_HELD when both jump+crouch are held
 		if ( bh_autojump_integer && pm->cmd.upmove == 0 &&
-			 ( pm->cmd.wbuttons & WBUTTON_CROUCH ) ) {
-			// preserve JUMP_HELD - WBUTTON_CROUCH confirms crouch key is actually held
+			 ( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
+			 ( pm->cmd.wbuttons & WBUTTON_JUMP ) ) {
+			// preserve JUMP_HELD - both WBUTTON flags confirm jump+crouch held
 		} else {
 			pm->ps->pm_flags &= ~PMF_JUMP_HELD;
 		}

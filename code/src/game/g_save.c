@@ -634,6 +634,11 @@ void ReadClient( fileHandle_t f, gclient_t *client, int size ) {
 	gentity_t   *ent;
 	int decodedSize;
 
+	if ( !client ) {
+		G_Printf( "ReadClient: WARNING - NULL client pointer, skipping\n" );
+		return;
+	}
+
 	if ( ver == 10 ) {
 		trap_FS_Read( &temp, size, f );
 	} else {
