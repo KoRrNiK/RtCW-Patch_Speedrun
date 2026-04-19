@@ -1748,10 +1748,11 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 					Cbuf_AddText( "demo_skipforward 30000\n" );
 				} else if ( Sys_IsCtrlDown() ) {
 					Cbuf_AddText( "demo_skipforward 1000\n" );
-				} else if ( CL_DemoPaused() ) {
-					/* When paused, plain right arrow steps one frame forward */
+				} else if ( CL_DemoPaused() && !clc.demoAtEnd ) {
+					/* When manually paused (not at end), step one frame forward */
 					Cbuf_AddText( "demo_stepframe\n" );
 				} else {
+					/* Normal playback OR auto-paused at end: skip forward */
 					Cbuf_AddText( "demo_skipforward\n" );
 				}
 				return;
@@ -1760,10 +1761,11 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 					Cbuf_AddText( "demo_skipbackward 30000\n" );
 				} else if ( Sys_IsCtrlDown() ) {
 					Cbuf_AddText( "demo_skipbackward 1000\n" );
-				} else if ( CL_DemoPaused() ) {
-					/* When paused, plain left arrow steps one frame backward */
+				} else if ( CL_DemoPaused() && !clc.demoAtEnd ) {
+					/* When manually paused (not at end), step one frame backward */
 					Cbuf_AddText( "demo_stepframeback\n" );
 				} else {
+					/* Normal playback OR auto-paused at end: skip backward */
 					Cbuf_AddText( "demo_skipbackward\n" );
 				}
 				return;

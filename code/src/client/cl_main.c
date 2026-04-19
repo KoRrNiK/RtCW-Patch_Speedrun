@@ -358,6 +358,7 @@ void CL_Record_f( void ) {
 		return;
 	}
 	clc.demorecording = qtrue;
+	clc.demoRecLastServerTime = 0;  // reset dedup tracker for new recording
 	Q_strncpyz( clc.demoName, demoName, sizeof( clc.demoName ) );
 
 	// don't start saving messages until a non-delta compressed message is received
@@ -394,6 +395,25 @@ void CL_Record_f( void ) {
 			MSG_WriteShort( &buf, CS_DEMO_CVARS );
 			MSG_WriteBigString( &buf, cvarData );
 			Com_Printf( "^2Demo: recorded %d cvar(s) in gamestate\n", nMod );
+		}
+	}
+
+	// Demo LiveSplit recording: embed timer state and split times
+	// so the LiveSplit panel is visible during demo playback.
+	{
+		char lsState[MAX_INFO_STRING];
+		char lsTimes[MAX_INFO_STRING];
+		LS_DemoBuildState( lsState, sizeof( lsState ) );
+		LS_DemoBuildTimes( lsTimes, sizeof( lsTimes ) );
+		if ( lsState[0] ) {
+			MSG_WriteByte( &buf, svc_configstring );
+			MSG_WriteShort( &buf, CS_DEMO_LIVESPLIT );
+			MSG_WriteBigString( &buf, lsState );
+		}
+		if ( lsTimes[0] ) {
+			MSG_WriteByte( &buf, svc_configstring );
+			MSG_WriteShort( &buf, CS_DEMO_LIVESPLIT_TIMES );
+			MSG_WriteBigString( &buf, lsTimes );
 		}
 	}
 
@@ -462,28 +482,27 @@ static float demo_speed_steps[] = { 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f };
 typedef struct {
 	char mapname[64];
 	int  fileOffset;        /* byte offset in demo file of the message containing this gamestate */
-	int  startServerTime;   /* serverTime from first snapshot after this gamestate (filled during playback) */
+	int  startServerTime;   /* serverTime from first snapshot after this gamestate (filled during scan/playback) */
+	int  endServerTime;     /* last serverTime seen in this map segment (filled during scan) */
 } demoMapEntry_t;
 
 static demoMapEntry_t s_demoMaps[MAX_DEMO_MAPS];
 static int s_demoTotalMaps = 0;           /* number of maps found by pre-scan */
 static int s_demoLastServerTime = 0;      /* last serverTime seen during scan (total demo duration) */
+static char s_demoScanName[MAX_QPATH];    /* demo name whose scan data is cached */
 
 /* Accessor functions for the HUD (cl_scrn.c) */
 int  CL_DemoGetTotalMaps( void )       { return s_demoTotalMaps; }
 int  CL_DemoGetCurrentMapIndex( void ) { return clc.demoCurrentMapIndex; }
 
-/* Return the duration of a specific map segment (0 if unknown). */
+/* Return the duration of a specific map segment (0 if unknown).
+   In SP, serverTime resets on each map, so we use per-map
+   startServerTime / endServerTime recorded during the demo scan. */
 int CL_DemoGetMapDuration( int mapIdx ) {
 	if ( mapIdx < 0 || mapIdx >= s_demoTotalMaps ) return 0;
 	if ( s_demoMaps[mapIdx].startServerTime <= 0 ) return 0;
-	/* If there's a next map with a known start time, use it as the end. */
-	if ( mapIdx + 1 < s_demoTotalMaps && s_demoMaps[mapIdx + 1].startServerTime > 0 ) {
-		return s_demoMaps[mapIdx + 1].startServerTime - s_demoMaps[mapIdx].startServerTime;
-	}
-	/* For the last map, use the last serverTime in the demo. */
-	if ( s_demoLastServerTime > s_demoMaps[mapIdx].startServerTime ) {
-		return s_demoLastServerTime - s_demoMaps[mapIdx].startServerTime;
+	if ( s_demoMaps[mapIdx].endServerTime > s_demoMaps[mapIdx].startServerTime ) {
+		return s_demoMaps[mapIdx].endServerTime - s_demoMaps[mapIdx].startServerTime;
 	}
 	return 0;
 }
@@ -494,12 +513,14 @@ const char *CL_DemoGetMapName( int mapIdx ) {
 	return s_demoMaps[mapIdx].mapname;
 }
 
-/* Return the total duration of the entire demo (ms), based on pre-scan data. */
+/* Return the total duration of the entire demo (ms).
+   Sums per-map durations because serverTime resets on each SP map. */
 int CL_DemoGetFullDuration( void ) {
-	if ( s_demoTotalMaps > 0 && s_demoMaps[0].startServerTime > 0 && s_demoLastServerTime > s_demoMaps[0].startServerTime ) {
-		return s_demoLastServerTime - s_demoMaps[0].startServerTime;
+	int i, total = 0;
+	for ( i = 0; i < s_demoTotalMaps; i++ ) {
+		total += CL_DemoGetMapDuration( i );
 	}
-	return 0;
+	return total;
 }
 
 /* Return the cumulative elapsed time across all maps up to the current playback position.
@@ -582,6 +603,7 @@ static void CL_DemoResyncTime( void ) {
 	cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 	cl.oldServerTime = cl.snap.serverTime;
 	cl.serverTime = cl.snap.serverTime;
+	CL_DemoResetWallClock( cl.snap.serverTime );
 }
 
 void CL_DemoPause_f( void ) {
@@ -836,6 +858,9 @@ void CL_DemoSkipBackward_f( void ) {
 		while ( cl.snap.serverTime < targetTime && safety-- > 0 ) {
 			CL_ReadDemoMessage();
 			if ( !clc.demofile || cls.state < CA_CONNECTED ) break;
+			/* If CL_DemoCompleted fired during fast-forward (hit EOF
+			   unexpectedly), stop immediately instead of spinning. */
+			if ( clc.demoAtEnd ) break;
 			/* Handle save/load gamestates within the same map:
 			   state drops to CA_PRIMED, pump until CA_ACTIVE. */
 			if ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE ) {
@@ -852,6 +877,16 @@ void CL_DemoSkipBackward_f( void ) {
 			}
 		}
 
+		/* If CL_DemoCompleted fired during the fast-forward (e.g. demo
+		   was shorter than expected), clear the auto-pause flags so
+		   playback resumes from the rewound position instead of
+		   appearing stuck at the end. */
+		if ( clc.demoAtEnd ) {
+			clc.demoAtEnd = qfalse;
+			demo_paused = qfalse;
+			Cvar_Set( "cl_freezeDemo", "0" );
+		}
+
 		/* Reset cgame snapshot/command tracking to current position
 		   so it doesn't try to read expired circular-buffer entries. */
 		VM_Call( cgvm, CG_DEMO_RESET, clc.serverMessageSequence,
@@ -862,6 +897,7 @@ void CL_DemoSkipBackward_f( void ) {
 		cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 		cl.oldServerTime   = cl.snap.serverTime;
 		cl.serverTime      = cl.snap.serverTime;
+		CL_DemoResetWallClock( cl.snap.serverTime );
 		clc.demoCurrentServerTime = cl.snap.serverTime;
 		Com_Printf( "^3Demo: skipped backward ~%ds\n", skipMs / 1000 );
 		return;
@@ -913,6 +949,7 @@ void CL_DemoSkipBackward_f( void ) {
 			while ( cl.snap.serverTime < targetTime && safety-- > 0 ) {
 				CL_ReadDemoMessage();
 				if ( cls.state < CA_CONNECTED || !clc.demofile ) break;
+				if ( clc.demoAtEnd ) break;
 				if ( cls.state != CA_ACTIVE ) {
 					int sr = 10000;
 					while ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE && sr-- > 0 ) {
@@ -927,11 +964,19 @@ void CL_DemoSkipBackward_f( void ) {
 			}
 		}
 
+		/* Clear stale CL_DemoCompleted flags from fast-forward */
+		if ( clc.demoAtEnd ) {
+			clc.demoAtEnd = qfalse;
+			demo_paused = qfalse;
+			Cvar_Set( "cl_freezeDemo", "0" );
+		}
+
 		clc.demoSeekTargetTime = 0;
 		if ( cls.state == CA_ACTIVE ) {
 			cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 			cl.oldServerTime   = cl.snap.serverTime;
 			cl.serverTime      = cl.snap.serverTime;
+			CL_DemoResetWallClock( cl.snap.serverTime );
 		}
 	}
 }
@@ -1140,9 +1185,13 @@ static void CL_DemoScanMaps( void ) {
 			int snapServerTime = MSG_ReadLong( &buf );
 			if ( snapServerTime > 0 ) {
 				s_demoLastServerTime = snapServerTime;
-				/* If we just found a gamestate, record the first snapshot's serverTime */
-				if ( lastGamestateIdx >= 0 && s_demoMaps[lastGamestateIdx].startServerTime <= 0 ) {
-					s_demoMaps[lastGamestateIdx].startServerTime = snapServerTime;
+				if ( lastGamestateIdx >= 0 ) {
+					/* Record the first snapshot's serverTime as startServerTime */
+					if ( s_demoMaps[lastGamestateIdx].startServerTime <= 0 ) {
+						s_demoMaps[lastGamestateIdx].startServerTime = snapServerTime;
+					}
+					/* Always update endServerTime to track the last snapshot in this map */
+					s_demoMaps[lastGamestateIdx].endServerTime = snapServerTime;
 				}
 			}
 		}
@@ -1157,18 +1206,25 @@ static void CL_DemoScanMaps( void ) {
 	FS_Seek( clc.demofile, savedOffset, FS_SEEK_SET );
 
 	Com_Printf( "^3Demo scan: %d map%s found", s_demoTotalMaps, s_demoTotalMaps == 1 ? "" : "s" );
-	if ( s_demoLastServerTime > 0 && s_demoTotalMaps > 0 && s_demoMaps[0].startServerTime > 0 ) {
-		int totalSec = ( s_demoLastServerTime - s_demoMaps[0].startServerTime ) / 1000;
-		Com_Printf( " (%d:%02d total)\n", totalSec / 60, totalSec % 60 );
+	if ( s_demoTotalMaps > 0 ) {
+		int totalMs = CL_DemoGetFullDuration();
+		if ( totalMs > 0 ) {
+			int totalSec = totalMs / 1000;
+			Com_Printf( " (%d:%02d total)\n", totalSec / 60, totalSec % 60 );
+		} else {
+			Com_Printf( "\n" );
+		}
 	} else {
 		Com_Printf( "\n" );
 	}
 	{
 		int i;
 		for ( i = 0; i < s_demoTotalMaps; i++ ) {
-			Com_Printf( "  Map %d: %s (serverTime=%d, offset=%d)\n",
+			Com_Printf( "  Map %d: %s (start=%d, end=%d, offset=%d)\n",
 						i + 1, s_demoMaps[i].mapname,
-						s_demoMaps[i].startServerTime, s_demoMaps[i].fileOffset );
+						s_demoMaps[i].startServerTime,
+						s_demoMaps[i].endServerTime,
+						s_demoMaps[i].fileOffset );
 		}
 	}
 }
@@ -1209,6 +1265,7 @@ static void CL_DemoSeekToFileOffset( int fileOffset ) {
 		cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 		cl.oldServerTime = cl.snap.serverTime;
 		cl.serverTime = cl.snap.serverTime;
+		CL_DemoResetWallClock( cl.snap.serverTime );
 	}
 }
 
@@ -1415,6 +1472,7 @@ void CL_DemoStepFrameBack_f( void ) {
 		while ( cl.snap.serverTime < targetTime && safety-- > 0 ) {
 			CL_ReadDemoMessage();
 			if ( !clc.demofile || cls.state < CA_CONNECTED ) break;
+			if ( clc.demoAtEnd ) break;
 			/* Handle save/load gamestates within the same map:
 			   state drops to CA_PRIMED, pump until CA_ACTIVE. */
 			if ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE ) {
@@ -1431,9 +1489,15 @@ void CL_DemoStepFrameBack_f( void ) {
 			}
 		}
 
+		/* If CL_DemoCompleted fired during fast-forward, clear it */
+		if ( clc.demoAtEnd ) {
+			clc.demoAtEnd = qfalse;
+		}
+
 		cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 		cl.oldServerTime   = cl.snap.serverTime;
 		cl.serverTime      = cl.snap.serverTime;
+		CL_DemoResetWallClock( cl.snap.serverTime );
 		demo_pauseServerTime = cl.serverTime;
 		clc.demoCurrentServerTime = cl.snap.serverTime;
 	}
@@ -1500,6 +1564,7 @@ void CL_DemoSeekPercent_f( void ) {
 			if ( nowOff >= targetFileOff ) break;
 			CL_ReadDemoMessage();
 			if ( cls.state < CA_CONNECTED || !clc.demofile ) break;
+			if ( clc.demoAtEnd ) break;
 			if ( cls.state != CA_ACTIVE ) {
 				int sr = 10000;
 				while ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE && sr-- > 0 ) {
@@ -1511,6 +1576,12 @@ void CL_DemoSeekPercent_f( void ) {
 				}
 				if ( cls.state != CA_ACTIVE ) break;
 			}
+		}
+		/* Clear stale CL_DemoCompleted flags from fast-forward */
+		if ( clc.demoAtEnd ) {
+			clc.demoAtEnd = qfalse;
+			demo_paused = qfalse;
+			Cvar_Set( "cl_freezeDemo", "0" );
 		}
 		/* Reset cgame snapshot/command tracking after fast-forward */
 		if ( cgvm ) {
@@ -1575,6 +1646,7 @@ void CL_DemoSeekPercent_f( void ) {
 			if ( nowOff >= targetFileOff ) break;
 			CL_ReadDemoMessage();
 			if ( cls.state < CA_CONNECTED || !clc.demofile ) break;
+			if ( clc.demoAtEnd ) break;
 			if ( cls.state != CA_ACTIVE ) {
 				int sr = 10000;
 				while ( cls.state >= CA_CONNECTED && cls.state < CA_ACTIVE && sr-- > 0 ) {
@@ -1589,6 +1661,13 @@ void CL_DemoSeekPercent_f( void ) {
 		}
 	}
 
+	/* Clear stale CL_DemoCompleted flags from fast-forward */
+	if ( clc.demoAtEnd ) {
+		clc.demoAtEnd = qfalse;
+		demo_paused = qfalse;
+		Cvar_Set( "cl_freezeDemo", "0" );
+	}
+
 	/* Reset cgame snapshot/command tracking to current position
 	   so it doesn't try to read expired circular-buffer entries.
 	   This also re-applies fog and other visual configstrings. */
@@ -1601,6 +1680,7 @@ void CL_DemoSeekPercent_f( void ) {
 	cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 	cl.oldServerTime   = cl.snap.serverTime;
 	cl.serverTime      = cl.snap.serverTime;
+	CL_DemoResetWallClock( cl.snap.serverTime );
 	clc.demoCurrentServerTime = cl.snap.serverTime;
 
 	Com_Printf( "^3Demo: seeked to %d%%\n", percent );
@@ -1820,10 +1900,19 @@ void CL_PlayDemo_f( void ) {
 	clc.demoSeekInProgress = savedSeekInProgress;
 	clc.demoSeekFileOffset = savedSeekFileOffset;
 
-	/* Pre-scan the demo for map boundaries (only on first open,
-	   not on backward-seek restarts which already have the scan data). */
+	/* Pre-scan the demo for map boundaries.  The scan is cached
+	   across restarts of the SAME demo (backward seek slow path).
+	   Invalidate the cache when opening a different demo. */
+	if ( s_demoTotalMaps > 0 && Q_stricmp( s_demoScanName, Cmd_Argv( 1 ) ) != 0 ) {
+		/* Different demo - discard stale scan data */
+		s_demoTotalMaps = 0;
+		s_demoLastServerTime = 0;
+		memset( s_demoMaps, 0, sizeof( s_demoMaps ) );
+		s_demoScanName[0] = '\0';
+	}
 	if ( s_demoTotalMaps == 0 ) {
 		CL_DemoScanMaps();
+		Q_strncpyz( s_demoScanName, Cmd_Argv( 1 ), sizeof( s_demoScanName ) );
 	}
 
 	/* Optimization: if a file offset was set (backward seek / map jump),
@@ -2036,9 +2125,12 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	if ( clc.demoplaying ) {
 		CL_DemoControlsReset();
 		Cvar_Set( "cl_demoplaying", "0" );
-		s_demoTotalMaps = 0;
-		s_demoLastServerTime = 0;
-		memset( s_demoMaps, 0, sizeof( s_demoMaps ) );
+		/* Scan data (s_demoMaps / s_demoTotalMaps / s_demoLastServerTime)
+		   is intentionally NOT cleared here.  It is cached across
+		   demo restarts (backward seek slow path) to avoid a
+		   multi-second rescan of the entire demo file.  The cache
+		   is invalidated in CL_PlayDemo_f when a different demo is
+		   opened (s_demoScanName comparison). */
 	}
 
 	if ( clc.demorecording ) {

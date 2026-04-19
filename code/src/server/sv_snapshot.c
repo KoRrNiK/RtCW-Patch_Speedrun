@@ -694,6 +694,7 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	// set nextSnapshotTime based on rate and requested number of updates
 
 	// local clients get snapshots every frame
+	// (keep svs.time - 1 so FPS-dependent movement mechanics work correctly)
 	if ( client->netchan.remoteAddress.type == NA_LOOPBACK || Sys_IsLANAddress( client->netchan.remoteAddress ) ) {
 		client->nextSnapshotTime = svs.time - 1;
 		return;

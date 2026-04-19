@@ -384,11 +384,14 @@ void CL_KeyMove( usercmd_t *cmd ) {
 	up += movespeed * CL_KeyState( &kb[KB_UP] );
 	up -= movespeed * CL_KeyState( &kb[KB_DOWN] );
 
-	// Send crouch state as a separate flag (for HL1-style bhop crouch-jump detection)
-	// This lets the DLL distinguish "jump+crouch held" (upmove=0, WBUTTON_CROUCH=1)
-	// from "no keys pressed" (upmove=0, WBUTTON_CROUCH=0)
+	// Send crouch/jump states as separate flags (for HL1-style bhop crouch-jump detection)
+	// This lets the DLL distinguish "jump+crouch held" (upmove=0, WBUTTON_CROUCH+WBUTTON_JUMP)
+	// from "duck only at frame edge" (upmove=0, WBUTTON_CROUCH only)
 	if ( kb[KB_DOWN].active ) {
 		cmd->wbuttons |= WBUTTON_CROUCH;
+	}
+	if ( kb[KB_UP].active ) {
+		cmd->wbuttons |= WBUTTON_JUMP;
 	}
 
 	forward += movespeed * CL_KeyState( &kb[KB_FORWARD] );

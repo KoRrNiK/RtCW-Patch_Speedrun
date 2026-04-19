@@ -2374,6 +2374,33 @@ void Com_Frame( void ) {
 
 	lastTime = com_frameTime;
 
+	/* Precision override: compute msec from QPC (Sys_Microseconds)
+	   with a sub-ms residual accumulator.  The original msec =
+	   com_frameTime - lastTime uses integer timeGetTime() differences
+	   which truncate fractional ms every frame (~0.042ms at 142fps =
+	   ~6ms/s drift).  By using QPC we eliminate this truncation and
+	   ensure server timestamps (svs.time) match wall-clock precisely.
+	   The residual carries over fractional µs across frames so no
+	   time is ever lost.  For event processing / com_frameTime the
+	   original timeGetTime() value is preserved unchanged. */
+	{
+		static __int64 prevFrameUs = 0;
+		static __int64 usResidual  = 0;
+		__int64 nowUs    = Sys_Microseconds();
+		__int64 deltaUs;
+
+		if ( prevFrameUs == 0 ) {
+			prevFrameUs = nowUs;
+		}
+		deltaUs = nowUs - prevFrameUs;
+		if ( deltaUs < 0 ) deltaUs = 0;
+
+		usResidual += deltaUs;
+		msec = (int)( usResidual / 1000 );
+		usResidual -= (__int64)msec * 1000;
+		prevFrameUs = nowUs;
+	}
+
 	// mess with msec if needed
 	com_frameMsec = msec;
 	msec = Com_ModifyMsec( msec );

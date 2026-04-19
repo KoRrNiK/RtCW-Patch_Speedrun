@@ -1319,9 +1319,9 @@ typedef struct playerState_s {
 #define WBUTTON_LEANLEFT    16
 #define WBUTTON_LEANRIGHT   32
 
-// HL1-style bhop: separate crouch flag so duck can be detected independently of upmove
+// HL1-style bhop: separate crouch/jump flags so duck and jump can be detected independently of upmove
 #define WBUTTON_CROUCH      64
-#define WBUTTON_EXTRA7      128
+#define WBUTTON_JUMP        128
 //----(SA) end
 
 #define MOVE_RUN            120         // if forwardmove or rightmove are >= MOVE_RUN,

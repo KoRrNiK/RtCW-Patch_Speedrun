@@ -235,6 +235,7 @@ typedef struct {
 	vec3_t   demoFreecamAngles;     // freecam view angles (pitch, yaw, roll)
 
 	qboolean demoHideHUD;           // hide LiveSplit panel and progress bar (H key toggle)
+	int demoRecLastServerTime;      // last snapshot serverTime written to demo (for dedup)
 
 	int timeDemoFrames;             // counter of rendered frames
 	int timeDemoStart;              // cls.realtime before first frame
@@ -566,6 +567,14 @@ void    SCR_LiveSplitDraw( void );
 void    SCR_LiveSplitNotifyDisconnect( void );
 int     LS_GetModifiedSettingsCount( void );
 int     LS_BuildDemoCvarString( char *out, int outSize );
+void    LS_DemoBuildState( char *out, int outSize );
+void    LS_DemoBuildTimes( char *out, int outSize );
+
+//
+// cl_parse.c
+//
+void    CL_ParseDemoConfigstring( msg_t *msg );
+void    CL_DemoWriteConfigstring( int csNum, const char *value );
 
 //
 // cl_update.c
@@ -620,6 +629,7 @@ void CL_ShutdownCGame( void );
 qboolean CL_GameCommand( void );
 void CL_CGameRendering( stereoFrame_t stereo );
 void CL_SetCGameTime( void );
+void CL_DemoResetWallClock( int newServerTime );
 void CL_FirstSnapshot( void );
 void CL_ShaderStateChanged( void );
 void CL_UpdateLevelHunkUsage( void );

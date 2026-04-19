@@ -39,13 +39,97 @@ char *svc_strings[256] = {
 	"svc_baseline",
 	"svc_serverCommand",
 	"svc_download",
-	"svc_snapshot"
+	"svc_snapshot",
+	"svc_EOF",
+	"svc_demo_configstring"
 };
 
 void SHOWNET( msg_t *msg, char *s ) {
 	if ( cl_shownet->integer >= 2 ) {
 		Com_Printf( "%3i %3i:%s\n", msg->readcount - 1, msg->cursize, s );
 	}
+}
+
+/*
+=====================
+CL_ParseDemoConfigstring
+
+Handles svc_demo_configstring messages injected into demo files.
+Format: [short csNum] [bigstring value]
+Directly updates cl.gameState without going through the server
+command sequence mechanism (avoids sequence number conflicts).
+=====================
+*/
+void CL_ParseDemoConfigstring( msg_t *msg ) {
+	int index, len, i;
+	char *s, *dup;
+	gameState_t oldGs;
+
+	index = MSG_ReadShort( msg );
+	s = MSG_ReadBigString( msg );
+
+	if ( index < 0 || index >= MAX_CONFIGSTRINGS ) {
+		Com_Printf( "^3CL_ParseDemoConfigstring: bad index %d\n", index );
+		return;
+	}
+
+	/* Rebuild cl.gameState with the updated configstring */
+	oldGs = cl.gameState;
+	memset( &cl.gameState, 0, sizeof( cl.gameState ) );
+	cl.gameState.dataCount = 1;
+
+	for ( i = 0; i < MAX_CONFIGSTRINGS; i++ ) {
+		if ( i == index ) {
+			dup = s;
+		} else {
+			dup = oldGs.stringData + oldGs.stringOffsets[i];
+		}
+		if ( !dup[0] ) continue;
+
+		len = strlen( dup );
+		if ( len + 1 + cl.gameState.dataCount > MAX_GAMESTATE_CHARS ) {
+			Com_Error( ERR_DROP, "MAX_GAMESTATE_CHARS exceeded" );
+		}
+		cl.gameState.stringOffsets[i] = cl.gameState.dataCount;
+		memcpy( cl.gameState.stringData + cl.gameState.dataCount, dup, len + 1 );
+		cl.gameState.dataCount += len + 1;
+	}
+}
+
+/*
+=====================
+CL_DemoWriteConfigstring
+
+During demo recording, inject a configstring update into the demo
+file that bypasses the server command sequence. Uses the custom
+svc_demo_configstring message type.
+=====================
+*/
+void CL_DemoWriteConfigstring( int csNum, const char *value ) {
+	msg_t msg;
+	byte buf[MAX_MSGLEN];
+	int swlen;
+
+	if ( !clc.demorecording || clc.demowaiting ) return;
+	if ( !clc.demofile ) return;
+
+	MSG_Init( &msg, buf, sizeof( buf ) );
+
+	/* Write a minimal message with only our custom configstring op */
+	MSG_WriteLong( &msg, clc.reliableAcknowledge );
+
+	MSG_WriteByte( &msg, svc_demo_configstring );
+	MSG_WriteShort( &msg, csNum );
+	MSG_WriteBigString( &msg, value );
+
+	MSG_WriteByte( &msg, svc_EOF );
+
+	/* Write to demo file in the standard packet format */
+	swlen = LittleLong( clc.serverMessageSequence );
+	FS_Write( &swlen, 4, clc.demofile );
+	swlen = LittleLong( msg.cursize );
+	FS_Write( &swlen, 4, clc.demofile );
+	FS_Write( msg.data, msg.cursize, clc.demofile );
 }
 
 
@@ -499,6 +583,24 @@ void CL_ParseGamestate( msg_t *msg ) {
 			}
 		}
 
+		// Demo LiveSplit recording: embed timer state at map change
+		{
+			char lsState[MAX_INFO_STRING];
+			char lsTimes[MAX_INFO_STRING];
+			LS_DemoBuildState( lsState, sizeof( lsState ) );
+			LS_DemoBuildTimes( lsTimes, sizeof( lsTimes ) );
+			if ( lsState[0] ) {
+				MSG_WriteByte( &gsBuf, svc_configstring );
+				MSG_WriteShort( &gsBuf, CS_DEMO_LIVESPLIT );
+				MSG_WriteBigString( &gsBuf, lsState );
+			}
+			if ( lsTimes[0] ) {
+				MSG_WriteByte( &gsBuf, svc_configstring );
+				MSG_WriteShort( &gsBuf, CS_DEMO_LIVESPLIT_TIMES );
+				MSG_WriteBigString( &gsBuf, lsTimes );
+			}
+		}
+
 		// baselines
 		memset( &gsNullstate, 0, sizeof( gsNullstate ) );
 		for ( gsI = 0 ; gsI < MAX_GENTITIES ; gsI++ ) {
@@ -779,6 +881,9 @@ void CL_ParseServerMessage( msg_t *msg ) {
 			break;
 		case svc_download:
 			CL_ParseDownload( msg );
+			break;
+		case svc_demo_configstring:
+			CL_ParseDemoConfigstring( msg );
 			break;
 		}
 	}

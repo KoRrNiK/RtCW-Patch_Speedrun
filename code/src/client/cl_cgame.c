@@ -1249,7 +1249,37 @@ void CL_FirstSnapshot( void ) {
 CL_SetCGameTime
 ==================
 */
+/* Wall-clock based demo timing (FPS-independent), file-scope so that
+   CL_DemoResetWallClock() can be called from cl_main.c seek paths. */
+static int       s_demoResyncFrames  = 0;
+static __int64   s_demoWallLastUs    = 0;   /* Sys_Microseconds on previous frame */
+static __int64   s_demoScaledAccumUs = 0;   /* accumulated scaled time in µs since anchor */
+static int       s_demoServerBase    = 0;   /* cl.snap.serverTime at anchor */
+static qboolean  s_demoWallAnchored  = qfalse;
+static qboolean  s_demoWasFrozen     = qfalse;
+
+/*
+==================
+CL_DemoResetWallClock
+
+Re-anchor the wall-clock demo timing to a new server time.
+Must be called after any seek, skip, or resync that repositions
+the demo, otherwise the stale accumulator produces the old
+(pre-seek) cl.serverTime on the next frame and causes a massive
+fast-forward.
+==================
+*/
+void CL_DemoResetWallClock( int newServerTime ) {
+	s_demoWallLastUs    = Sys_Microseconds();
+	s_demoScaledAccumUs = 0;
+	s_demoServerBase    = newServerTime;
+	s_demoWallAnchored  = qtrue;
+	s_demoWasFrozen     = qfalse;
+	s_demoResyncFrames  = 3;
+}
+
 void CL_SetCGameTime( void ) {
+
 	// getting a valid frame message ends the connection process
 	if ( cls.state != CA_ACTIVE ) {
 		if ( cls.state != CA_PRIMED ) {
@@ -1267,6 +1297,9 @@ void CL_SetCGameTime( void ) {
 		if ( cl.newSnapshots ) {
 			cl.newSnapshots = qfalse;
 			CL_FirstSnapshot();
+			if ( clc.demoplaying ) {
+				s_demoResyncFrames = 3;
+			}
 		}
 		if ( cls.state != CA_ACTIVE ) {
 			return;
@@ -1284,6 +1317,8 @@ void CL_SetCGameTime( void ) {
 		cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 		cl.oldServerTime = cl.snap.serverTime;
 		cl.serverTime = cl.snap.serverTime;
+		/* Re-anchor wall-clock demo timing */
+		CL_DemoResetWallClock( cl.snap.serverTime );
 	}
 	if ( clc.demoplaying && clc.demoSeekTargetTime > 0 ) {
 		/* Read a big batch of messages. With file-offset seeking,
@@ -1301,6 +1336,9 @@ void CL_SetCGameTime( void ) {
 				clc.demoSeekInProgress = qfalse;
 				return;
 			}
+			/* If CL_DemoCompleted fired (hit EOF during seek),
+			   stop immediately to avoid spinning. */
+			if ( clc.demoAtEnd ) break;
 			/* Map change during seek: pump until CA_ACTIVE */
 			if ( cls.state != CA_ACTIVE ) {
 				int stateRecovery = 10000;
@@ -1320,6 +1358,12 @@ void CL_SetCGameTime( void ) {
 			}
 		}
 
+		/* Clear stale CL_DemoCompleted flags from seek fast-forward */
+		if ( clc.demoAtEnd ) {
+			clc.demoAtEnd = qfalse;
+			Cvar_Set( "cl_freezeDemo", "0" );
+		}
+
 		if ( cl.snap.serverTime >= seekTarget ) {
 			/* Seek complete - resync time */
 			clc.demoSeekTargetTime = 0;
@@ -1327,6 +1371,8 @@ void CL_SetCGameTime( void ) {
 			cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
 			cl.oldServerTime = cl.snap.serverTime;
 			cl.serverTime = cl.snap.serverTime;
+			/* Re-anchor wall-clock demo timing */
+			CL_DemoResetWallClock( cl.snap.serverTime );
 		}
 		/* else: more messages to read on next frame.
 		   demoSeekTargetTime stays set, demoSeekInProgress stays true.
@@ -1351,9 +1397,16 @@ void CL_SetCGameTime( void ) {
 			// do nothing?
 			CL_FirstSnapshot();
 		} else if ( clc.demoplaying ) {
-			/* During demo playback, time can jump backward after a seek/restart.
-			   Instead of crashing, just resync the time base. */
+			/* During demo playback, time can jump backward after a
+			   quickload/death or seek/restart.  Re-anchor both the
+			   legacy serverTimeDelta and the wall-clock timing to the
+			   new snapshot so playback continues smoothly from the
+			   new position without fast-forwarding through old data. */
 			CL_FirstSnapshot();
+			/* Immediately anchor wall-clock to the new snap time so
+			   the time computation below doesn't produce a huge value
+			   that would cause the read loop to gulp many snapshots. */
+			CL_DemoResetWallClock( cl.snap.serverTime );
 		} else {
 			Com_Error( ERR_DROP, "cl.snap.serverTime < cl.oldFrameServerTime" );
 		}
@@ -1365,7 +1418,7 @@ void CL_SetCGameTime( void ) {
 
 	if ( clc.demoplaying && cl_freezeDemo->integer ) {
 		// cl_freezeDemo is used to lock a demo in place for single frame advances
-
+		s_demoWasFrozen = qtrue;
 	} else {
 		// cl_timeNudge is a user adjustable cvar that allows more
 		// or less latency to be added in the interest of better
@@ -1379,7 +1432,48 @@ void CL_SetCGameTime( void ) {
 			tn = 30;
 		}
 
-		cl.serverTime = cls.realtime + cl.serverTimeDelta - tn;
+		// Re-anchor time delta for the first few frames after demo
+		// start or map change.  Loading/init can cause a large
+		// cls.realtime jump, making cl.serverTime leap ahead and
+		// the read loop gulp many snapshots in one frame (fast-forward).
+		if ( clc.demoplaying && s_demoResyncFrames > 0 ) {
+			cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
+			s_demoWallLastUs    = Sys_Microseconds();
+			s_demoScaledAccumUs = 0;
+			s_demoServerBase    = cl.snap.serverTime;
+			s_demoWallAnchored  = qtrue;
+			s_demoWasFrozen     = qfalse;
+			s_demoResyncFrames--;
+		}
+
+		/* Demo unfreeze: re-anchor wall-clock so the elapsed time
+		   during the freeze doesn't cause a sudden time jump. */
+		if ( clc.demoplaying && s_demoWasFrozen && s_demoWallAnchored ) {
+			s_demoWallLastUs    = Sys_Microseconds();
+			s_demoScaledAccumUs = 0;
+			s_demoServerBase    = cl.serverTime;
+			s_demoWasFrozen     = qfalse;
+		}
+
+		/* Demo playback: derive cl.serverTime from wall-clock
+		   (Sys_Microseconds) instead of cls.realtime.  This makes
+		   playback speed independent of com_maxfps because it uses
+		   sub-millisecond precision, eliminating integer truncation
+		   drift (~6ms/sec at 142fps). */
+		if ( clc.demoplaying && s_demoWallAnchored ) {
+			__int64 wallNowUs   = Sys_Microseconds();
+			__int64 wallDeltaUs = wallNowUs - s_demoWallLastUs;
+			float ts;
+			if ( wallDeltaUs < 0 ) wallDeltaUs = 0;
+			if ( wallDeltaUs > 500000 ) wallDeltaUs = 500000; /* 500ms cap */
+			ts = com_timescale->value;
+			if ( ts <= 0.0f ) ts = 1.0f;
+			s_demoScaledAccumUs += (__int64)( wallDeltaUs * ts );
+			s_demoWallLastUs = wallNowUs;
+			cl.serverTime = s_demoServerBase + (int)( s_demoScaledAccumUs / 1000 ) - tn;
+		} else {
+			cl.serverTime = cls.realtime + cl.serverTimeDelta - tn;
+		}
 
 		// guarantee that time will never flow backwards, even if
 		// serverTimeDelta made an adjustment or cl_timeNudge was changed
@@ -1403,6 +1497,7 @@ void CL_SetCGameTime( void ) {
 	}
 
 	if ( !clc.demoplaying ) {
+		s_demoWallAnchored = qfalse;
 		return;
 	}
 
@@ -1433,17 +1528,19 @@ void CL_SetCGameTime( void ) {
 
 	while ( cl.serverTime >= cl.snap.serverTime ) {
 		int prevSnapTime = cl.snap.serverTime;
-		// feed another messag, which should change
+		// feed another message, which should change
 		// the contents of cl.snap
 		CL_ReadDemoMessage();
 		if ( cls.state < CA_CONNECTED ) {
 			return;     // end of demo or error
 		}
-		/* If we hit the end of demo and it paused (or no new
-		   data arrived), break to avoid an infinite loop when
-		   cl_freezeDemo is set and serverTime >= snap.serverTime
-		   forever. */
-		if ( cl.snap.serverTime == prevSnapTime ) {
+		/* If we hit the end of demo (CL_DemoCompleted set demoAtEnd),
+		   break to avoid spinning at EOF.  We do NOT break merely
+		   on same-serverTime because high-FPS recordings produce
+		   many snapshots per server tick and they all share the same
+		   serverTime - breaking on equal time would stall playback
+		   proportionally to recording FPS. */
+		if ( clc.demoAtEnd ) {
 			break;
 		}
 		/* After a save/load gamestate (same-map CG_DEMO_RESET fast
@@ -1461,6 +1558,20 @@ void CL_SetCGameTime( void ) {
 				if ( cls.state < CA_CONNECTED ) return;
 			}
 			if ( cls.state != CA_ACTIVE ) return;
+		}
+		/* Detect backward time jump from quickload / save-load
+		   inside the read loop.  Without this, cl.serverTime remains
+		   at the old (higher) value and the loop tries to read all
+		   snapshots from the old save point up to cl.serverTime,
+		   causing a massive instant fast-forward.  Re-anchor
+		   cl.serverTime to the new snapshot time and break out so
+		   playback continues smoothly from the loaded position. */
+		if ( cl.snap.serverTime < prevSnapTime ) {
+			cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
+			cl.oldServerTime   = cl.snap.serverTime;
+			cl.serverTime      = cl.snap.serverTime;
+			CL_DemoResetWallClock( cl.snap.serverTime );
+			break;
 		}
 	}
 
