@@ -722,9 +722,10 @@ void CG_PredictPlayerState( void ) {
 	cg_pmove.pmove_fixed = pmove_fixed.integer; // | cg_pmove_fixed.integer;
 	cg_pmove.pmove_msec = pmove_msec.integer;
 
-	// Sync bunny hop settings for client-side prediction
+	// Sync bunny hop settings for client-side prediction.
+	// HL1 movement is its own speedrun category and does not require sv_cheats.
 	bh_movement_integer = bh_movement.integer;
-	bh_autojump_integer = bh_autojump.integer;
+	bh_autojump_integer = ( bh_movement.integer && bh_autojump.integer ) ? 1 : 0;
 
 //----(SA)	added
 	// restore persistant client-side playerstate variables before doing the pmove

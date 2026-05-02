@@ -43,6 +43,12 @@ int bg_pmove_gameskill_integer;
 int bh_movement_integer;
 int bh_autojump_integer;
 
+static qboolean PM_HL1CrouchJumpHeld( void ) {
+	return ( bh_movement_integer && pm && pm->cmd.upmove == 0 &&
+		( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
+		( pm->cmd.wbuttons & WBUTTON_JUMP ) ) ? qtrue : qfalse;
+}
+
 // JPW NERVE
 #ifdef CGAMEDLL
 extern vmCvar_t cg_gameType;
@@ -540,7 +546,7 @@ static qboolean PM_CheckJump( void ) {
 	// JPW NERVE -- jumping in multiplayer uses and requires sprint juice (to prevent turbo skating, sprint + jumps)
 	// don't allow jump accel
 //	if (pm->cmd.serverTime - pm->ps->jumpTime < 850)
-	if ( !bh_autojump_integer && pm->cmd.serverTime - pm->ps->jumpTime < 500 ) {  // (SA) trying shorter time
+	if ( !bh_movement_integer && !bh_autojump_integer && pm->cmd.serverTime - pm->ps->jumpTime < 500 ) {  // (SA) trying shorter time
 		return qfalse;
 	}
 
@@ -552,15 +558,13 @@ static qboolean PM_CheckJump( void ) {
 		// HL1-style bhop: when both jump+crouch are held, upmove cancels to 0.
 		// Require both WBUTTON_JUMP and WBUTTON_CROUCH to distinguish this from
 		// duck-only at a frame boundary (where CL_KeyState returns 0).
-		qboolean wantsJump = ( pm->cmd.upmove >= 10 ) ||
-			( pm->cmd.upmove == 0 && ( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
-			  ( pm->cmd.wbuttons & WBUTTON_JUMP ) );
+		qboolean wantsJump = ( pm->cmd.upmove >= 10 ) || PM_HL1CrouchJumpHeld();
 		if ( !wantsJump ) {
 			return qfalse;
 		}
 	} else {
 		// Vanilla behavior - unchanged
-		if ( pm->cmd.upmove < 10 ) {
+		if ( pm->cmd.upmove < 10 && !PM_HL1CrouchJumpHeld() ) {
 			return qfalse;
 		}
 
@@ -1811,9 +1815,7 @@ static void PM_CheckDuck( void ) {
 	if ( pm->cmd.upmove < 0 ) {
 		// Crouch key held alone
 		pm->ps->pm_flags |= PMF_DUCKED;
-	} else if ( bh_autojump_integer && pm->cmd.upmove == 0 &&
-				( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
-				( pm->cmd.wbuttons & WBUTTON_JUMP ) ) {
+	} else if ( PM_HL1CrouchJumpHeld() ) {
 		// HL1-style bhop: jump+crouch both held (upmove cancelled to 0, both flags confirm)
 		pm->ps->pm_flags |= PMF_DUCKED;
 	} else
@@ -4360,9 +4362,7 @@ void PmoveSingle( pmove_t *pmove ) {
 
 	if ( pm->cmd.upmove < 10 ) {
 		// HL1-style bhop: preserve JUMP_HELD when both jump+crouch are held
-		if ( bh_autojump_integer && pm->cmd.upmove == 0 &&
-			 ( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
-			 ( pm->cmd.wbuttons & WBUTTON_JUMP ) ) {
+		if ( PM_HL1CrouchJumpHeld() ) {
 			// preserve JUMP_HELD - both WBUTTON flags confirm jump+crouch held
 		} else {
 			pm->ps->pm_flags &= ~PMF_JUMP_HELD;
@@ -4479,7 +4479,11 @@ void PmoveSingle( pmove_t *pmove ) {
 		PM_WaterEvents();
 
 		// snap some parts of playerstate to save network bandwidth
-		trap_SnapVector( pm->ps->velocity );
+		
+
+		if( !bh_movement_integer ) {
+			trap_SnapVector( pm->ps->velocity );
+		}
 //		SnapVector( pm->ps->velocity );
 
 		// Ridah
@@ -4566,7 +4570,7 @@ int Pmove( pmove_t *pmove ) {
 		if ( pmove->ps->pm_flags & PMF_JUMP_HELD ) {
 			// In bhop mode: when ducked, keep upmove at 0 so PM_CheckDuck
 			// preserves crouch on next subframe
-			if ( bh_autojump_integer && ( pmove->ps->pm_flags & PMF_DUCKED ) ) {
+			if ( bh_movement_integer && ( pmove->ps->pm_flags & PMF_DUCKED ) ) {
 				pmove->cmd.upmove = 0;
 			} else {
 				pmove->cmd.upmove = 20;

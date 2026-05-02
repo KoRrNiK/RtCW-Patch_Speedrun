@@ -1188,9 +1188,10 @@ void G_RegisterCvars( void ) {
 	bg_pmove_gameskill_integer = g_gameskill.integer;
 	// done
 
-	// Sync bunny hop settings
+	// Sync bunny hop settings. HL1 movement is its own speedrun category,
+	// so it stays active without requiring sv_cheats.
 	bh_movement_integer = g_bh_movement.integer;
-	bh_autojump_integer = g_bh_autojump.integer;
+	bh_autojump_integer = ( g_bh_movement.integer && g_bh_autojump.integer ) ? 1 : 0;
 	level.warmupModificationCount = g_warmup.modificationCount;
 }
 
@@ -1265,9 +1266,10 @@ void G_UpdateCvars( void ) {
 		G_RemapTeamShaders();
 	}
 
-	// Sync bunny hop settings on cvar change
+	// Sync bunny hop settings on cvar change. HL1 movement is tracked as a
+	// separate timer category and does not require sv_cheats.
 	bh_movement_integer = g_bh_movement.integer;
-	bh_autojump_integer = g_bh_autojump.integer;
+	bh_autojump_integer = ( g_bh_movement.integer && g_bh_autojump.integer ) ? 1 : 0;
 }
 
 
