@@ -419,7 +419,7 @@ itemDef {
 		textfont UI_FONT_NORMAL
 		mouseEnter { fadein message_accept ; setitemcolor speedrun forecolor .95 1.0 .85 1 }
 		mouseExit { setitemcolor speedrun forecolor .75 .95 .55 .9 }
-		action { open setup_livesplit ; play "sound/misc/zap.wav" ; }
+		action { setcvar ui_speedrun_imgui_restore_pause 0 ; close main ; exec "speedrun_gui_open" ; play "sound/misc/zap.wav" ; }
     }
 	
 	itemDef {

@@ -28,6 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "../client/client.h"
+#include "../client/cl_speedrun_imgui.h"
 #include "win_local.h"
 #include "glw_win.h"
 
@@ -356,6 +357,10 @@ LONG WINAPI MainWndProc(
 	UINT uMsg,
 	WPARAM wParam,
 	LPARAM lParam ) {
+
+	if ( CL_SpeedrunImGui_WndProc( hWnd, uMsg, (unsigned int)wParam, (long)lParam ) ) {
+		return 0;
+	}
 
 	if ( uMsg == MSH_MOUSEWHEEL ) {
 		if ( ( ( int ) wParam ) > 0 ) {

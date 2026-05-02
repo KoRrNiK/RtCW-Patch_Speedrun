@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 // cl.input.c  -- builds an intended movement command to send to the server
 
 #include "client.h"
+#include "cl_speedrun_imgui.h"
 
 unsigned frame_msec;
 int old_com_frameTime;
@@ -419,6 +420,11 @@ CL_MouseEvent
 =================
 */
 void CL_MouseEvent( int dx, int dy, int time ) {
+	if ( CL_SpeedrunImGui_IsOpen() ) {
+		cl.mouseDx[0] = cl.mouseDx[1] = 0;
+		cl.mouseDy[0] = cl.mouseDy[1] = 0;
+		return;
+	}
 	if ( cls.keyCatchers & KEYCATCH_UI ) {
 		VM_Call( uivm, UI_MOUSE_EVENT, dx, dy );
 	} else if ( cls.keyCatchers & KEYCATCH_CGAME ) {
@@ -629,11 +635,25 @@ usercmd_t CL_CreateCmd( void ) {
 	float recoilAdd;
 
 	VectorCopy( cl.viewangles, oldAngles );
+	memset( &cmd, 0, sizeof( cmd ) );
+
+	if ( CL_SpeedrunImGui_IsOpen() ) {
+		CL_ClearKeys();
+		cl.mouseDx[0] = cl.mouseDx[1] = 0;
+		cl.mouseDy[0] = cl.mouseDy[1] = 0;
+		cl.joystickAxis[AXIS_FORWARD] = 0;
+		cl.joystickAxis[AXIS_SIDE] = 0;
+		cl.joystickAxis[AXIS_UP] = 0;
+		cl.joystickAxis[AXIS_YAW] = 0;
+		cl.joystickAxis[AXIS_PITCH] = 0;
+		Cvar_Set( "cl_paused", "1" );
+		Cvar_Set( "ui_speedrun_imgui_restore_pause", "1" );
+		CL_FinishMove( &cmd );
+		return cmd;
+	}
 
 	// keyboard angle adjustment
 	CL_AdjustAngles();
-
-	memset( &cmd, 0, sizeof( cmd ) );
 
 	CL_CmdButtons( &cmd );
 

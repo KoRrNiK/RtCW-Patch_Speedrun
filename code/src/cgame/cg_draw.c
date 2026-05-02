@@ -3616,6 +3616,13 @@ static void CG_DrawKeystrokeOverlay( void );
 CG_Draw2D
 =================
 */
+static qboolean CG_SpeedrunImGuiIsOpen( void ) {
+	char buf[8];
+
+	trap_Cvar_VariableStringBuffer( "ui_speedrun_imgui", buf, sizeof( buf ) );
+	return atoi( buf ) != 0;
+}
+
 static void CG_Draw2D( void ) {
 
 	// if we are taking a levelshot for the menu, don't draw anything
@@ -3675,7 +3682,7 @@ static void CG_Draw2D( void ) {
 
 	CG_DrawLagometer();
 
-	if ( !cg_paused.integer ) {
+	if ( !cg_paused.integer || CG_SpeedrunImGuiIsOpen() ) {
 		CG_DrawUpperRight();
 	}
 
@@ -3977,37 +3984,30 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 		}
 	}
 
-	// ---- Dev tools: auto-disable when sv_cheats is 0 ----
+	// ---- Dev tools: keep settings, but warn when sv_cheats is 0 ----
 	{
 		char cheatsBuf[4];
+		static int lastCheatToolWarn = 0;
 		trap_Cvar_VariableStringBuffer( "sv_cheats", cheatsBuf, sizeof( cheatsBuf ) );
 		if ( atoi( cheatsBuf ) == 0 ) {
-			// Force-reset cheat-only drawing cvars
-			if ( cg_drawTriggers.integer ) {
-				trap_Cvar_Set( "cg_drawTriggers", "0" );
-			}
-			if ( cg_drawEnemies.integer ) {
-				trap_Cvar_Set( "cg_drawEnemies", "0" );
-			}
-			if ( cg_drawItems.integer ) {
-				trap_Cvar_Set( "cg_drawItems", "0" );
-			}
-			if ( bh_movement.integer ) {
-				trap_Cvar_Set( "bh_movement", "0" );
-			}
-			if ( bh_autojump.integer ) {
-				trap_Cvar_Set( "bh_autojump", "0" );
-			}
+			qboolean wantsCheatTool = qfalse;
 			{
 				char tmp[4];
+				if ( cg_drawTriggers.integer || cg_drawEnemies.integer || cg_drawItems.integer || cg_drawEnemySight.integer || cg_drawAIPath.integer ) {
+					wantsCheatTool = qtrue;
+				}
 				trap_Cvar_VariableStringBuffer( "r_drawClips", tmp, sizeof( tmp ) );
 				if ( atoi( tmp ) ) {
-					trap_Cvar_Set( "r_drawClips", "0" );
+					wantsCheatTool = qtrue;
 				}
 				trap_Cvar_VariableStringBuffer( "g_triggerLog", tmp, sizeof( tmp ) );
 				if ( atoi( tmp ) ) {
-					trap_Cvar_Set( "g_triggerLog", "0" );
+					wantsCheatTool = qtrue;
 				}
+			}
+			if ( wantsCheatTool && cg.time - lastCheatToolWarn > 3000 ) {
+				CG_CenterPrint( "Enable sv_cheats 1 to use practice/dev tools", SCREEN_HEIGHT * 0.25, SMALLCHAR_WIDTH );
+				lastCheatToolWarn = cg.time;
 			}
 		}
 	}

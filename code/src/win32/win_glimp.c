@@ -48,6 +48,12 @@ If you have questions concerning this license or the applicable additional terms
 #include "glw_win.h"
 #include "win_local.h"
 
+/* Experimental Dear ImGui frontend is drawn at the very end of the GL frame,
+   after the renderer backend has submitted its draw commands and before swap.
+   Drawing it from SCR_DrawScreenField happens too early and can be overwritten
+   by the backend command buffer. */
+extern void CL_SpeedrunImGui_Draw( void );
+
 extern void WG_CheckHardwareGamma( void );
 extern void WG_RestoreGamma( void );
 
@@ -1230,6 +1236,8 @@ void GLimp_EndFrame( void ) {
 		}
 	}
 
+	CL_SpeedrunImGui_Draw();
+
 
 	// don't flip if drawing to front buffer
 	if ( Q_stricmp( r_drawBuffer->string, "GL_FRONT" ) != 0 ) {
@@ -1372,12 +1380,14 @@ void GLimp_Init( void ) {
 	if ( Q_stricmp( lastValidRenderer->string, glConfig.renderer_string ) ) {
 		glConfig.hardwareType = GLHW_GENERIC;
 
-		ri.Cvar_Set( "r_textureMode", "GL_LINEAR_MIPMAP_NEAREST" );
+		ri.Cvar_Set( "r_textureMode", r_highQualityTextures->integer ? "GL_LINEAR_MIPMAP_LINEAR" : "GL_LINEAR_MIPMAP_NEAREST" );
 
 		// VOODOO GRAPHICS w/ 2MB
 		if ( strstr( buf, "voodoo graphics/1 tmu/2 mb" ) ) {
-			ri.Cvar_Set( "r_picmip", "2" );
-			ri.Cvar_Get( "r_picmip", "1", CVAR_ARCHIVE | CVAR_LATCH );
+			if ( !r_highQualityTextures->integer ) {
+				ri.Cvar_Set( "r_picmip", "2" );
+				ri.Cvar_Get( "r_picmip", "1", CVAR_ARCHIVE | CVAR_LATCH );
+			}
 		} else if ( strstr( buf, "matrox" ) ) {
 			ri.Cvar_Set( "r_allowExtensions", "0" );
 		} else {

@@ -743,7 +743,7 @@ void _UI_Refresh( int realtime ) {
 
 	// draw cursor
 	UI_SetColor( NULL );
-	if ( Menu_Count() > 0 ) {
+	if ( Menu_Count() > 0 && trap_Cvar_VariableValue( "ui_speedrun_imgui" ) == 0.0f ) {
 		uiMenuCommand_t mymenu = _UI_GetActiveMenu();
 		if ( mymenu != UIMENU_BRIEFING ) {
 		//	UI_DrawHandlePic( uiInfo.uiDC.cursorx - 16, uiInfo.uiDC.cursory - 16, 32, 32, uiInfo.uiDC.Assets.cursor, ALIGN_STRETCH );

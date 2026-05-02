@@ -227,7 +227,7 @@ itemDef {
 	forecolor .8 .8 .8 1
 	backcolor .4 .4 .4 .6 
 	visible 1 
-	action { open ingame_livesplit }
+	action { setcvar ui_speedrun_imgui_restore_pause 1 ; uiScript closeingame ; exec "speedrun_gui_open" }
 	mouseEnter { setitemcolor speedrun backcolor .15 .1 .1 .7 }
 	mouseExit { setitemcolor speedrun backcolor .4 .4 .4 .6  }
 	}
@@ -256,11 +256,12 @@ itemDef {
 		name about
 		name "version"
 		cvar version 
-		rect 290 475 640 20
+		rect 0 478 640 20
 		textfont UI_FONT_BIG
 		textstyle ITEM_TEXTSTYLE_SHADOWED
-		textscale .22
+		textscale .16
 		textalign ITEM_ALIGN_CENTER
+		textalignx 320
 		forecolor 1 1 1 1
 		visible 1
 		decoration

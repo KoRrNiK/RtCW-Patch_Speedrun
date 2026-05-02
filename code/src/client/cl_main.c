@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 // cl_main.c  -- client main loop
 
 #include "client.h"
+#include "cl_speedrun_imgui.h"
 #include <limits.h>
 
 cvar_t  *cl_nodelta;
@@ -4089,6 +4090,7 @@ void CL_Init( void ) {
 	CL_InitRef();
 
 	SCR_Init();
+	CL_SpeedrunImGui_Init();
 
 	SCR_LiveSplitInit();
 	SCR_UpdateInit();
@@ -4120,6 +4122,7 @@ void CL_Shutdown( void ) {
 
 	SCR_LiveSplitShutdown();
 	SCR_UpdateShutdown();
+	CL_SpeedrunImGui_Shutdown();
 
 	CL_Disconnect( qtrue );
 

@@ -2450,6 +2450,7 @@ void CG_OwnerDraw( float x, float y, float w, float h, float text_x, float text_
 
 void CG_MouseEvent( int x, int y ) {
 	int n;
+	char imguiOpen[8];
 
 	if ( ( cg.predictedPlayerState.pm_type == PM_NORMAL || cg.predictedPlayerState.pm_type == PM_SPECTATOR ) && cg.showScores == qfalse ) {
 		trap_Key_SetCatcher( 0 );
@@ -2472,7 +2473,12 @@ void CG_MouseEvent( int x, int y ) {
 
 	n = Display_CursorType( cgs.cursorX, cgs.cursorY );
 	cgs.activeCursor = 0;
-	if ( n == CURSOR_ARROW ) {
+	trap_Cvar_VariableStringBuffer( "ui_speedrun_imgui", imguiOpen, sizeof( imguiOpen ) );
+	if ( atoi( imguiOpen ) != 0 ) {
+		/* Dear ImGui consumes menu input and draws its own cursor.  Do not update
+		   old menu hover/cursor state while the new panel is active. */
+		return;
+	} else if ( n == CURSOR_ARROW ) {
 		cgs.activeCursor = cgs.media.selectCursor;
 	} else if ( n == CURSOR_SIZER ) {
 		cgs.activeCursor = cgs.media.sizeCursor;
