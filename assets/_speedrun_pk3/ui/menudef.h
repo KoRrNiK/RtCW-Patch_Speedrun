@@ -68,6 +68,8 @@ If you have questions concerning this license or the applicable additional terms
 #define WINDOW_STYLE_SHADER         3       // gradient bar based on background color
 #define WINDOW_STYLE_TEAMCOLOR      4       // team color
 #define WINDOW_STYLE_CINEMATIC      5       // cinematic
+#define WINDOW_STYLE_SOFTCARD       6       // filled card with subtle shadow/glow
+#define WINDOW_STYLE_ACCENT         7       // filled accent strip with soft highlights
 
 #define MENU_TRUE           1       // uh.. true
 #define MENU_FALSE          0       // and false

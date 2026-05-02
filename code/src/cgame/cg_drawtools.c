@@ -630,6 +630,29 @@ void CG_DrawPicNew( float x, float y, float width, float height, qhandle_t hShad
 
 /*
 ===============
+CG_RefreshCharsetShaders
+
+Renderer media can be restarted during level transitions while cgame HUD
+state survives long enough to draw another frame.  Periodically refresh the
+charset handles used by CG_DrawStringExt so stale qhandles do not turn HUD
+text (keystrokes, movement overlay, etc.) into solid glyph blocks.
+===============
+*/
+static void CG_RefreshCharsetShaders( void ) {
+	static int lastRefreshTime = -1000;
+
+	if ( cgs.media.charsetShader && cgs.media.menucharsetShader &&
+		 cg.time >= lastRefreshTime && cg.time - lastRefreshTime < 1000 ) {
+		return;
+	}
+
+	cgs.media.charsetShader = trap_R_RegisterShader( "gfx/2d/hudchars" );
+	cgs.media.menucharsetShader = trap_R_RegisterShader( "gfx/2d/hudchars" );
+	lastRefreshTime = cg.time;
+}
+
+/*
+===============
 CG_DrawChar
 
 Coordinates and size in 640*480 virtual screen size
@@ -646,6 +669,8 @@ void CG_DrawChar( int x, int y, int width, int height, int ch, scralign_t align 
 	if ( ch == ' ' ) {
 		return;
 	}
+
+	CG_RefreshCharsetShaders();
 
 	ax = x;
 	ay = y;
@@ -684,6 +709,8 @@ void CG_DrawChar2( int x, int y, int width, int height, int ch, scralign_t align
 	if ( ch == ' ' ) {
 		return;
 	}
+
+	CG_RefreshCharsetShaders();
 
 	ax = x;
 	ay = y;

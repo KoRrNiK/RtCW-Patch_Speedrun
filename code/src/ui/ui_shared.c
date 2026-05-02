@@ -765,9 +765,71 @@ void Fade( int *flags, float *f, float clamp, int *nextTime, int offsetTime, qbo
 	}
 }
 
+static void UI_FillRoundedRect( const rectDef_t *r, const float *color, float radius ) {
+	float x, y, w, h, c1, c2, c3;
+
+	if ( !r || r->w <= 0 || r->h <= 0 || color[3] <= 0.0f ) {
+		return;
+	}
+
+	x = r->x;
+	y = r->y;
+	w = r->w;
+	h = r->h;
+
+	if ( radius < 1.0f || w < 8.0f || h < 8.0f ) {
+		DC->fillRect( x, y, w, h, color, r->scrAlign );
+		return;
+	}
+
+	if ( radius > 5.0f ) {
+		radius = 5.0f;
+	}
+	if ( radius > w * 0.5f ) {
+		radius = w * 0.5f;
+	}
+	if ( radius > h * 0.5f ) {
+		radius = h * 0.5f;
+	}
+
+	c1 = radius;
+	c2 = radius * 0.55f;
+	c3 = radius * 0.25f;
+
+	/* Pixel-art rounded corners: no overlap, no shader dependency. */
+	DC->fillRect( x + c1, y, w - c1 * 2.0f, 1, color, r->scrAlign );
+	DC->fillRect( x + c2, y + 1, w - c2 * 2.0f, 1, color, r->scrAlign );
+	DC->fillRect( x + c3, y + 2, w - c3 * 2.0f, 1, color, r->scrAlign );
+	DC->fillRect( x, y + 3, w, h - 6, color, r->scrAlign );
+	DC->fillRect( x + c3, y + h - 3, w - c3 * 2.0f, 1, color, r->scrAlign );
+	DC->fillRect( x + c2, y + h - 2, w - c2 * 2.0f, 1, color, r->scrAlign );
+	DC->fillRect( x + c1, y + h - 1, w - c1 * 2.0f, 1, color, r->scrAlign );
+}
+
+static void UI_DrawRoundedRect( const rectDef_t *r, const float *color, float radius ) {
+	if ( !r || r->w <= 2 || r->h <= 2 || color[3] <= 0.0f ) {
+		return;
+	}
+
+	if ( radius < 1.0f || r->w < 8.0f || r->h < 8.0f ) {
+		DC->drawRect( r->x, r->y, r->w, r->h, 1, color, r->scrAlign );
+		return;
+	}
+
+	DC->fillRect( r->x + radius, r->y, r->w - radius * 2.0f, 1, color, r->scrAlign );
+	DC->fillRect( r->x + radius, r->y + r->h - 1, r->w - radius * 2.0f, 1, color, r->scrAlign );
+	DC->fillRect( r->x, r->y + radius, 1, r->h - radius * 2.0f, color, r->scrAlign );
+	DC->fillRect( r->x + r->w - 1, r->y + radius, 1, r->h - radius * 2.0f, color, r->scrAlign );
+	DC->fillRect( r->x + radius * 0.45f, r->y + 1, 1, 1, color, r->scrAlign );
+	DC->fillRect( r->x + r->w - radius * 0.45f - 1, r->y + 1, 1, 1, color, r->scrAlign );
+	DC->fillRect( r->x + radius * 0.45f, r->y + r->h - 2, 1, 1, color, r->scrAlign );
+	DC->fillRect( r->x + r->w - radius * 0.45f - 1, r->y + r->h - 2, 1, 1, color, r->scrAlign );
+}
+
 
 
 void Window_Paint( Window *w, float fadeAmount, float fadeClamp, float fadeCycle ) {
+					qboolean customChrome;
 	//float bordersize = 0;
 	vec4_t color;
 	rectDef_t fillRect = w->rect;
@@ -780,8 +842,9 @@ void Window_Paint( Window *w, float fadeAmount, float fadeClamp, float fadeCycle
 	if ( w == NULL || ( w->style == 0 && w->border == 0 ) ) {
 		return;
 	}
+	customChrome = ( w->style == WINDOW_STYLE_SOFTCARD || w->style == WINDOW_STYLE_ACCENT ) ? qtrue : qfalse;
 
-	if ( w->border != 0 ) {
+	if ( w->border != 0 && !customChrome ) {
 		fillRect.x += w->borderSize;
 		fillRect.y += w->borderSize;
 		fillRect.w -= w->borderSize + 1;
@@ -798,6 +861,26 @@ void Window_Paint( Window *w, float fadeAmount, float fadeClamp, float fadeCycle
 		} else {
 			DC->fillRect( fillRect.x, fillRect.y, fillRect.w, fillRect.h, w->backColor, fillRect.scrAlign );
 		}
+	} else if ( w->style == WINDOW_STYLE_SOFTCARD ) {
+		rectDef_t shadowRect = fillRect;
+		vec4_t shadowColor = { 0.0f, 0.0f, 0.0f, w->backColor[3] * 0.28f };
+		vec4_t borderSoftColor = { w->borderColor[0], w->borderColor[1], w->borderColor[2], w->borderColor[3] * 0.65f };
+		vec4_t topColor = { w->borderColor[0], w->borderColor[1], w->borderColor[2], w->borderColor[3] * 0.52f };
+		vec4_t innerColor = { 1.0f, 1.0f, 1.0f, w->backColor[3] * 0.035f };
+
+		shadowRect.x += 3;
+		shadowRect.y += 4;
+		UI_FillRoundedRect( &shadowRect, shadowColor, 5.0f );
+		UI_FillRoundedRect( &fillRect, w->backColor, 5.0f );
+		UI_DrawRoundedRect( &fillRect, borderSoftColor, 5.0f );
+		DC->fillRect( fillRect.x + 6, fillRect.y + 1, fillRect.w - 12, 1, innerColor, fillRect.scrAlign );
+		DC->fillRect( fillRect.x + 6, fillRect.y + 2, fillRect.w - 12, 1, topColor, fillRect.scrAlign );
+	} else if ( w->style == WINDOW_STYLE_ACCENT ) {
+		vec4_t hiColor = { w->borderColor[0], w->borderColor[1], w->borderColor[2], w->borderColor[3] * 0.80f };
+		vec4_t shadeColor = { 0.0f, 0.0f, 0.0f, w->backColor[3] * 0.22f };
+		UI_FillRoundedRect( &fillRect, w->backColor, 4.0f );
+		DC->fillRect( fillRect.x + 4, fillRect.y, fillRect.w - 8, 1, hiColor, fillRect.scrAlign );
+		DC->fillRect( fillRect.x + 4, fillRect.y + fillRect.h - 1, fillRect.w - 8, 1, shadeColor, fillRect.scrAlign );
 	} else if ( w->style == WINDOW_STYLE_GRADIENT ) {
 		GradientBar_Paint( &fillRect, w->backColor );
 		// gradient bar
@@ -823,6 +906,10 @@ void Window_Paint( Window *w, float fadeAmount, float fadeClamp, float fadeCycle
 			DC->runCinematicFrame( w->cinematic );
 			DC->drawCinematic( w->cinematic, fillRect.x, fillRect.y, fillRect.w, fillRect.h );
 		}
+	}
+
+	if ( customChrome ) {
+		return;
 	}
 
 	if ( w->border == WINDOW_BORDER_FULL ) {
@@ -3436,14 +3523,14 @@ void Item_SetTextExtents( itemDef_t *item, int *width, int *height, const char *
 
 	// keeps us from computing the widths and heights more than once
 	if ( *width == 0 || ( item->type == ITEM_TYPE_OWNERDRAW && item->textalignment == ITEM_ALIGN_CENTER ) ) {
-		int originalWidth = DC->textWidth( item->text, item->font, item->textscale, 0 );
+		int originalWidth = DC->textWidth( textPtr, item->font, item->textscale, 0 );
 
 		if ( item->type == ITEM_TYPE_OWNERDRAW && ( item->textalignment == ITEM_ALIGN_CENTER || item->textalignment == ITEM_ALIGN_RIGHT ) ) {
 			originalWidth += DC->ownerDrawWidth( item->window.ownerDraw, item->font, item->textscale );
 		} else if ( ( item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_VALIDFILEFIELD ) && item->textalignment == ITEM_ALIGN_CENTER && item->cvar ) {
 			char buff[256];
 			DC->getCVarString( item->cvar, buff, 256 );
-			originalWidth += DC->textWidth( buff, item->font, item->textscale, 0 );
+			originalWidth = DC->textWidth( buff, item->font, item->textscale, 0 );
 		}
 
 		*width = DC->textWidth( textPtr, item->font, item->textscale, 0 );

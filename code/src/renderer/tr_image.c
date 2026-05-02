@@ -177,6 +177,10 @@ void GL_TextureMode( const char *string ) {
 		ri.Printf( PRINT_ALL, "Refusing to set trilinear on a voodoo.\n" );
 		i = 3;
 	}
+	else if ( r_highQualityTextures->integer ) {
+		// High quality mode should not let old configs switch back to bilinear mip filtering.
+		i = 5;
+	}
 
 
 	if ( i == 6 ) {
@@ -665,6 +669,12 @@ static void Upload32(   unsigned *data,
 	float rMax = 0, gMax = 0, bMax = 0;
 	static int rmse_saved = 0;
 	float rmse;
+	qboolean highQuality = r_highQualityTextures->integer ? qtrue : qfalse;
+	int effectiveTextureBits = highQuality ? 32 : r_texturebits->integer;
+	int effectivePicmip = highQuality ? 0 : r_picmip->integer;
+	int effectivePicmip2 = highQuality ? 0 : r_picmip2->integer;
+	qboolean effectiveRoundImagesDown = r_roundImagesDown->integer;
+	int effectiveLowMemTextureSize = r_lowMemTextureSize->integer;
 
 	// do the root mean square error stuff first
 	if ( r_rmse->value ) {
@@ -696,10 +706,10 @@ static void Upload32(   unsigned *data,
 		;
 	for ( scaled_height = 1 ; scaled_height < height ; scaled_height <<= 1 )
 		;
-	if ( r_roundImagesDown->integer && scaled_width > width ) {
+	if ( effectiveRoundImagesDown && scaled_width > width ) {
 		scaled_width >>= 1;
 	}
-	if ( r_roundImagesDown->integer && scaled_height > height ) {
+	if ( effectiveRoundImagesDown && scaled_height > height ) {
 		scaled_height >>= 1;
 	}
 
@@ -717,11 +727,11 @@ static void Upload32(   unsigned *data,
 	//
 	if ( picmip ) {
 		if ( characterMip ) {
-			scaled_width >>= r_picmip2->integer;
-			scaled_height >>= r_picmip2->integer;
+			scaled_width >>= effectivePicmip2;
+			scaled_height >>= effectivePicmip2;
 		} else {
-			scaled_width >>= r_picmip->integer;
-			scaled_height >>= r_picmip->integer;
+			scaled_width >>= effectivePicmip;
+			scaled_height >>= effectivePicmip;
 		}
 	}
 
@@ -738,10 +748,10 @@ static void Upload32(   unsigned *data,
 
 	rmse = R_RMSE( (byte *)data, width, height );
 
-	if ( r_lowMemTextureSize->integer && ( scaled_width > r_lowMemTextureSize->integer || scaled_height > r_lowMemTextureSize->integer ) && rmse < r_lowMemTextureThreshold->value ) {
+	if ( effectiveLowMemTextureSize && ( scaled_width > effectiveLowMemTextureSize || scaled_height > effectiveLowMemTextureSize ) && rmse < r_lowMemTextureThreshold->value ) {
 		int scale;
 
-		for ( scale = 1 ; scale < r_lowMemTextureSize->integer; scale <<= 1 ) {
+		for ( scale = 1 ; scale < effectiveLowMemTextureSize; scale <<= 1 ) {
 			;
 		}
 
@@ -805,9 +815,9 @@ static void Upload32(   unsigned *data,
 				internalFormat = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
 			} else if ( !noCompress && glConfig.textureCompression == TC_S3TC )   {
 				internalFormat = GL_RGB4_S3TC;
-			} else if ( r_texturebits->integer == 16 )   {
+			} else if ( effectiveTextureBits == 16 )   {
 				internalFormat = GL_RGB5;
-			} else if ( r_texturebits->integer == 32 )   {
+			} else if ( effectiveTextureBits == 32 )   {
 				internalFormat = GL_RGB8;
 			} else
 			{
@@ -817,9 +827,9 @@ static void Upload32(   unsigned *data,
 			if ( !noCompress && glConfig.textureCompression == TC_EXT_COMP_S3TC ) {
 				// TODO: which format is best for which textures?
 				internalFormat = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
-			} else if ( r_texturebits->integer == 16 )   {
+			} else if ( effectiveTextureBits == 16 )   {
 				internalFormat = GL_RGBA4;
-			} else if ( r_texturebits->integer == 32 )   {
+			} else if ( effectiveTextureBits == 32 )   {
 				internalFormat = GL_RGBA8;
 			} else
 			{

@@ -95,6 +95,7 @@ cvar_t  *r_nocurves;
 cvar_t  *r_allowExtensions;
 
 cvar_t  *r_ext_compressed_textures;
+cvar_t  *r_highQualityTextures;
 cvar_t  *r_ext_gamma_control;
 cvar_t  *r_ext_multitexture;
 cvar_t  *r_ext_compiled_vertex_array;
@@ -1026,6 +1027,7 @@ void R_Register( void ) {
 	//
 	r_glDriver = ri.Cvar_Get( "r_glDriver", OPENGL_DRIVER_NAME, CVAR_ARCHIVE | CVAR_LATCH );
 	r_allowExtensions = ri.Cvar_Get( "r_allowExtensions", "1", CVAR_ARCHIVE | CVAR_LATCH );
+	r_highQualityTextures = ri.Cvar_Get( "r_highQualityTextures", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_ext_compressed_textures = ri.Cvar_Get( "r_ext_compressed_textures", "1", CVAR_ARCHIVE | CVAR_LATCH );   // (SA) ew, a spelling change I missed from the missionpack
 	r_ext_gamma_control = ri.Cvar_Get( "r_ext_gamma_control", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_ext_multitexture = ri.Cvar_Get( "r_ext_multitexture", "1", CVAR_ARCHIVE | CVAR_LATCH );
@@ -1131,6 +1133,23 @@ void R_Register( void ) {
 	r_dlightBacks = ri.Cvar_Get( "r_dlightBacks", "1", CVAR_ARCHIVE );
 	r_finish = ri.Cvar_Get( "r_finish", "0", CVAR_ARCHIVE );
 	r_textureMode = ri.Cvar_Get( "r_textureMode", "GL_LINEAR_MIPMAP_NEAREST", CVAR_ARCHIVE );
+	if ( r_highQualityTextures->integer ) {
+		/* High quality mode: keep texture detail and use better filtering.
+		   Keep r_roundImagesDown enabled so non-power-of-two textures are not
+		   upscaled, which was the risky part that could stall loading. */
+		ri.Cvar_Set( "r_ext_compressed_textures", "0" );
+		ri.Cvar_Set( "r_picmip", "0" );
+		ri.Cvar_Set( "r_picmip2", "0" );
+		ri.Cvar_Set( "r_roundImagesDown", "1" );
+		ri.Cvar_Set( "r_lowMemTextureSize", "0" );
+		ri.Cvar_Set( "r_rmse", "0" );
+		ri.Cvar_Set( "r_simpleMipMaps", "0" );
+		ri.Cvar_Set( "r_texturebits", "32" );
+		ri.Cvar_Set( "r_textureMode", "GL_LINEAR_MIPMAP_LINEAR" );
+		if ( r_ext_texture_filter_anisotropic->value < 16.0f ) {
+			ri.Cvar_Set( "r_ext_texture_filter_anisotropic", "16" );
+		}
+	}
 	r_swapInterval = ri.Cvar_Get( "r_swapInterval", "0", CVAR_ARCHIVE );
 #ifdef __MACOS__
 	r_gamma = ri.Cvar_Get( "r_gamma", "1.2", CVAR_ARCHIVE );

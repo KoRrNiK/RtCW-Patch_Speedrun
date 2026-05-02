@@ -367,7 +367,19 @@ void RE_RegisterFont( const char *fontName, int pointSize, fontInfo_t *font ) {
 	Com_sprintf( name, sizeof( name ), "fonts/fontImage_%i.dat",pointSize );
 	for ( i = 0; i < registeredFontCount; i++ ) {
 		if ( Q_stricmp( name, registeredFont[i].name ) == 0 ) {
+			int j;
+
 			memcpy( font, &registeredFont[i], sizeof( fontInfo_t ) );
+
+			// Cached font data stores renderer shader handles.  Those handles can
+			// become stale after a map/renderer media restart, so refresh them from
+			// the stable shader names before returning the cached font.
+			for ( j = GLYPH_START; j < GLYPH_END; j++ ) {
+				if ( font->glyphs[j].shaderName[0] ) {
+					font->glyphs[j].glyph = RE_RegisterShaderNoMip( font->glyphs[j].shaderName );
+				}
+			}
+			memcpy( &registeredFont[i], font, sizeof( fontInfo_t ) );
 			return;
 		}
 	}
