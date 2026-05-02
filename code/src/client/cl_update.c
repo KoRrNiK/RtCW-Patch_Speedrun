@@ -190,7 +190,7 @@ void SCR_UpdateDraw( void )
 		{
 			char   verStr[64];
 			vec4_t col = { 0.52f, 0.56f, 0.48f, 0.50f };
-			Com_sprintf( verStr, sizeof( verStr ), "v%s  (%s)", PRODUCT_VERSION, __DATE__ );
+			Com_sprintf( verStr, sizeof( verStr ), "v%s  (%s %s)", PRODUCT_VERSION, PRODUCT_DATE, PRODUCT_TIME );
 			SCR_DrawStringExt( 6, 468, 6.0f, verStr, col, qtrue );
 		}
 

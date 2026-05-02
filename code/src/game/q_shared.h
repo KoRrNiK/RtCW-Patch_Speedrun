@@ -44,6 +44,7 @@ If you have questions concerning this license or the applicable additional terms
 #define PRODUCT_NAME	"RTCW"
 #define PRODUCT_VERSION "1.45b"
 #define PRODUCT_DATE __DATE__
+#define PRODUCT_TIME __TIME__
 #define SP_VERSION PRODUCT_VERSION
 
 

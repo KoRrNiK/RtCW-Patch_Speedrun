@@ -2082,7 +2082,7 @@ void Com_Init( char *commandLine ) {
 	Cmd_AddCommand( "writeconfig", Com_WriteConfig_f );
 
 
-	s = va("%s - %s", Q3_VERSION, PRODUCT_DATE);
+	s = va("%s - %s %s", Q3_VERSION, PRODUCT_DATE, PRODUCT_TIME);
 
 	com_version = Cvar_Get( "version", s, CVAR_ROM | CVAR_SERVERINFO );
 	Cvar_Get( "sp_version", SP_VERSION, CVAR_ROM | CVAR_SERVERINFO );
