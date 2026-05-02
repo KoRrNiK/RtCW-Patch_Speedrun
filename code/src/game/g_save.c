@@ -1677,6 +1677,13 @@ void G_LoadGame(char* filename) {
 
 	level.lastLoadTime = leveltime;
 
+	/* Savegames restore player->numSecretsFound/numTreasureFound, but
+	   CS_MISSIONSTATS is not stored in the save file.  Refresh it now so
+	   clients and the integrated LiveSplit 100% HUD immediately reflect
+	   the loaded/death-reloaded collectible state instead of keeping the
+	   stale counts from before the load. */
+	G_SendMissionStats();
+
 	/*
 		// always save to the "current" savegame
 		last = level.time;

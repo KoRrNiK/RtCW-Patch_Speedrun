@@ -886,49 +886,61 @@ CL_UpdateLevelHunkUsage
 void CL_UpdateLevelHunkUsage( void ) {
 	int handle;
 	char *memlistfile = "hunkusage.dat";
-	char *buf, *outbuf;
+	char *buf = NULL, *outbuf = NULL;
 	char *buftrav, *outbuftrav;
 	char *token;
 	char outstr[256];
 	int len, memusage;
+	qboolean rewriteOnly = qfalse;
 
 	memusage = Cvar_VariableIntegerValue( "com_hunkused" ) + Cvar_VariableIntegerValue( "hunk_soundadjust" );
 
 	len = FS_FOpenFileByMode( memlistfile, &handle, FS_READ );
 	if ( len >= 0 ) { // the file exists, so read it in, strip out the current entry for this map, and save it out, so we can append the new value
+		/* hunkusage.dat is diagnostic only.  If it ever becomes corrupt or
+		   very large, do not allocate multiple megabytes during map startup;
+		   rebuild it from the current entry instead. */
+		if ( len > 256 * 1024 ) {
+			Com_Printf( "^3WARNING: %s too large (%i bytes), rebuilding\n", memlistfile, len );
+			FS_FCloseFile( handle );
+			rewriteOnly = qtrue;
+		} else {
 
-		buf = (char *)Z_Malloc( len + 1 );
-		memset( buf, 0, len + 1 );
-		outbuf = (char *)Z_Malloc( len + 1 );
-		memset( outbuf, 0, len + 1 );
+			buf = (char *)Z_Malloc( len + 1 );
+			memset( buf, 0, len + 1 );
+			outbuf = (char *)Z_Malloc( len + 1 );
+			memset( outbuf, 0, len + 1 );
 
-		FS_Read( (void *)buf, len, handle );
-		FS_FCloseFile( handle );
+			FS_Read( (void *)buf, len, handle );
+			FS_FCloseFile( handle );
 
-		// now parse the file, filtering out the current map
-		buftrav = buf;
-		outbuftrav = outbuf;
-		outbuftrav[0] = '\0';
-		while ( ( token = COM_Parse( &buftrav ) ) && token[0] ) {
-			if ( !Q_strcasecmp( token, cl.mapname ) ) {
-				// found a match
-				token = COM_Parse( &buftrav );  // read the size
-				if ( token && token[0] ) {
-					if ( atoi( token ) == memusage ) {  // if it is the same, abort this process
-						Z_Free( buf );
-						Z_Free( outbuf );
-						return;
+			// now parse the file, filtering out the current map
+			buftrav = buf;
+			outbuftrav = outbuf;
+			outbuftrav[0] = '\0';
+			while ( ( token = COM_Parse( &buftrav ) ) && token[0] ) {
+				if ( !Q_strcasecmp( token, cl.mapname ) ) {
+					// found a match
+					token = COM_Parse( &buftrav );  // read the size
+					if ( token && token[0] ) {
+						if ( atoi( token ) == memusage ) {  // if it is the same, abort this process
+							Z_Free( buf );
+							Z_Free( outbuf );
+							return;
+						}
 					}
-				}
-			} else {    // send it to the outbuf
-				Q_strcat( outbuftrav, len + 1, token );
-				Q_strcat( outbuftrav, len + 1, " " );
-				token = COM_Parse( &buftrav );  // read the size
-				if ( token && token[0] ) {
+				} else {    // send it to the outbuf
 					Q_strcat( outbuftrav, len + 1, token );
-					Q_strcat( outbuftrav, len + 1, "\n" );
-				} else {
-					Com_Error( ERR_DROP, "hunkusage.dat file is corrupt\n" );
+					Q_strcat( outbuftrav, len + 1, " " );
+					token = COM_Parse( &buftrav );  // read the size
+					if ( token && token[0] ) {
+						Q_strcat( outbuftrav, len + 1, token );
+						Q_strcat( outbuftrav, len + 1, "\n" );
+					} else {
+						Com_Printf( "^3WARNING: %s is corrupt, rebuilding\n", memlistfile );
+						rewriteOnly = qtrue;
+						break;
+					}
 				}
 			}
 		}
@@ -942,22 +954,34 @@ void CL_UpdateLevelHunkUsage( void ) {
 #endif
 		handle = FS_FOpenFileWrite( memlistfile );
 		if ( handle < 0 ) {
-			Com_Error( ERR_DROP, "cannot create %s\n", memlistfile );
+			Com_Printf( "^3WARNING: cannot create %s\n", memlistfile );
+			if ( buf ) {
+				Z_Free( buf );
+			}
+			if ( outbuf ) {
+				Z_Free( outbuf );
+			}
+			return;
 		}
 		// input file is parsed, now output to the new file
-		len = strlen( outbuf );
-		if ( FS_Write( (void *)outbuf, len, handle ) != len ) {
-			Com_Error( ERR_DROP, "cannot write to %s\n", memlistfile );
+		len = ( rewriteOnly || !outbuf ) ? 0 : strlen( outbuf );
+		if ( len > 0 && FS_Write( (void *)outbuf, len, handle ) != len ) {
+			Com_Printf( "^3WARNING: cannot write to %s\n", memlistfile );
 		}
 		FS_FCloseFile( handle );
 
-		Z_Free( buf );
-		Z_Free( outbuf );
+		if ( buf ) {
+			Z_Free( buf );
+		}
+		if ( outbuf ) {
+			Z_Free( outbuf );
+		}
 	}
 	// now append the current map to the current file
 	FS_FOpenFileByMode( memlistfile, &handle, FS_APPEND );
 	if ( handle < 0 ) {
-		Com_Error( ERR_DROP, "cannot write to hunkusage.dat, check disk full\n" );
+		Com_Printf( "^3WARNING: cannot write to hunkusage.dat, check disk full\n" );
+		return;
 	}
 	Com_sprintf( outstr, sizeof( outstr ), "%s %i\n", cl.mapname, memusage );
 	FS_Write( outstr, strlen( outstr ), handle );

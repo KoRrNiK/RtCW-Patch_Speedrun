@@ -404,6 +404,75 @@ void G_InitGentity( gentity_t *e ) {
 
 /*
 =================
+G_RecycleTempEntity
+
+When the entity table is full, prefer dropping an old, cosmetic temp event
+over aborting the game.  Boss/robot deaths can burst-spawn many explosion,
+smoke and gib events on entity-heavy maps; losing one stale effect is safer
+than a fatal "G_Spawn: no free entities" error.
+=================
+*/
+static gentity_t *G_RecycleTempEntity( qboolean expiredOnly ) {
+	int i;
+	int bestAge = -1;
+	gentity_t *e;
+	gentity_t *best = NULL;
+
+	e = &g_entities[MAX_CLIENTS];
+	for ( i = MAX_CLIENTS ; i < level.num_entities && i < ENTITYNUM_MAX_NORMAL ; i++, e++ ) {
+		int age;
+
+		if ( !e->inuse || !e->freeAfterEvent || e->neverFree ) {
+			continue;
+		}
+		if ( !e->eventTime ) {
+			continue;
+		}
+
+		age = level.time - e->eventTime;
+		if ( expiredOnly && age <= EVENT_VALID_MSEC ) {
+			continue;
+		}
+		if ( age > bestAge ) {
+			bestAge = age;
+			best = e;
+		}
+	}
+
+	if ( best ) {
+		G_FreeEntity( best );
+		G_InitGentity( best );
+	}
+
+	return best;
+}
+
+static gentity_t *G_RecyclePendingFreeEntity( void ) {
+	int i;
+	gentity_t *e;
+
+	e = &g_entities[MAX_CLIENTS];
+	for ( i = MAX_CLIENTS ; i < level.num_entities && i < ENTITYNUM_MAX_NORMAL ; i++, e++ ) {
+		if ( !e->inuse || e->neverFree ) {
+			continue;
+		}
+		if ( e->think != G_FreeEntity ) {
+			continue;
+		}
+		if ( e->nextthink <= 0 || e->nextthink > level.time + FRAMETIME ) {
+			continue;
+		}
+
+		G_FreeEntity( e );
+		G_InitGentity( e );
+		return e;
+	}
+
+	return NULL;
+}
+
+/*
+=================
 G_Spawn
 
 Either finds a free entity, or allocates a new one.
@@ -447,6 +516,22 @@ gentity_t *G_Spawn( void ) {
 		}
 	}
 	if ( i == ENTITYNUM_MAX_NORMAL ) {
+		// First reclaim expired temp events, then as a last resort drop the
+		// oldest temp event still waiting to be sent to clients.  Also allow
+		// reusing entities that are already scheduled to be freed immediately.
+		e = G_RecycleTempEntity( qtrue );
+		if ( e ) {
+			return e;
+		}
+		e = G_RecyclePendingFreeEntity();
+		if ( e ) {
+			return e;
+		}
+		e = G_RecycleTempEntity( qfalse );
+		if ( e ) {
+			return e;
+		}
+
 		for ( i = 0; i < MAX_GENTITIES; i++ ) {
 			G_Printf( "%4i: %s\n", i, g_entities[i].classname );
 		}

@@ -38,6 +38,22 @@ extern int hWeaponSnd;
 extern void CG_Tracer( vec3_t source, vec3_t dest, int sparks );
 //==========================================================================
 
+static animModelInfo_t *CG_ValidatedClientModelInfo( const clientInfo_t *ci ) {
+	int i;
+
+	if ( !ci || !ci->modelInfo ) {
+		return NULL;
+	}
+
+	for ( i = 0; i < MAX_ANIMSCRIPT_MODELS; i++ ) {
+		if ( cgs.animScriptData.modelInfo[i] == ci->modelInfo ) {
+			return ci->modelInfo;
+		}
+	}
+
+	return NULL;
+}
+
 /*
 ===================
 CG_PlaceString
@@ -1480,6 +1496,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 	const char      *s;
 	int clientNum;
 	clientInfo_t    *ci;
+	animModelInfo_t *modelInfo;
 	//char			tempStr[MAX_QPATH];
 
 	static int footstepcnt = 0;
@@ -1502,8 +1519,9 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		clientNum = 0;
 	}
 	ci = &cgs.clientinfo[ clientNum ];
+	modelInfo = CG_ValidatedClientModelInfo( ci );
 
-	if ( !ci->modelInfo ) {   // not ready yet?
+	if ( !modelInfo ) {   // not ready yet, or clientinfo still points at stale model data
 		return;
 	}
 
@@ -1535,9 +1553,9 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 			} else if ( cent->currentState.aiChar == AICHAR_HELGA ) {
 				CG_SoundPlayIndexedScript( cgs.media.footsteps[FOOTSTEP_BEAST][0], NULL, es->number );
 			} else {
-				int fsType = ( ci->modelInfo && ci->modelInfo->footsteps >= 0
-					&& ci->modelInfo->footsteps < FOOTSTEP_TOTAL )
-					? ci->modelInfo->footsteps : FOOTSTEP_NORMAL;
+				int fsType = ( modelInfo->footsteps >= 0
+					&& modelInfo->footsteps < FOOTSTEP_TOTAL )
+					? modelInfo->footsteps : FOOTSTEP_NORMAL;
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ fsType ][footstepcnt] );
 			}
 		}

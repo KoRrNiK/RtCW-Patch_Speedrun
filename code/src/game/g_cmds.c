@@ -1247,6 +1247,7 @@ typedef struct {
 	int          numEntities;
 	int          levelTime;
 	int          numConnectedClients;
+	vec3_t       playerViewangles;
 	qboolean     valid;
 } stateSnapshot_t;
 
@@ -1314,6 +1315,41 @@ static int SP_ParseSlot( void ) {
 	return slot;
 }
 
+static void SP_ShiftRestoredEntityTimes( gentity_t *e, int timeDelta ) {
+	if ( timeDelta == 0 ) {
+		return;
+	}
+
+	/* Full snapshots are restored while level.time keeps advancing. Shift every
+	   time-based trajectory/callback forward by the elapsed delta so movers,
+	   doors, scripts and delayed thinks keep the exact saved relative state. */
+	e->s.pos.trTime += timeDelta;
+	e->s.apos.trTime += timeDelta;
+	if ( e->s.time > 0 ) e->s.time += timeDelta;
+	if ( e->s.time2 > 0 ) e->s.time2 += timeDelta;
+	if ( e->s.onFireStart > 0 ) e->s.onFireStart += timeDelta;
+	if ( e->s.onFireEnd > 0 ) e->s.onFireEnd += timeDelta;
+	if ( e->s.effect1Time > 0 ) e->s.effect1Time += timeDelta;
+	if ( e->s.effect2Time > 0 ) e->s.effect2Time += timeDelta;
+	if ( e->s.effect3Time > 0 ) e->s.effect3Time += timeDelta;
+
+	if ( e->nextthink > 0 ) e->nextthink += timeDelta;
+	if ( e->freetime > 0 ) e->freetime += timeDelta;
+	if ( e->eventTime > 0 ) e->eventTime += timeDelta;
+	if ( e->timestamp > 0 ) e->timestamp += timeDelta;
+	if ( e->pain_debounce_time > 0 ) e->pain_debounce_time += timeDelta;
+	if ( e->fly_sound_debounce_time > 0 ) e->fly_sound_debounce_time += timeDelta;
+	if ( e->last_move_time > 0 ) e->last_move_time += timeDelta;
+	if ( e->flameQuotaTime > 0 ) e->flameQuotaTime += timeDelta;
+	if ( e->grenadeExplodeTime > 0 ) e->grenadeExplodeTime += timeDelta;
+	if ( e->mg42ClampTime > 0 ) e->mg42ClampTime += timeDelta;
+	if ( e->emitTime > 0 ) e->emitTime += timeDelta;
+
+	if ( e->scriptStatus.scriptStackChangeTime > 0 ) e->scriptStatus.scriptStackChangeTime += timeDelta;
+	if ( e->scriptStatusBackup.scriptStackChangeTime > 0 ) e->scriptStatusBackup.scriptStackChangeTime += timeDelta;
+	if ( e->scriptStatusCurrent.scriptStackChangeTime > 0 ) e->scriptStatusCurrent.scriptStackChangeTime += timeDelta;
+}
+
 void Cmd_SavePos_f( gentity_t *ent ) {
 	int i;
 	int slot;
@@ -1355,6 +1391,7 @@ void Cmd_SavePos_f( gentity_t *ent ) {
 
 	/* Snapshot timing */
 	sp->levelTime = level.time;
+	VectorCopy( ent->client->ps.viewangles, sp->playerViewangles );
 	sp->valid = qtrue;
 
 	trap_SendServerCommand( ent - g_entities, va( "print \"Slot %d saved (%.1f %.1f %.1f)\n\"", slot, ent->client->ps.origin[0], ent->client->ps.origin[1], ent->client->ps.origin[2] ) );
@@ -1423,16 +1460,14 @@ void Cmd_LoadPos_f( gentity_t *ent ) {
 		}
 	}
 
-	/* Shift all entity think times forward by the time delta so they
-	   fire at the correct relative moment from now, not from the past */
+	/* Shift restored entity timers/trajectories forward by the time delta so
+	   moving doors/platforms keep their saved position and remaining travel time. */
 	for ( i = 0; i < MAX_GENTITIES; i++ ) {
 		e = &g_entities[i];
 		if ( !e->inuse ) {
 			continue;
 		}
-		if ( e->nextthink > 0 ) {
-			e->nextthink += timeDelta;
-		}
+		SP_ShiftRestoredEntityTimes( e, timeDelta );
 	}
 
 	/* Fix player commandTime to match current server time so Pmove
@@ -1461,7 +1496,9 @@ void Cmd_LoadPos_f( gentity_t *ent ) {
 	VectorCopy( ent->client->ps.origin, ent->r.currentOrigin );
 	VectorCopy( ent->client->ps.origin, ent->s.origin );
 	trap_LinkEntity( ent );
-	SetClientViewAngle( ent, ent->client->ps.viewangles );
+	trap_GetUsercmd( ent->client - level.clients, &ent->client->pers.cmd );
+	VectorCopy( sp->playerViewangles, ent->client->ps.viewangles );
+	SetClientViewAngle( ent, sp->playerViewangles );
 
 	/* toggle teleport bit so client snaps to new angles/origin */
 	ent->client->ps.eFlags ^= EF_TELEPORT_BIT;
@@ -1516,6 +1553,7 @@ static void RWF_SaveSnapshot( void ) {
 		memcpy( &sp->caststates[i], &caststates[i], sizeof( cast_state_t ) );
 	}
 	sp->levelTime = level.time;
+	VectorCopy( g_entities[0].client->ps.viewangles, sp->playerViewangles );
 	sp->valid = qtrue;
 
 	rwf_times[idx] = level.time;
@@ -1572,9 +1610,7 @@ static void RWF_RestoreSnapshot( gentity_t *ent, int idx ) {
 		if ( !e->inuse ) {
 			continue;
 		}
-		if ( e->nextthink > 0 ) {
-			e->nextthink += timeDelta;
-		}
+		SP_ShiftRestoredEntityTimes( e, timeDelta );
 	}
 
 	g_entities[0].client->ps.commandTime = level.time - 16;
@@ -1598,7 +1634,9 @@ static void RWF_RestoreSnapshot( gentity_t *ent, int idx ) {
 	VectorCopy( ent->client->ps.origin, ent->r.currentOrigin );
 	VectorCopy( ent->client->ps.origin, ent->s.origin );
 	trap_LinkEntity( ent );
-	SetClientViewAngle( ent, ent->client->ps.viewangles );
+	trap_GetUsercmd( ent->client - level.clients, &ent->client->pers.cmd );
+	VectorCopy( sp->playerViewangles, ent->client->ps.viewangles );
+	SetClientViewAngle( ent, sp->playerViewangles );
 
 	/* toggle teleport bit so client snaps to new angles/origin */
 	ent->client->ps.eFlags ^= EF_TELEPORT_BIT;
@@ -1755,6 +1793,7 @@ static void Cmd_Rewind_Player( gentity_t *ent, int msec ) {
 	ent->takedamage = qtrue;
 	ent->client->ps.pm_flags &= ~PMF_LIMBO;
 
+	trap_GetUsercmd( ent->client - level.clients, &ent->client->pers.cmd );
 	SetClientViewAngle( ent, frame->viewangles );
 
 	/* toggle teleport bit so client snaps to new angles/origin */
