@@ -1349,6 +1349,7 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 
 	// Performance profiler overlay
 	SCR_PerfDraw();
+
 }
 
 /*

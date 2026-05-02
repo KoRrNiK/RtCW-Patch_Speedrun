@@ -633,6 +633,7 @@ void CL_DemoResetWallClock( int newServerTime );
 void CL_FirstSnapshot( void );
 void CL_ShaderStateChanged( void );
 void CL_UpdateLevelHunkUsage( void );
+void CL_StopRecord_f( void );
 //
 // cl_ui.c
 //
