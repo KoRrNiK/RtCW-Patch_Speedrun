@@ -421,6 +421,7 @@ typedef struct {
 	/* Manual pause (livesplit_pause command) */
 	qboolean    manualPause;
 	int         pauseSavedRealMs;   /* accumulated RGT at moment of pause */
+	qboolean    manualStartIgnoreUi; /* allow IL IGT to start even if start bind/menu leaves UI catcher set */
 
 	/* Anti-cheat counters (lifetime) */
 	int         totalPauses;
@@ -732,6 +733,7 @@ static cvar_t *ls_igttimer_xCvar = NULL;
 static cvar_t *ls_igttimer_yCvar = NULL;
 static cvar_t *ls_igttimer_scaleCvar = NULL;
 
+static cvar_t *ls_igttimer_alignCvar = NULL;
 /* Standalone segment timer overlay (below IGT timer) */
 static cvar_t *ls_igtsegtimer = NULL; /* 0=off, 1=on */
 
@@ -1224,6 +1226,28 @@ static int LS_FindMapIndex( const char *mapname ) {
 	return -1;
 }
 
+static const char *LS_SplitCustomName( int idx ) {
+	static char customName[64];
+	char cvarName[64];
+	if ( idx < 0 || idx >= ls.numMaps ) return NULL;
+	Com_sprintf( cvarName, sizeof( cvarName ), "ls_name_%s", ls.splits[idx].mapname );
+	Cvar_VariableStringBuffer( cvarName, customName, sizeof( customName ) );
+	if ( customName[0] ) {
+		return customName;
+	}
+	return NULL;
+}
+
+static const char *LS_SplitMenuName( int idx ) {
+	const char *custom;
+	if ( idx < 0 || idx >= ls.numMaps ) return "---";
+	custom = LS_SplitCustomName( idx );
+	if ( custom && custom[0] ) return custom;
+	if ( ls.splits[idx].shortName && ls.splits[idx].shortName[0] ) return ls.splits[idx].shortName;
+	if ( ls.splits[idx].displayName && ls.splits[idx].displayName[0] ) return ls.splits[idx].displayName;
+	return ls.splits[idx].mapname;
+}
+
 /* Is this index within the active set for the current mode? */
 static qboolean LS_InActiveSet( int idx ) {
 	if ( idx < ls.modeFirstIdx || idx > ls.modeLastIdx ) return qfalse;
@@ -1239,8 +1263,9 @@ static const char *LS_SplitDisplayName( int idx, float maxPixels, float charSz )
 	int maxChars, len;
 
 	if ( idx < 0 || idx >= ls.numMaps ) return "---";
-	full = ls.splits[idx].displayName;
-	shrt = ls.splits[idx].shortName;
+	full = LS_SplitCustomName( idx );
+	if ( !full || !full[0] ) full = ls.splits[idx].displayName;
+	shrt = ( full && full[0] && full != ls.splits[idx].displayName ) ? full : ls.splits[idx].shortName;
 	bsp  = ls.splits[idx].mapname;
 
 	if ( charSz <= 0 ) charSz = 5.0f;
@@ -1865,8 +1890,10 @@ static void LS_SavePbSegments( void ) {
 static void LS_WindowUpdate( void ) {
 	volatile lsWndState_t *st = &lswnd_state;
 	const char *modeName;
-	int di, i, vi, igtMs, segMs, *pb;
+	int di, i, vi, igtMs, rtMs, timerMs, segMs;
 	int compare;
+
+	st->curRow = -1;
 
 	/* ---- title / header ---- */
 	Q_strncpyz( (char *)st->gameName, "Return to Castle Wolfenstein", sizeof( st->gameName ) );
@@ -1902,12 +1929,15 @@ static void LS_WindowUpdate( void ) {
 	default:                 Q_strncpyz( (char *)st->compareLabel, "Personal Best",    sizeof( st->compareLabel ) ); break;
 	}
 
-	/* PB / comparison time */
-	LS_GetCatPB( &pb );
-	if ( pb && *pb > 0 ) {
-		LS_FormatTime( *pb, (char *)st->pbText, sizeof( st->pbText ) );
-	} else {
-		st->pbText[0] = '\0';
+	/* Selected comparison total.  The field is named pbText for layout
+	   compatibility, but it follows ls_compare for the overlay/window. */
+	{
+		int compareTotal = LS_ComparisonCumulative( ls.modeLastIdx );
+		if ( compareTotal > 0 ) {
+			LS_FormatTime( compareTotal, (char *)st->pbText, sizeof( st->pbText ) );
+		} else {
+			st->pbText[0] = '\0';
+		}
 	}
 
 	/* ---- split rows ---- */
@@ -1989,21 +2019,29 @@ static void LS_WindowUpdate( void ) {
 			}
 		}
 
-		/* PB cumulative split time (show for all splits) */
+		/* Comparison cumulative split time (show for all splits).  The field
+		   name is kept for renderer compatibility, but it follows ls_compare. */
 		{
+			int cmpCum = LS_ComparisonCumulative( i );
 			int pbCum = LS_CumulativePB( i );
 			if ( pbCum > 0 ) {
 				st->rows[vi].pbCumMs = pbCum;
-				LS_FormatTime( pbCum, (char *)st->rows[vi].pbSplitTime, sizeof( st->rows[vi].pbSplitTime ) );
+			}
+			if ( cmpCum > 0 ) {
+				LS_FormatTime( cmpCum, (char *)st->rows[vi].pbSplitTime, sizeof( st->rows[vi].pbSplitTime ) );
 			}
 		}
 
-		/* PB segment time (for DetailedTimer) */
+		/* Comparison segment time (for DetailedTimer).  Keep pbSegMs as raw PB
+		   data, but format pbSegTime from the selected ls_compare mode. */
 		{
 			int pbSeg = ls.splits[i].d[di].pbSegmentMs;
+			int cmpSeg = LS_ComparisonSegment( i );
 			if ( pbSeg > 0 ) {
 				st->rows[vi].pbSegMs = pbSeg;
-				LS_FormatTime( pbSeg, (char *)st->rows[vi].pbSegTime, sizeof( st->rows[vi].pbSegTime ) );
+			}
+			if ( cmpSeg > 0 ) {
+				LS_FormatTime( cmpSeg, (char *)st->rows[vi].pbSegTime, sizeof( st->rows[vi].pbSegTime ) );
 			}
 		}
 
@@ -2072,11 +2110,13 @@ static void LS_WindowUpdate( void ) {
 		} else if ( ls.splits[i].splitSkipped ) {
 			Q_strncpyz( (char *)st->rows[vi].splitTime, "---", sizeof( st->rows[vi].splitTime ) );
 		} else if ( st->rows[vi].state == 1 ) {
-			/* current split: show live cumulative time */
+			/* Current split: keep the split-time column static on PB until
+			   this split is actually completed.  Live time still feeds deltas
+			   and the timer component, but the row time is updated only after
+			   the player reaches the next split. */
 			cumTime = LS_CumulativeTime( i );
 			st->rows[vi].cumTimeMs = cumTime;
 			st->rows[vi].segTimeMs = ls.splits[i].currentTimeMs;
-			LS_FormatTime( cumTime, (char *)st->rows[vi].splitTime, sizeof( st->rows[vi].splitTime ) );
 		}
 
 		/* Completed splits with no comparison data: show "-" placeholder.
@@ -2092,8 +2132,26 @@ static void LS_WindowUpdate( void ) {
 		if ( st->rows[vi].state == 1 && !ls.splits[i].splitDone ) {
 			int cumNow = LS_CumulativeTime( i );
 			int cumCmpVal = LS_ComparisonCumulative( i );
+			qboolean bestStarted = qfalse;
 			if ( cumCmpVal > 0 ) {
 				st->rows[vi].liveDeltaMs = cumNow - cumCmpVal;
+				if ( cumNow >= cumCmpVal ) {
+					LS_FormatDelta( st->rows[vi].liveDeltaMs, (char *)st->rows[vi].delta, sizeof( st->rows[vi].delta ) );
+					st->rows[vi].isBehind = ( st->rows[vi].liveDeltaMs > 0 ) ? 1 : 0;
+				}
+			}
+			if ( st->rows[vi].bestSegMs > 0 && st->rows[vi].segTimeMs >= st->rows[vi].bestSegMs ) {
+				int bestDelta = st->rows[vi].segTimeMs - st->rows[vi].bestSegMs;
+				bestStarted = qtrue;
+				LS_FormatDelta( bestDelta, (char *)st->rows[vi].deltaBest, sizeof( st->rows[vi].deltaBest ) );
+				if ( bestDelta <= 0 ) {
+					st->rows[vi].isGold = 1;
+				}
+			}
+			if ( bestStarted && cumCmpVal > 0 && !st->rows[vi].delta[0] ) {
+				st->rows[vi].liveDeltaMs = cumNow - cumCmpVal;
+				LS_FormatDelta( st->rows[vi].liveDeltaMs, (char *)st->rows[vi].delta, sizeof( st->rows[vi].delta ) );
+				st->rows[vi].isBehind = ( st->rows[vi].liveDeltaMs > 0 ) ? 1 : 0;
 			}
 		}
 
@@ -2171,20 +2229,18 @@ static void LS_WindowUpdate( void ) {
 	} else {
 		igtMs = LS_CumulativeTime( ls.modeLastIdx );
 	}
-	LS_FormatTime( igtMs, (char *)st->timerText, sizeof( st->timerText ) );
+	if ( ls.active && !ls.runFinished ) {
+		rtMs = Sys_Milliseconds() - ls.runStartRealMs;
+	} else {
+		rtMs = ls.runSavedRealMs;
+	}
+	timerMs = ( ls_timingCvar && ls_timingCvar->integer == LS_TIMING_REALTIME ) ? rtMs : igtMs;
+	LS_FormatTime( timerMs, (char *)st->timerText, sizeof( st->timerText ) );
 	st->timerFrac[0] = '\0'; /* fraction split done locally in DetailedTimer renderer */
 
 	/* ---- real-time (RTA) timer ---- */
-	{
-		int rtMs = 0;
-		if ( ls.active && !ls.runFinished ) {
-			rtMs = Sys_Milliseconds() - ls.runStartRealMs;
-		} else {
-			rtMs = ls.runSavedRealMs;
-		}
-		LS_FormatTime( rtMs, (char *)st->rtTimerText, sizeof( st->rtTimerText ) );
-		st->rtTimerFrac[0] = '\0';
-	}
+	LS_FormatTime( rtMs, (char *)st->rtTimerText, sizeof( st->rtTimerText ) );
+	st->rtTimerFrac[0] = '\0';
 
 	/* timerBehind: 1 if current cumulative delta > 0 */
 	st->timerBehind = 0;
@@ -3478,7 +3534,7 @@ static void LS_SaveState( void ) {
 		rgtElapsed = ls.runSavedRealMs;
 	}
 
-	LS_WriteStr( f, "LSSTATE_V1\n" );
+	LS_WriteStr( f, "LSSTATE_V2\n" );
 
 	Com_sprintf( buf, sizeof( buf ), "RUN %d %d %d %d %d %d %d %d\n",
 		(int)ls.active, (int)ls.runFinished,
@@ -3492,10 +3548,12 @@ static void LS_SaveState( void ) {
 	LS_WriteStr( f, buf );
 
 	for ( i = 0; i < ls.numMaps; i++ ) {
-		Com_sprintf( buf, sizeof( buf ), "CMAP %s %d %d\n",
+		Com_sprintf( buf, sizeof( buf ), "CMAP %s %d %d %d %d\n",
 			ls.splits[i].mapname,
 			ls.splits[i].currentTimeMs,
-			(int)ls.splits[i].splitDone );
+			(int)ls.splits[i].splitDone,
+			(int)ls.splits[i].splitSkipped,
+			ls.splits[i].prevGoldMs );
 		LS_WriteStr( f, buf );
 	}
 
@@ -3506,6 +3564,7 @@ static void LS_SaveState( void ) {
 static void LS_LoadState( void ) {
 	fileHandle_t fh;
 	int fileLen;
+	int stateVersion = 1;
 	char *bigbuf, *text, *token;
 
 	fileLen = FS_FOpenFileByMode( LS_STATE_FILE, &fh, FS_READ );
@@ -3522,7 +3581,9 @@ static void LS_LoadState( void ) {
 	text = bigbuf;
 	token = COM_Parse( &text );
 
-	if ( Q_stricmp( token, "LSSTATE_V1" ) ) {
+	if ( !Q_stricmp( token, "LSSTATE_V2" ) ) {
+		stateVersion = 2;
+	} else if ( Q_stricmp( token, "LSSTATE_V1" ) ) {
 		Z_Free( bigbuf );
 		return;
 	}
@@ -3558,8 +3619,13 @@ static void LS_LoadState( void ) {
 			if ( idx >= 0 ) {
 				token = COM_Parse( &text ); ls.splits[idx].currentTimeMs = atoi( token );
 				token = COM_Parse( &text ); ls.splits[idx].splitDone     = (qboolean)atoi( token );
+				if ( stateVersion >= 2 ) {
+					token = COM_Parse( &text ); ls.splits[idx].splitSkipped = (qboolean)atoi( token );
+					token = COM_Parse( &text ); ls.splits[idx].prevGoldMs   = atoi( token );
+				}
 			} else {
 				COM_Parse( &text ); COM_Parse( &text );
+				if ( stateVersion >= 2 ) { COM_Parse( &text ); COM_Parse( &text ); }
 			}
 		}
 	}
@@ -3687,6 +3753,12 @@ static void LS_Load( void ) {
 
 	/* Only load the active mode's files; others load on demand */
 	LS_LoadMode( ls.runMode );
+
+	/* Restore transient per-run fields after .lss loading, because .lss files
+	   can contain newly-written golds while an unfinished run is still pending
+	   user confirmation.  prevGoldMs must survive restarts so reset can still
+	   ask whether to keep/discard those golds and the in-run delta remains valid. */
+	LS_LoadState();
 
 	Com_Printf( "^2LiveSplit: .lss files loaded (%d history runs)\n", ls.numHistoryRuns );
 }
@@ -3929,49 +4001,10 @@ static void LS_DoResetSaveEx( qboolean fromExternal ) {
 	ls.baseSecretsFound  = 0;
 	ls.baseTreasureFound = 0;
 
-	/* Save PB segments for completed splits on reset (incomplete run only).
-	   PB represents a SINGLE CONSISTENT RUN - all segments from the
-	   same attempt are saved together (wholesale), NOT cherry-picked
-	   per-segment like golds.  Compare the SUM of completed segments
-	   from this run vs the SUM of existing PB segments for the same
-	   splits.  If this run's total is better (or no PB exists yet for
-	   any of them), replace ALL PB segments with this run's values.
-	   Finished runs already handle PBs in LS_FinishRun; doing this again
-	   on reset could let a slower completed IL overwrite the saved PB split.
-	   Golds (bestTimeMs) are already handled per-segment in
-	   LS_CompleteSplit and are not touched here. */
-	if ( !wasFinished ) {
-		int di = LS_CurDiffIdx();
-		int sumCurrent = 0, sumPB = 0;
-		int numCompleted = 0;
-		qboolean anyMissing = qfalse; /* true if any completed segment has no PB yet */
-
-		/* First pass: compute sums */
-		for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
-			if ( ls.splits[i].cutscene ) continue;
-			if ( !ls.splits[i].splitDone ) continue;
-			if ( ls.splits[i].currentTimeMs <= 0 ) continue;
-			numCompleted++;
-			sumCurrent += ls.splits[i].currentTimeMs;
-			if ( ls.splits[i].d[di].pbSegmentMs > 0 ) {
-				sumPB += ls.splits[i].d[di].pbSegmentMs;
-			} else {
-				anyMissing = qtrue;
-			}
-		}
-
-		/* Second pass: wholesale save if total is better (or first PB) */
-		if ( numCompleted > 0 && ( anyMissing || sumCurrent < sumPB ) ) {
-			for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
-				if ( ls.splits[i].cutscene ) continue;
-				if ( !ls.splits[i].splitDone ) continue;
-				if ( ls.splits[i].currentTimeMs <= 0 ) continue;
-				ls.splits[i].d[di].pbSegmentMs = ls.splits[i].currentTimeMs;
-			}
-			Com_Printf( "^2LiveSplit: PB segments saved (sum %d < prev %d)\n",
-				sumCurrent, sumPB );
-		}
-	}
+	/* Do not write Personal Best split times on an incomplete reset.
+	   Golds (bestTimeMs) were already updated per segment in LS_CompleteSplit
+	   and are saved as BestSegmentTime.  PB segments are only saved from a
+	   completed category run in LS_FinishRun. */
 
 	for ( i = 0; i < ls.numMaps; i++ ) {
 		ls.splits[i].currentTimeMs = 0;
@@ -4223,6 +4256,7 @@ static void LS_Start_f( void ) {
 		ls.endCutscenePrevLB = qfalse;
 		Cvar_Set( "ls_changelevel", "0" );
 		ls.manualPause     = qfalse;
+		ls.manualStartIgnoreUi = qfalse;
 		ls.cheatsUsed      = qfalse;
 		ls.settingsModified = qfalse;
 		ls.settingsModCount = 0;
@@ -4263,12 +4297,16 @@ static void LS_Start_f( void ) {
 		ls.lastServerTime    = cl.serverTime;
 		ls.lastRealTimeMs    = nowReal;
 		ls.currentDifficulty = LS_DetectDifficulty();
+		ls.manualStartIgnoreUi = ( ls.runMode == LS_MODE_IL ) ? qtrue : qfalse;
 		di = LS_CurDiffIdx();
 		LS_SavePreRunPBs();
 
 		if ( ls.runMode == LS_MODE_IL ) {
 			/* IL mode: start on the current map */
 			if ( newIdx >= 0 ) {
+				ls.modeFirstIdx  = newIdx;
+				ls.modeLastIdx   = newIdx;
+				ls.modeEndMapIdx = newIdx;
 				ls.currentMapIndex = newIdx;
 			}
 		} else {
@@ -4295,6 +4333,7 @@ static void LS_Start_f( void ) {
 		}
 
 		Q_strncpyz( ls.prevMapname, currentMap, LS_MAX_MAPNAME );
+		Q_strncpyz( ls.actualMapname, currentMap, LS_MAX_MAPNAME );
 		LS_Save();
 		LS_AutoRecordStart();
 		Com_Printf( "^2LiveSplit: Timer STARTED on '%s'\n", currentMap );
@@ -4786,6 +4825,7 @@ static void LS_ResetCategory_f( void );
 
 #define GHOST_MAX_FRAMES   18000    /* 15 minutes at 20Hz */
 #define GHOST_SAMPLE_MS    50       /* 20Hz                */
+#define GHOST_PUBLISH_MS   8        /* cap cvar bridge updates at ~125Hz */
 #define GHOST_FILE_VERSION 1
 
 typedef struct {
@@ -4812,6 +4852,46 @@ static struct {
 	qboolean     isNewGold;       /* qtrue if playback data is from a gold just set this run */
 	cvar_t       *enableCvar;     /* ls_ghost 0/1 */
 } ls_ghost;
+
+static struct {
+	qboolean initialized;
+	int      visible;
+	int      color;
+	int      lastPublishMs;
+} ls_ghostPublish;
+
+static void LS_GhostSetVisible( int visible ) {
+	if ( !ls_ghostPublish.initialized || ls_ghostPublish.visible != visible ) {
+		Cvar_Set( "ls_ghost_visible", visible ? "1" : "0" );
+		ls_ghostPublish.visible = visible;
+		ls_ghostPublish.initialized = qtrue;
+	}
+	if ( !visible ) {
+		ls_ghostPublish.lastPublishMs = 0;
+	}
+}
+
+static void LS_GhostPublishFrame( float x, float y, float z, float yaw, float speed, int color ) {
+	int now = cls.realtime;
+	qboolean forceColor = ( !ls_ghostPublish.initialized || ls_ghostPublish.color != color );
+
+	LS_GhostSetVisible( 1 );
+
+	if ( ls_ghostPublish.lastPublishMs && !forceColor && now - ls_ghostPublish.lastPublishMs < GHOST_PUBLISH_MS ) {
+		return;
+	}
+
+	Cvar_Set( "ls_ghost_x", va( "%.2f", x ) );
+	Cvar_Set( "ls_ghost_y", va( "%.2f", y ) );
+	Cvar_Set( "ls_ghost_z", va( "%.2f", z ) );
+	Cvar_Set( "ls_ghost_yaw", va( "%.2f", yaw ) );
+	Cvar_Set( "ls_ghost_speed", va( "%.1f", speed ) );
+	if ( forceColor ) {
+		Cvar_Set( "ls_ghost_color", color ? "1" : "0" );
+		ls_ghostPublish.color = color;
+	}
+	ls_ghostPublish.lastPublishMs = now;
+}
 
 /* Build a category-specific ghost file path.
    Fullgame:  ghostruns/fg/d<diff>/<mapname>.ghost  (or _100.ghost for 100%)
@@ -4927,12 +5007,12 @@ static void LS_GhostFrame( void ) {
 	int    mapIGT, curIdx;
 
 	if ( !ls_ghost.enableCvar || !ls_ghost.enableCvar->integer ) {
-		Cvar_Set( "ls_ghost_visible", "0" );
+		LS_GhostSetVisible( 0 );
 		return;
 	}
 
 	if ( !ls.active || ls.currentMapIndex < 0 ) {
-		Cvar_Set( "ls_ghost_visible", "0" );
+		LS_GhostSetVisible( 0 );
 		/* Clear loadedMap so ghost reloads when run re-activates */
 		ls_ghost.loadedMap[0] = '\0';
 		ls_ghost.recCount     = 0;
@@ -4943,8 +5023,8 @@ static void LS_GhostFrame( void ) {
 	}
 
 	curIdx = ls.currentMapIndex;
-	if ( curIdx >= ls.numMaps ) { Cvar_Set( "ls_ghost_visible", "0" ); return; }
-	if ( ls.splits[curIdx].cutscene ) { Cvar_Set( "ls_ghost_visible", "0" ); return; }
+	if ( curIdx >= ls.numMaps ) { LS_GhostSetVisible( 0 ); return; }
+	if ( ls.splits[curIdx].cutscene ) { LS_GhostSetVisible( 0 ); return; }
 
 	mapIGT = ls.splits[curIdx].currentTimeMs;
 
@@ -5045,12 +5125,6 @@ static void LS_GhostFrame( void ) {
 			}
 		}
 
-		Cvar_Set( "ls_ghost_visible", "1" );
-		Cvar_Set( "ls_ghost_x", va( "%f", gx ) );
-		Cvar_Set( "ls_ghost_y", va( "%f", gy ) );
-		Cvar_Set( "ls_ghost_z", va( "%f", gz ) );
-		Cvar_Set( "ls_ghost_yaw", va( "%f", gyaw ) );
-		Cvar_Set( "ls_ghost_speed", va( "%f", speed ) );
 		/* Ghost color: compare ghost's last frame time with best segment time.
 		   Yellow (1) = ghost time ≈ best time (ghost IS the best run).
 		   Blue   (0) = ghost time differs (e.g. LSS has a better BEST from import).
@@ -5062,10 +5136,10 @@ static void LS_GhostFrame( void ) {
 			int mi2 = ls.currentMapIndex;
 			int bestMs2 = ( mi2 >= 0 && mi2 < ls.numMaps ) ? ls.splits[mi2].d[di2].bestTimeMs : 0;
 			int diff2 = ( bestMs2 > ghostLastMs ) ? bestMs2 - ghostLastMs : ghostLastMs - bestMs2;
-			Cvar_Set( "ls_ghost_color", ( bestMs2 > 0 && diff2 <= GHOST_SAMPLE_MS ) ? "1" : "0" );
+			LS_GhostPublishFrame( gx, gy, gz, gyaw, speed, ( bestMs2 > 0 && diff2 <= GHOST_SAMPLE_MS ) ? 1 : 0 );
 		}
 	} else {
-		Cvar_Set( "ls_ghost_visible", "0" );
+		LS_GhostSetVisible( 0 );
 	}
 }
 
@@ -5313,9 +5387,7 @@ static void SV_Refresh( void ) {
 			int pbseg = ls.splits[si].d[di].pbSegmentMs;
 			int att   = ls.splits[si].d[di].totalAttempts;
 			int comp  = ls.splits[si].d[di].totalCompletions;
-			const char *name = ls.splits[si].shortName
-				? ls.splits[si].shortName
-				: ls.splits[si].mapname;
+			const char *name = LS_SplitMenuName( si );
 			char goldBuf[24], pbBuf[24];
 
 			if ( gold > 0 ) LS_FormatTime( gold, goldBuf, sizeof( goldBuf ) );
@@ -5600,19 +5672,19 @@ void SCR_LiveSplitInit( void ) {
 	ls_modeCvar    = Cvar_Get( "ls_mode",      "0",   CVAR_ARCHIVE );
 	ls_missionCvar = Cvar_Get( "ls_mission",   "1",   CVAR_ARCHIVE );
 	ls_mapCvar     = Cvar_Get( "ls_map",       "",    CVAR_ARCHIVE );
-	ls_xCvar       = Cvar_Get( "ls_x",         "8",   CVAR_ARCHIVE );
-	ls_yCvar       = Cvar_Get( "ls_y",         "80",  CVAR_ARCHIVE );
-	ls_wCvar       = Cvar_Get( "ls_w",         "178", CVAR_ARCHIVE );
-	ls_scaleCvar   = Cvar_Get( "ls_scale",     "1.0", CVAR_ARCHIVE );
-	ls_opacityCvar = Cvar_Get( "ls_opacity",   "1.0", CVAR_ARCHIVE );
-	ls_opacityUiCvar = Cvar_Get( "ls_opacity_ui", "0.2", CVAR_ARCHIVE );
-	ls_bgalphaCvar = Cvar_Get( "ls_bgalpha", "0.82", CVAR_ARCHIVE );
+	ls_xCvar       = Cvar_Get( "ls_x",         "6.666843",   CVAR_ARCHIVE );
+	ls_yCvar       = Cvar_Get( "ls_y",         "92.444427",  CVAR_ARCHIVE );
+	ls_wCvar       = Cvar_Get( "ls_w",         "215", CVAR_ARCHIVE );
+	ls_scaleCvar   = Cvar_Get( "ls_scale",     "0.550000", CVAR_ARCHIVE );
+	ls_opacityCvar = Cvar_Get( "ls_opacity",   "0.900000", CVAR_ARCHIVE );
+	ls_opacityUiCvar = Cvar_Get( "ls_opacity_ui", "0.900000", CVAR_ARCHIVE );
+	ls_bgalphaCvar = Cvar_Get( "ls_bgalpha", "0.78", CVAR_ARCHIVE );
 	ls_alignCvar   = Cvar_Get( "ls_align",   "0",    CVAR_ARCHIVE );
 	ls_showheaderCvar = Cvar_Get( "ls_showheader", "1", CVAR_ARCHIVE );
 	ls_showstatsCvar  = Cvar_Get( "ls_showstats",  "1", CVAR_ARCHIVE );
 	ls_showsegCvar    = Cvar_Get( "ls_showseg",    "1", CVAR_ARCHIVE );
 	ls_showrgtCvar    = Cvar_Get( "ls_showrgt",    "1", CVAR_ARCHIVE );
-	ls_maxrowsCvar    = Cvar_Get( "ls_maxrows",    "0", CVAR_ARCHIVE ); /* 0 = auto */
+	ls_maxrowsCvar    = Cvar_Get( "ls_maxrows",    "6", CVAR_ARCHIVE ); /* 0 = auto */
 	ls_showpbCvar     = Cvar_Get( "ls_showpb",     "1", CVAR_ARCHIVE );
 	ls_showbestCvar   = Cvar_Get( "ls_showbest",   "1", CVAR_ARCHIVE );
 	ls_showtimerCvar  = Cvar_Get( "ls_showtimer",  "1", CVAR_ARCHIVE );
@@ -5621,6 +5693,8 @@ void SCR_LiveSplitInit( void ) {
 	ls_showbestdeltasCvar = Cvar_Get( "ls_showbestdeltas", "1", CVAR_ARCHIVE );
 	ls_showattCvar    = Cvar_Get( "ls_showatt",    "1", CVAR_ARCHIVE );
 	ls_drawCvar       = Cvar_Get( "ls_draw",       "1", CVAR_ARCHIVE );
+	Cvar_Get( "ls_split_countdown_lead", "10", CVAR_ARCHIVE );
+	Cvar_Get( "ls_imgui", "1", CVAR_ARCHIVE );
 	ls_compareCvar    = Cvar_Get( "ls_compare",    "0", CVAR_ARCHIVE ); /* 0=PB, 1=Best Segments, 2=Average */
 	ls_timingCvar     = Cvar_Get( "ls_timing",     "0", CVAR_ARCHIVE ); /* 0=Game Time, 1=Real Time */
 	ls_100pctCvar     = Cvar_Get( "ls_100pct",     "0", CVAR_ARCHIVE );
@@ -5629,26 +5703,26 @@ void SCR_LiveSplitInit( void ) {
 	Cvar_Get( "ls_running", "0", 0 );
 
 	/* Color customization */
-	ls_clr_aheadCvar  = Cvar_Get( "ls_clr_ahead",  "",  CVAR_ARCHIVE );
-	ls_clr_behindCvar = Cvar_Get( "ls_clr_behind", "",  CVAR_ARCHIVE );
-	ls_clr_goldCvar   = Cvar_Get( "ls_clr_gold",   "",  CVAR_ARCHIVE );
+	ls_clr_aheadCvar  = Cvar_Get( "ls_clr_ahead",  "72 220 80 1.00",  CVAR_ARCHIVE );
+	ls_clr_behindCvar = Cvar_Get( "ls_clr_behind", "220 72 72 1.00",  CVAR_ARCHIVE );
+	ls_clr_goldCvar   = Cvar_Get( "ls_clr_gold",   "255 220 50 1.00",  CVAR_ARCHIVE );
 	ls_clr_headerCvar = Cvar_Get( "ls_clr_header", "",  CVAR_ARCHIVE );
-	ls_clr_timerCvar  = Cvar_Get( "ls_clr_timer",  "",  CVAR_ARCHIVE );
-	ls_clr_textCvar   = Cvar_Get( "ls_clr_text",   "",  CVAR_ARCHIVE );
-	ls_clr_bgCvar     = Cvar_Get( "ls_clr_bg",     "",  CVAR_ARCHIVE );
-	ls_clr_borderCvar = Cvar_Get( "ls_clr_border", "",  CVAR_ARCHIVE );
+	ls_clr_timerCvar  = Cvar_Get( "ls_clr_timer",  "224 246 214 1.00",  CVAR_ARCHIVE );
+	ls_clr_textCvar   = Cvar_Get( "ls_clr_text",   "214 224 210 0.92",  CVAR_ARCHIVE );
+	ls_clr_bgCvar     = Cvar_Get( "ls_clr_bg",     "10 10 15 0.63",  CVAR_ARCHIVE );
+	ls_clr_borderCvar = Cvar_Get( "ls_clr_border", "29 52 24 0.58",  CVAR_ARCHIVE );
 	ls_clr_mapnameCvar = Cvar_Get( "ls_clr_mapname", "", CVAR_ARCHIVE );
-	ls_clr_currentCvar = Cvar_Get( "ls_clr_current", "", CVAR_ARCHIVE );
-	ls_clr_completedCvar = Cvar_Get( "ls_clr_completed", "", CVAR_ARCHIVE );
-	ls_clr_futureCvar  = Cvar_Get( "ls_clr_future",  "",  CVAR_ARCHIVE );
+	ls_clr_currentCvar = Cvar_Get( "ls_clr_current", "86 210 55 1.00", CVAR_ARCHIVE );
+	ls_clr_completedCvar = Cvar_Get( "ls_clr_completed", "120 130 118 0.62", CVAR_ARCHIVE );
+	ls_clr_futureCvar  = Cvar_Get( "ls_clr_future",  "124 124 124 1.00",  CVAR_ARCHIVE );
 	ls_clr_dimCvar     = Cvar_Get( "ls_clr_dim",     "",  CVAR_ARCHIVE );
 	ls_clr_segtimerCvar = Cvar_Get( "ls_clr_segtimer", "", CVAR_ARCHIVE );
 	ls_clr_pausedCvar  = Cvar_Get( "ls_clr_paused",  "",  CVAR_ARCHIVE );
-	ls_clr_sepCvar     = Cvar_Get( "ls_clr_sep",     "",  CVAR_ARCHIVE );
-	ls_clr_highlightCvar = Cvar_Get( "ls_clr_highlight", "", CVAR_ARCHIVE );
+	ls_clr_sepCvar     = Cvar_Get( "ls_clr_sep",     "22 36 18 0.34",  CVAR_ARCHIVE );
+	ls_clr_highlightCvar = Cvar_Get( "ls_clr_highlight", "13 28 12 0.27", CVAR_ARCHIVE );
 	ls_clr_labelCvar   = Cvar_Get( "ls_clr_label",   "",  CVAR_ARCHIVE );
 
-	ls_text_shadowCvar = Cvar_Get( "ls_text_shadow", "0", CVAR_ARCHIVE );
+	ls_text_shadowCvar = Cvar_Get( "ls_text_shadow", "1", CVAR_ARCHIVE );
 
 	/* External LiveSplit type */
 	ls_typeCvar    = Cvar_Get( "ls_type",    "0",   CVAR_ARCHIVE );
@@ -5661,17 +5735,52 @@ void SCR_LiveSplitInit( void ) {
 
 	/* Standalone IGT timer overlay */
 	ls_igttimerCvar       = Cvar_Get( "ls_igttimer",       "0",     CVAR_ARCHIVE );
-	ls_igttimer_xCvar     = Cvar_Get( "ls_igttimer_x",     "280",   CVAR_ARCHIVE );
-	ls_igttimer_yCvar     = Cvar_Get( "ls_igttimer_y",     "440",   CVAR_ARCHIVE );
+	ls_igttimer_xCvar     = Cvar_Get( "ls_igttimer_x",     "638",   CVAR_ARCHIVE );
+	ls_igttimer_yCvar     = Cvar_Get( "ls_igttimer_y",     "240",   CVAR_ARCHIVE );
 	ls_igttimer_scaleCvar = Cvar_Get( "ls_igttimer_scale", "1.0",   CVAR_ARCHIVE );
+	ls_igttimer_alignCvar = Cvar_Get( "ls_igttimer_align", "2",     CVAR_ARCHIVE );
 	ls_igtsegtimer        = Cvar_Get( "ls_igtsegtimer",   "0",     CVAR_ARCHIVE );
 
 	/* Keystroke overlay position/scale cvars */
-	ks_xCvar       = Cvar_Get( "ks_x",       "0",   CVAR_ARCHIVE );  /* 0 = auto center */
-	ks_yCvar       = Cvar_Get( "ks_y",       "0",   CVAR_ARCHIVE );  /* 0 = auto above statusbar */
-	ks_scaleCvar   = Cvar_Get( "ks_scale",   "1.0", CVAR_ARCHIVE );
+	Cvar_Get( "ks_ingame_only", "1", CVAR_ARCHIVE );
+	ks_xCvar       = Cvar_Get( "ks_x",       "297", CVAR_ARCHIVE );
+	ks_yCvar       = Cvar_Get( "ks_y",       "375", CVAR_ARCHIVE );
+	ks_scaleCvar   = Cvar_Get( "ks_scale",   "0.750000", CVAR_ARCHIVE );
 	ks_opacityCvar = Cvar_Get( "ks_opacity", "1.0", CVAR_ARCHIVE );
-	ks_mouseCvar   = Cvar_Get( "ks_mouse",   "0",   CVAR_ARCHIVE );  /* 0=off, 1=clicks, 2=clicks+dir */
+	ks_mouseCvar   = Cvar_Get( "ks_mouse",   "2",   CVAR_ARCHIVE );  /* 0=off, 1=clicks, 2=clicks+dir */
+	Cvar_Get( "ks_imgui", "1", CVAR_ARCHIVE );
+	Cvar_Get( "ks_layout", "0", CVAR_ARCHIVE );
+	Cvar_Get( "ks_effect", "1", CVAR_ARCHIVE );
+	Cvar_Get( "ks_box_w", "22", CVAR_ARCHIVE );
+	Cvar_Get( "ks_box_h", "18", CVAR_ARCHIVE );
+	Cvar_Get( "ks_gap", "2", CVAR_ARCHIVE );
+	Cvar_Get( "ks_rounding", "0", CVAR_ARCHIVE );
+	Cvar_Get( "ks_border_size", "1", CVAR_ARCHIVE );
+	Cvar_Get( "ks_mouse_grid_size", "92", CVAR_ARCHIVE );
+	Cvar_Get( "ks_mouse_grid_cells", "5", CVAR_ARCHIVE );
+	Cvar_Get( "ks_mouse_grid_cm", "1", CVAR_ARCHIVE );
+	Cvar_Get( "ks_mouse_grid_run_cm", "1", CVAR_ARCHIVE );
+	Cvar_Get( "ks_mouse_grid_total_cm_value", "232.626083", CVAR_ARCHIVE );
+	Cvar_Get( "ks_active_anchor", "0", CVAR_ARCHIVE );
+	Cvar_Get( "ks_active_max", "3", CVAR_ARCHIVE );
+	Cvar_Get( "ks_grid_keys", "0", CVAR_ARCHIVE );
+	Cvar_Get( "ks_grid_keys_dir", "1", CVAR_ARCHIVE );
+	Cvar_Get( "ks_grid_keys_x", "-35", CVAR_ARCHIVE );
+	Cvar_Get( "ks_grid_keys_y", "-15", CVAR_ARCHIVE );
+	Cvar_Get( "ks_grid_keys_font_scale", "0.72", CVAR_ARCHIVE );
+	Cvar_Get( "ks_font_scale", "0.620000", CVAR_ARCHIVE );
+	Cvar_Get( "ks_show_use", "0", CVAR_ARCHIVE );
+	Cvar_Get( "ks_show_reload", "0", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_bg", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_active", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_border", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_active_border", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_text", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_active_text", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_grid_checker", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_grid_cross", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_grid_trail", "", CVAR_ARCHIVE );
+	Cvar_Get( "ks_clr_grid_cm", "", CVAR_ARCHIVE );
 
 	/* Ghost system cvar */
 	ls_ghost.enableCvar = Cvar_Get( "ls_ghost", "1", CVAR_ARCHIVE );
@@ -6402,8 +6511,14 @@ static void LS_Frame( void ) {
 			canAccumulate = qfalse;
 		}
 
-		/* Guard 2b: ESC menu open - pause IGT while UI is active */
-		if ( canAccumulate && ( cls.keyCatchers & KEYCATCH_UI ) ) {
+		/* Guard 2b: ESC menu open - pause IGT while UI is active.
+		   Manual IL start can be invoked while the UI catcher is still set;
+		   allow it to start immediately, then restore normal UI pause rules
+		   once gameplay has a frame with no UI catcher. */
+		if ( ls.manualStartIgnoreUi && !( cls.keyCatchers & KEYCATCH_UI ) ) {
+			ls.manualStartIgnoreUi = qfalse;
+		}
+		if ( canAccumulate && ( cls.keyCatchers & KEYCATCH_UI ) && !ls.manualStartIgnoreUi ) {
 			canAccumulate = qfalse;
 		}
 
@@ -6578,11 +6693,11 @@ static void LS_Frame( void ) {
 				if ( sgMap[0] ) {
 					sgIdx = LS_FindMapIndex( sgMap );
 					if ( sgIdx >= 0 ) {
-						if ( !ls.runFinished && sgIdx < oldIdx ) {
+						if ( !ls.runFinished && sgIdx != oldIdx ) {
 							ls.backtrackPause = qfalse;
 							ls.backtrackTargetIndex = -1;
 							LS_UpdateCurVisRow();
-							Com_Printf( "^3LiveSplit: loaded earlier map '%s' - IGT keeps running on current split\n",
+							Com_Printf( "^3LiveSplit: loaded off-route map '%s' - IGT keeps running on current split\n",
 								ls.splits[sgIdx].displayName ? ls.splits[sgIdx].displayName : ls.splits[sgIdx].mapname );
 						} else if ( sgIdx != ls.currentMapIndex ) {
 							ls.backtrackPause = qfalse;
@@ -6603,7 +6718,7 @@ static void LS_Frame( void ) {
 						/* In IL mode, move the target so the IL
 						   auto-update code doesn't misfire and
 						   restart the timer on this map. */
-						if ( ls.runMode == LS_MODE_IL && !( !ls.runFinished && sgIdx < oldIdx ) ) {
+						if ( ls.runMode == LS_MODE_IL && !( !ls.runFinished && sgIdx != oldIdx ) ) {
 							ls.modeFirstIdx  = sgIdx;
 							ls.modeLastIdx   = sgIdx;
 							ls.modeEndMapIdx = sgIdx;
@@ -7256,30 +7371,18 @@ static void LS_Frame( void ) {
 		Cvar_Set( "sv_spTransition", "0" );
 
 		/* ---- Guard: non-sequential map change during active run ----
-		   If the player goes backwards to an earlier map, keep the split
+		   If the player goes to any non-sequential map, keep the split
 		   pointer on the latest reached stage, but do not pause IGT.
 		   actualMapname is updated to the loaded map so accumulation can
-		   continue after the loading freeze clears.  Forward non-sequential
-		   jumps still move the pointer so practice routing/devmap usage can
-		   continue without resetting the run. */
+		   continue after the loading freeze clears. */
 		if ( ls.active && !ls.runFinished && newIdx >= 0 &&
 			 newIdx != ls.currentMapIndex + 1 ) {
-			if ( newIdx < ls.currentMapIndex ) {
-				preserveActualMapname = qfalse;
-				ls.backtrackPause = qfalse;
-				ls.backtrackTargetIndex = -1;
-				LS_UpdateCurVisRow();
-				Com_Printf( "^3LiveSplit: moved back to '%s' - IGT keeps running on current split\n",
-					ls.splits[newIdx].displayName ? ls.splits[newIdx].displayName : ls.splits[newIdx].mapname );
-			} else {
-				ls.backtrackPause = qfalse;
-				ls.backtrackTargetIndex = -1;
-				ls.currentMapIndex = newIdx;
-				ls.endCutsceneArmed  = qfalse;
-				ls.endCutsceneSnapMs = -1;
-				ls.endCutscenePrevLB = qfalse;
-				LS_UpdateCurVisRow();
-			}
+			preserveActualMapname = qfalse;
+			ls.backtrackPause = qfalse;
+			ls.backtrackTargetIndex = -1;
+			LS_UpdateCurVisRow();
+			Com_Printf( "^3LiveSplit: moved off-route to '%s' - IGT keeps running on current split\n",
+				ls.splits[newIdx].displayName ? ls.splits[newIdx].displayName : ls.splits[newIdx].mapname );
 			/* Keep ls_loading=1 for normal maps.  The client can already be
 			   CA_ACTIVE while the pregame briefing arrow is still waiting, and
 			   clearing here lets a few frames of transition time leak into IGT.
@@ -7331,6 +7434,11 @@ static void LS_Frame( void ) {
 			}
 
 			ls.currentMapIndex = newIdx;
+			Q_strncpyz( ls.prevMapname, currentMap, LS_MAX_MAPNAME );
+			Q_strncpyz( ls.actualMapname, currentMap, LS_MAX_MAPNAME );
+			ls.mapLoadFreeze = qfalse;
+			Cvar_Set( "ls_loading", "0" );
+			ls.manualStartIgnoreUi = qtrue;
 			/* AUTO mode: update IL target to this map */
 			if ( !ls_mapCvar || !ls_mapCvar->string[0] ) {
 				ls.modeFirstIdx  = newIdx;
@@ -7343,8 +7451,9 @@ static void LS_Frame( void ) {
 			LS_UpdateCurVisRow();
 			LS_Save();
 			LS_AutoRecordStart();
-			/* Keep the freeze until playerstart clears ls_loading.  CA_ACTIVE
-			   can be reached before the briefing arrow is clicked. */
+			/* IL starts are single-map attempts: start IGT as soon as the map is
+			   active.  Stale mapLoadFreeze/ls_loading would otherwise keep IGT at
+			   0 until a quickload refreshes actualMapname/loading state. */
 			lsext_recvLen = 0; /* flush stale recv data */
 			LS_ExtSend( "initgametime" );
 			LS_ExtSend( "starttimer" );
@@ -8992,7 +9101,8 @@ static void LS_DrawResetConfirmPopup( void ) {
    ===================================================================== */
 
 static void LS_DrawIGTTimer( void ) {
-	float timerX, timerY, timerScale, charSz;
+	float timerX, timerY, timerScale, charSz, drawX, segX;
+	int   align, timeW;
 	int   igtMs;
 	char  timeBuf[32];
 	vec4_t timerColor = { 1.0f, 1.0f, 1.0f, 0.95f };
@@ -9007,12 +9117,15 @@ static void LS_DrawIGTTimer( void ) {
 		}
 	}
 
-	timerX     = ls_igttimer_xCvar ? ls_igttimer_xCvar->value : 280.0f;
-	timerY     = ls_igttimer_yCvar ? ls_igttimer_yCvar->value : 440.0f;
+	timerX     = ls_igttimer_xCvar ? ls_igttimer_xCvar->value : 638.0f;
+	timerY     = ls_igttimer_yCvar ? ls_igttimer_yCvar->value : 240.0f;
 	timerScale = ls_igttimer_scaleCvar ? ls_igttimer_scaleCvar->value : 1.0f;
+	align      = ls_igttimer_alignCvar ? ls_igttimer_alignCvar->integer : 2;
 
 	if ( timerScale < 0.3f ) timerScale = 0.3f;
 	if ( timerScale > 4.0f ) timerScale = 4.0f;
+	if ( align < 0 ) align = 0;
+	if ( align > 2 ) align = 2;
 
 	charSz = 8.0f * timerScale;
 
@@ -9026,11 +9139,18 @@ static void LS_DrawIGTTimer( void ) {
 	}
 
 	LS_FormatTime( igtMs, timeBuf, sizeof( timeBuf ) );
+	timeW = (int)strlen( timeBuf ) * (int)charSz;
+	drawX = timerX;
+	if ( align == 1 ) {
+		drawX -= timeW * 0.5f;
+	} else if ( align == 2 ) {
+		drawX -= timeW;
+	}
 
 	/* Shadow */
-	SCR_DrawStringExt( (int)( timerX + 1 ), (int)( timerY + 1 ), (int)charSz, timeBuf, shadowColor, qtrue );
+	SCR_DrawStringExt( (int)( drawX + 1 ), (int)( timerY + 1 ), (int)charSz, timeBuf, shadowColor, qtrue );
 	/* Timer text */
-	SCR_DrawStringExt( (int)timerX, (int)timerY, (int)charSz, timeBuf, timerColor, qtrue );
+	SCR_DrawStringExt( (int)drawX, (int)timerY, (int)charSz, timeBuf, timerColor, qtrue );
 
 	/* ---- Segment time (smaller, below main timer) ---- */
 	if ( ls_igtsegtimer && ls_igtsegtimer->integer ) {
@@ -9058,8 +9178,14 @@ static void LS_DrawIGTTimer( void ) {
 			Com_sprintf( segBuf, sizeof( segBuf ), "seg %s", tmpBuf );
 		}
 
-		SCR_DrawStringExt( (int)( timerX + 1 ), (int)( segY + 1 ), (int)segSz, segBuf, segShadow, qtrue );
-		SCR_DrawStringExt( (int)timerX, (int)segY, (int)segSz, segBuf, segColor, qtrue );
+		segX = timerX;
+		if ( align == 1 ) {
+			segX -= (float)( (int)strlen( segBuf ) * (int)segSz ) * 0.5f;
+		} else if ( align == 2 ) {
+			segX -= (float)( (int)strlen( segBuf ) * (int)segSz );
+		}
+		SCR_DrawStringExt( (int)( segX + 1 ), (int)( segY + 1 ), (int)segSz, segBuf, segShadow, qtrue );
+		SCR_DrawStringExt( (int)segX, (int)segY, (int)segSz, segBuf, segColor, qtrue );
 	}
 }
 
@@ -10239,5 +10365,6 @@ void SCR_LiveSplitDraw( void ) {
 		return;
 	}
 
-	LS_Draw();
+	/* The ImGui LiveSplit panel is now the only in-game panel renderer. */
+	return;
 }
