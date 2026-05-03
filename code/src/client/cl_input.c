@@ -646,7 +646,9 @@ usercmd_t CL_CreateCmd( void ) {
 		cl.joystickAxis[AXIS_UP] = 0;
 		cl.joystickAxis[AXIS_YAW] = 0;
 		cl.joystickAxis[AXIS_PITCH] = 0;
-		Cvar_Set( "cl_paused", "1" );
+		if ( !cl_paused || !cl_paused->integer ) {
+			Cvar_Set( "cl_paused", "1" );
+		}
 		Cvar_Set( "ui_speedrun_imgui_restore_pause", "1" );
 		CL_FinishMove( &cmd );
 		return cmd;

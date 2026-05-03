@@ -1001,6 +1001,7 @@ CL_InitCGame
 Should only by called by CL_StartHunkUsers
 ====================
 */
+
 void CL_InitCGame( void ) {
 	const char          *info;
 	const char          *mapname;
@@ -1018,24 +1019,15 @@ void CL_InitCGame( void ) {
 	Com_sprintf( cl.mapname, sizeof( cl.mapname ), "maps/%s.bsp", mapname );
 
 	// load the dll or bytecode
-	if ( cl_connectedToPureServer != 0 ) {
+	interpret = Cvar_VariableValue("vm_cgame");
+	if(cl_connectedToPureServer)
+	{
 		// if sv_pure is set we only allow qvms to be loaded
-		interpret = VMI_COMPILED;
-	} else {
-		interpret = Cvar_VariableValue( "vm_cgame" );
+		if(interpret != VMI_COMPILED && interpret != VMI_BYTECODE)
+			interpret = VMI_COMPILED;
 	}
+
 	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
-//	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, Cvar_VariableValue( "vm_cgame" ) );
-	if ( !cgvm ) {
-		// Retry once after a short delay.
-		// On rapid map transitions (e.g. cutscene skip), the previous
-		// FreeLibrary may not have fully released the DLL by the time
-		// LoadLibrary is called again.  A brief pause lets Windows
-		// finish the unload before we retry.
-		Com_Printf( "^3WARNING: VM_Create on cgame failed, retrying...\n" );
-		Sys_Sleep( 100 );
-		cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
-	}
 	if ( !cgvm ) {
 		Com_Error( ERR_DROP, "VM_Create on cgame failed" );
 	}
@@ -1045,7 +1037,10 @@ void CL_InitCGame( void ) {
 	// use the lastExecutedServerCommand instead of the serverCommandSequence
 	// otherwise server commands sent just before a gamestate are dropped
 	VM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
-//	VM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.serverCommandSequence );
+
+	// reset any CVAR_CHEAT cvars registered by cgame
+	if ( !clc.demoplaying )
+		Cvar_SetCheatState();
 
 	// we will send a usercmd this frame, which
 	// will cause the server to send us the first snapshot
@@ -1056,32 +1051,102 @@ void CL_InitCGame( void ) {
 	Com_Printf( "CL_InitCGame: %5.2f seconds\n", ( t2 - t1 ) / 1000.0 );
 
 	// have the renderer touch all its images, so they are present
-	// on the card even if the driver does deferred loading.
-	// During demo playback skip this - it walks every image on the
-	// GPU just to show loading screen.  The first rendered frame
-	// will page them in anyway.
-	if ( !clc.demoplaying ) {
-		re.EndRegistration();
-	}
+	// on the card even if the driver does deferred loading
+	re.EndRegistration();
 
-	// make sure everything is paged in.
-	// During demo playback skip - touching every 256th byte of the
-	// entire hunk just to force page faults is pure overhead when
-	// the user is waiting for the next map to start playing.
-	if ( !Sys_LowPhysicalMemory() && !clc.demoplaying ) {
+	// make sure everything is paged in
+	if ( !Sys_LowPhysicalMemory() ) {
 		Com_TouchMemory();
 	}
 
 	// clear anything that got printed
 	Con_ClearNotify();
 
-	// Ridah, update the memory usage file.
-	// Skip during demo playback - this reads, parses and rewrites
-	// hunkusage.dat on every map load which is needless disk I/O.
-	if ( !clc.demoplaying ) {
-		CL_UpdateLevelHunkUsage();
-	}
+	// Ridah, update the memory usage file
+	CL_UpdateLevelHunkUsage();
 }
+
+// void CL_InitCGame( void ) {
+// 	const char          *info;
+// 	const char          *mapname;
+// 	int t1, t2;
+// 	vmInterpret_t interpret;
+
+// 	t1 = Sys_Milliseconds();
+
+// 	// put away the console
+// 	Con_Close();
+
+// 	// find the current mapname
+// 	info = cl.gameState.stringData + cl.gameState.stringOffsets[ CS_SERVERINFO ];
+// 	mapname = Info_ValueForKey( info, "mapname" );
+// 	Com_sprintf( cl.mapname, sizeof( cl.mapname ), "maps/%s.bsp", mapname );
+
+// 	// load the dll or bytecode
+// 	if ( cl_connectedToPureServer != 0 ) {
+// 		// if sv_pure is set we only allow qvms to be loaded
+// 		interpret = VMI_COMPILED;
+// 	} else {
+// 		interpret = Cvar_VariableValue( "vm_cgame" );
+// 	}
+// 	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
+// //	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, Cvar_VariableValue( "vm_cgame" ) );
+// 	if ( !cgvm ) {
+// 		// Retry once after a short delay.
+// 		// On rapid map transitions (e.g. cutscene skip), the previous
+// 		// FreeLibrary may not have fully released the DLL by the time
+// 		// LoadLibrary is called again.  A brief pause lets Windows
+// 		// finish the unload before we retry.
+// 		Com_Printf( "^3WARNING: VM_Create on cgame failed, retrying...\n" );
+// 		Sys_Sleep( 100 );
+// 		cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
+// 	}
+// 	if ( !cgvm ) {
+// 		Com_Error( ERR_DROP, "VM_Create on cgame failed" );
+// 	}
+// 	cls.state = CA_LOADING;
+
+// 	// init for this gamestate
+// 	// use the lastExecutedServerCommand instead of the serverCommandSequence
+// 	// otherwise server commands sent just before a gamestate are dropped
+// 	VM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
+// //	VM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.serverCommandSequence );
+
+// 	// we will send a usercmd this frame, which
+// 	// will cause the server to send us the first snapshot
+// 	cls.state = CA_PRIMED;
+
+// 	t2 = Sys_Milliseconds();
+
+// 	Com_Printf( "CL_InitCGame: %5.2f seconds\n", ( t2 - t1 ) / 1000.0 );
+
+// 	// have the renderer touch all its images, so they are present
+// 	// on the card even if the driver does deferred loading.
+// 	// During demo playback skip this - it walks every image on the
+// 	// GPU just to show loading screen.  The first rendered frame
+// 	// will page them in anyway.
+// 	if ( !clc.demoplaying ) {
+// 		re.EndRegistration();
+// 	}
+
+// 	// make sure everything is paged in.
+// 	// During demo playback skip - touching every 256th byte of the
+// 	// entire hunk just to force page faults is pure overhead when
+// 	// the user is waiting for the next map to start playing.
+// 	if ( !Sys_LowPhysicalMemory() && !clc.demoplaying ) {
+// 		Com_TouchMemory();
+// 	}
+
+// 	// clear anything that got printed
+// 	Con_ClearNotify();
+
+// 	// Ridah, update the memory usage file.
+// 	// Skip during demo playback - this reads, parses and rewrites
+// 	// hunkusage.dat on every map load which is needless disk I/O.
+// 	if ( !clc.demoplaying ) {
+// 		CL_UpdateLevelHunkUsage();
+// 	}
+// }
 
 
 /*

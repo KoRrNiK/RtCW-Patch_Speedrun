@@ -168,6 +168,8 @@ demo through a file.
 
 typedef struct {
 
+	connstate_t	state;
+
 	int clientNum;
 	int lastPacketSentTime;                 // for retransmits during connection
 	int lastPacketTime;                     // for timeouts
