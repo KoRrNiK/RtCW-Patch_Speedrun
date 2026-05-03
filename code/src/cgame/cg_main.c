@@ -133,6 +133,14 @@ vmCvar_t cg_velocity_mode;
 vmCvar_t cg_velocity_x;
 vmCvar_t cg_velocity_y;
 vmCvar_t cg_velocity_scale;
+vmCvar_t cg_velocity_align;
+vmCvar_t cg_velocity_colorfade;
+vmCvar_t cg_velocity_peak;
+vmCvar_t cg_velocity_peak_reset;
+
+vmCvar_t cg_explosiveTimers;
+vmCvar_t cg_explosiveTimersHeld;
+vmCvar_t cg_explosiveTimersWorld;
 
 vmCvar_t cg_drawSnapshot;
 vmCvar_t cg_draw3dIcons;
@@ -174,6 +182,11 @@ vmCvar_t cg_viewsize;
 vmCvar_t cg_letterbox;
 vmCvar_t cg_drawGun;
 vmCvar_t cg_drawFPGun;
+vmCvar_t cg_weapon_color_mode;
+vmCvar_t cg_weapon_color;
+vmCvar_t cg_weapon_color_opacity;
+vmCvar_t cg_weapon_xray_strength;
+vmCvar_t cg_weapon_rainbow_speed;
 vmCvar_t cg_drawGamemodels;
 vmCvar_t cg_cursorHints;
 vmCvar_t cg_hintFadeTime;       //----(SA)	added
@@ -296,6 +309,7 @@ vmCvar_t cg_sightRange;
 vmCvar_t cg_pathLength;
 vmCvar_t cg_drawPos;
 vmCvar_t cg_drawJumpStats;
+vmCvar_t cg_strafeGuide;
 
 vmCvar_t cg_notebook;
 vmCvar_t cg_notebookpages;          // bitflags for the currently accessable pages.  if they wanna cheat, let 'em.  Most won't, or will wait 'til they actually play it.
@@ -362,6 +376,11 @@ cvarTable_t cvarTable[] = {
 	{ &cg_ignore, "cg_ignore", "0", 0 },  // used for debugging
 	{ &cg_autoswitch, "cg_autoswitch", "2", CVAR_ARCHIVE },
 	{ &cg_drawGun, "cg_drawGun", "1", CVAR_ARCHIVE },
+	{ &cg_weapon_color_mode, "cg_weapon_color_mode", "0", CVAR_ARCHIVE },
+	{ &cg_weapon_color, "cg_weapon_color", "26 191 255 1.00", CVAR_ARCHIVE },
+	{ &cg_weapon_color_opacity, "cg_weapon_color_opacity", "0.35", CVAR_ARCHIVE },
+	{ &cg_weapon_xray_strength, "cg_weapon_xray_strength", "0.65", CVAR_ARCHIVE },
+	{ &cg_weapon_rainbow_speed, "cg_weapon_rainbow_speed", "1.0", CVAR_ARCHIVE },
 	{ &cg_drawGamemodels, "cg_drawGamemodels", "1", CVAR_CHEAT },
 	{ &cg_drawFPGun, "cg_drawFPGun", "1", CVAR_ARCHIVE },
 	{ &cg_gun_frame, "cg_gun_frame", "0", CVAR_TEMP },
@@ -400,13 +419,20 @@ cvarTable_t cvarTable[] = {
 	{ &cg_fpsY, "cg_fpsY", "0", CVAR_ARCHIVE  },
 	{ &cg_fpsAlign, "cg_fpsAlign", "0", CVAR_ARCHIVE  },
 	
-	{ &cg_drawVelocity, "cg_drawVelocity", "0", CVAR_ARCHIVE  },
+	{ &cg_drawVelocity, "cg_drawVelocity", "1", CVAR_ARCHIVE  },
 	{ &cg_velocity_type, "cg_velocity_type", "0", CVAR_ARCHIVE  },
-	{ &cg_velocity_size, "cg_velocity_size", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_size, "cg_velocity_size", "2", CVAR_ARCHIVE  },
 	{ &cg_velocity_mode, "cg_velocity_mode", "0", CVAR_ARCHIVE  },
-	{ &cg_velocity_x, "cg_velocity_x", "0", CVAR_ARCHIVE  },
-	{ &cg_velocity_y, "cg_velocity_y", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_x, "cg_velocity_x", "320", CVAR_ARCHIVE  },
+	{ &cg_velocity_y, "cg_velocity_y", "457", CVAR_ARCHIVE  },
 	{ &cg_velocity_scale, "cg_velocity_scale", "1.0", CVAR_ARCHIVE  },
+	{ &cg_velocity_align, "cg_velocity_align", "1", CVAR_ARCHIVE  },
+	{ &cg_velocity_colorfade, "cg_velocity_colorfade", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_peak, "cg_velocity_peak", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_peak_reset, "cg_velocity_peak_reset", "8", CVAR_ARCHIVE  },
+	{ &cg_explosiveTimers, "cg_explosiveTimers", "0", CVAR_ARCHIVE  },
+	{ &cg_explosiveTimersHeld, "cg_explosiveTimersHeld", "1", CVAR_ARCHIVE  },
+	{ &cg_explosiveTimersWorld, "cg_explosiveTimersWorld", "1", CVAR_ARCHIVE  },
 	
 	{ &cg_drawSnapshot, "cg_drawSnapshot", "0", CVAR_ARCHIVE  },
 	{ &cg_draw3dIcons, "cg_draw3dIcons", "1", CVAR_ARCHIVE  },
@@ -507,7 +533,7 @@ cvarTable_t cvarTable[] = {
 	// Bunny hop cvars
 	{ &bh_movement, "bh_movement", "0", CVAR_ARCHIVE },
 	{ &bh_autojump, "bh_autojump", "0", CVAR_ARCHIVE },
-	{ &cg_drawKeys, "cg_drawKeys", "0", CVAR_ARCHIVE },
+	{ &cg_drawKeys, "cg_drawKeys", "1", CVAR_ARCHIVE },
 	{ &ks_mouse, "ks_mouse", "0", CVAR_ARCHIVE },
 	{ &cg_crosshairType, "cg_crosshairType", "0", CVAR_ARCHIVE },
 	{ &cg_crosshairColorR, "cg_crosshairColorR", "1.0", CVAR_ARCHIVE },
@@ -531,6 +557,7 @@ cvarTable_t cvarTable[] = {
 	{ &cg_pathLength, "cg_pathLength", "64", CVAR_ARCHIVE },
 	{ &cg_drawPos, "cg_drawPos", "0", CVAR_ARCHIVE },
 	{ &cg_drawJumpStats, "cg_drawJumpStats", "0", CVAR_ARCHIVE },
+	{ &cg_strafeGuide, "cg_strafeGuide", "0", CVAR_ARCHIVE },
 
 	{ &cg_smallFont, "ui_smallFont", "0.25", CVAR_ARCHIVE},
 	{ &cg_bigFont, "ui_bigFont", "0.4", CVAR_ARCHIVE},

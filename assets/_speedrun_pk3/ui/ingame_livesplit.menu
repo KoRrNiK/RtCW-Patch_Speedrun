@@ -2213,9 +2213,24 @@ menuDef {
 		name lsHud
 		group grpLivesplit
 		type ITEM_TYPE_YESNO
+		text "Strafe Guide:"
+		cvar "cg_strafeGuide"
+		rect 20 268 390 14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 150
+		textaligny 11
+		textscale .22
+		forecolor .85 .88 .80 .90
+		visible 0
+	}
+
+	itemDef {
+		name lsHud
+		group grpLivesplit
+		type ITEM_TYPE_YESNO
 		text "Show FPS:"
 		cvar "cg_drawfps"
-		rect 20 268 390 14
+		rect 20 286 390 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 150
 		textaligny 11
@@ -2230,7 +2245,7 @@ menuDef {
 		type ITEM_TYPE_YESNO
 		text "Show Timer:"
 		cvar "cg_drawTimer"
-		rect 20 286 390 14
+		rect 20 304 390 14
 		textalign ITEM_ALIGN_RIGHT
 		textalignx 150
 		textaligny 11

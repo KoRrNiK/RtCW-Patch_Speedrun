@@ -131,38 +131,62 @@ so that autobhop bounces (land+jump within one server frame) are caught.
 ===========================================================================
 */
 
-#define JUMP_DISPLAY_TIME   3000    /* ms to show last jump stats */
-#define JUMP_FADE_TIME      800     /* ms fade-out at end */
-#define JUMP_HUD_CW         4
-#define JUMP_HUD_CH         6
-#define JUMP_HUD_LINE       (JUMP_HUD_CH + 1)
-#define JUMP_HUD_PAD_Y      3
-#define JUMP_HUD_GAP        6       /* gap above keystrokes/movebar */
-#define JUMP_HUD_PANEL_W    110
+#define JUMP_DISPLAY_TIME   3500    /* ms to show last jump stats */
+#define JUMP_FADE_TIME      700     /* ms fade-out at end */
+#define JUMP_HUD_CW         5
+#define JUMP_HUD_CH         8
+#define JUMP_HUD_LINE       (JUMP_HUD_CH + 2)
+#define JUMP_HUD_PAD_X      7
+#define JUMP_HUD_PAD_Y      5
+#define JUMP_HUD_GAP        7       /* gap above keystrokes/movebar */
+#define JUMP_HUD_PANEL_W    154
+
+#define MOVEBAR_W           JUMP_HUD_PANEL_W
+#define MOVEBAR_H           6
+#define TURNBAR_H           5
+#define MOVEBAR_GAP         3
+#define MOVEBAR_GAIN_THRESH 3.0f
+#define STRAFEGUIDE_STACK_H 30      /* text + turn bar above movement bar */
 
 #define BHOP_WINDOW         280     /* ms grace period to chain jumps */
 #define BOUNCE_VEL_DOWN     -40.0f  /* Z vel threshold: was falling */
 #define BOUNCE_VEL_UP       180.0f  /* Z vel threshold: now rising (jump ~270) */
+
+static int CG_MovementOverlayTopY( void ) {
+	int keysBaseY = 452 - 10 - ( 18 + 2 ) * 3;
+	int barY = keysBaseY - MOVEBAR_GAP - MOVEBAR_H;
+	if ( cg_strafeGuide.integer ) {
+		return barY - STRAFEGUIDE_STACK_H;
+	}
+	return barY - 1;
+}
 
 /* helper: centered text */
 static void JumpHUD_CenterText( int y, const char *text, vec4_t color ) {
 	int w = strlen( text ) * JUMP_HUD_CW;
 	int x = ( SCREEN_WIDTH - w ) / 2;
 	CG_DrawStringExt( x, y, text, color, qtrue, qtrue,
-		JUMP_HUD_CW, JUMP_HUD_CH, 0, ALIGN_STRETCH );
+		JUMP_HUD_CW, JUMP_HUD_CH, 0, ALIGN_CENTER );
 }
 
 /* helper: left + right aligned pair on same line within panel */
 static void JumpHUD_LabelValue( int panelX, int y, const char *label,
 								const char *value, vec4_t lc, vec4_t vc ) {
-	CG_DrawStringExt( panelX + 2, y, label, lc, qtrue, qtrue,
-		JUMP_HUD_CW, JUMP_HUD_CH, 0, ALIGN_STRETCH );
+	CG_DrawStringExt( panelX + JUMP_HUD_PAD_X, y, label, lc, qtrue, qtrue,
+		JUMP_HUD_CW, JUMP_HUD_CH, 0, ALIGN_CENTER );
 	{
 		int vw = strlen( value ) * JUMP_HUD_CW;
-		int vx = panelX + JUMP_HUD_PANEL_W - 2 - vw;
+		int vx = panelX + JUMP_HUD_PANEL_W - JUMP_HUD_PAD_X - vw;
 		CG_DrawStringExt( vx, y, value, vc, qtrue, qtrue,
-			JUMP_HUD_CW, JUMP_HUD_CH, 0, ALIGN_STRETCH );
+			JUMP_HUD_CW, JUMP_HUD_CH, 0, ALIGN_CENTER );
 	}
+}
+
+static void JumpHUD_DrawMiniBar( int x, int y, int w, int h, float frac, vec4_t bg, vec4_t fill ) {
+	if ( frac < 0.0f ) frac = 0.0f;
+	if ( frac > 1.0f ) frac = 1.0f;
+	CG_FillRect( x, y, w, h, bg, ALIGN_CENTER );
+	CG_FillRect( x, y, w * frac, h, fill, ALIGN_CENTER );
 }
 
 /*
@@ -177,7 +201,7 @@ void CG_DrawJumpStats( void ) {
 	int elapsed, numLines;
 	float alpha, syncPct, speedGain;
 	int keysBaseY, panelH, panelX, panelTop, curY;
-	vec4_t bg, title, label, value, good, bad, accent;
+	vec4_t bg, bg2, title, label, value, good, warn, bad, accent, dim;
 
 	if ( !cg_drawJumpStats.integer ) {
 		return;
@@ -198,9 +222,8 @@ void CG_DrawJumpStats( void ) {
 		alpha = 1.0f;
 	}
 
-	/* layout */
-	keysBaseY = 452 - 10 - ( 18 + 2 ) * 3;   /* keystroke top */
-	keysBaseY -= ( 4 + 3 + 2 );               /* skip over movement bar + border + gap */
+	/* layout: automatically moves up when the strafe guide stack is visible */
+	keysBaseY = CG_MovementOverlayTopY();
 
 	if ( bh_movement.integer ) {
 		numLines = 6;  /* HL1 mode: title, spd, gain, sync, chain, dist */
@@ -208,22 +231,27 @@ void CG_DrawJumpStats( void ) {
 		numLines = 6;  /* RtCW mode: title, h/d, spd, max/air, sync, bhop */
 	}
 
-	panelH   = JUMP_HUD_PAD_Y * 2 + numLines * JUMP_HUD_LINE;
+	panelH   = JUMP_HUD_PAD_Y * 2 + numLines * JUMP_HUD_LINE + 5;
 	panelX   = ( SCREEN_WIDTH - JUMP_HUD_PANEL_W ) / 2;
 	panelTop = keysBaseY - JUMP_HUD_GAP - panelH;
 	curY     = panelTop + JUMP_HUD_PAD_Y;
 
 	/* colors (all alpha-adjusted) */
-	bg[0] = 0.0f;  bg[1] = 0.0f;  bg[2] = 0.0f;  bg[3] = 0.5f * alpha;
+	bg[0] = 0.02f;  bg[1] = 0.025f; bg[2] = 0.02f;  bg[3] = 0.68f * alpha;
+	bg2[0] = 0.10f; bg2[1] = 0.16f;  bg2[2] = 0.08f;  bg2[3] = 0.35f * alpha;
 	title[0] = 1.0f;  title[1] = 0.85f;  title[2] = 0.15f;  title[3] = alpha;
 	label[0] = 0.6f;  label[1] = 0.7f;   label[2] = 0.8f;   label[3] = alpha * 0.85f;
 	value[0] = 1.0f;  value[1] = 1.0f;   value[2] = 1.0f;   value[3] = alpha * 0.95f;
 	good[0] = 0.2f;   good[1] = 1.0f;    good[2] = 0.2f;    good[3] = alpha * 0.95f;
+	warn[0] = 1.0f;   warn[1] = 0.65f;    warn[2] = 0.15f;   warn[3] = alpha * 0.95f;
 	bad[0] = 1.0f;    bad[1] = 0.25f;     bad[2] = 0.15f;    bad[3] = alpha * 0.95f;
 	accent[0] = 1.0f;  accent[1] = 0.55f;  accent[2] = 0.0f;  accent[3] = alpha;
+	dim[0] = 0.35f;   dim[1] = 0.38f;      dim[2] = 0.35f;    dim[3] = alpha * 0.42f;
 
 	/* background */
-	CG_FillRect( panelX, panelTop, JUMP_HUD_PANEL_W, panelH, bg, ALIGN_STRETCH );
+	CG_FillRect( panelX, panelTop, JUMP_HUD_PANEL_W, panelH, bg, ALIGN_CENTER );
+	CG_FillRect( panelX, panelTop, JUMP_HUD_PANEL_W, 13, bg2, ALIGN_CENTER );
+	CG_FillRect( panelX, panelTop, 2, panelH, accent, ALIGN_CENTER );
 
 	if ( bh_movement.integer ) {
 		/* ================ HL1 BHOP MODE ================ */
@@ -259,8 +287,11 @@ void CG_DrawJumpStats( void ) {
 			( (float)cg.lastJumpSyncFrames / cg.lastJumpAirFrames ) * 100.0f : 0.0f;
 		Com_sprintf( buf, sizeof( buf ), "%.0f%%", syncPct );
 		JumpHUD_LabelValue( panelX, curY, "SYNC", buf, label,
-			syncPct >= 70.0f ? good : ( syncPct >= 40.0f ? value : bad ) );
+			syncPct >= 75.0f ? good : ( syncPct >= 45.0f ? warn : bad ) );
 		curY += JUMP_HUD_LINE;
+		JumpHUD_DrawMiniBar( panelX + JUMP_HUD_PAD_X, curY - 2, JUMP_HUD_PANEL_W - JUMP_HUD_PAD_X * 2, 3,
+			syncPct / 100.0f, dim, syncPct >= 75.0f ? good : ( syncPct >= 45.0f ? warn : bad ) );
+		curY += 4;
 
 		/* line 5: distance this bounce */
 		Com_sprintf( buf, sizeof( buf ), "%.0fu", cg.lastJumpDist );
@@ -324,8 +355,11 @@ void CG_DrawJumpStats( void ) {
 		Com_sprintf( buf, sizeof( buf ), "SYNC:%.0f%%  STR:%d",
 			syncPct, cg.lastJumpStrafeCount );
 		JumpHUD_CenterText( curY, buf,
-			syncPct >= 70.0f ? good : ( syncPct >= 40.0f ? label : bad ) );
+			syncPct >= 75.0f ? good : ( syncPct >= 45.0f ? warn : bad ) );
 		curY += JUMP_HUD_LINE;
+		JumpHUD_DrawMiniBar( panelX + JUMP_HUD_PAD_X, curY - 2, JUMP_HUD_PANEL_W - JUMP_HUD_PAD_X * 2, 3,
+			syncPct / 100.0f, dim, syncPct >= 75.0f ? good : ( syncPct >= 45.0f ? warn : bad ) );
+		curY += 4;
 
 		/* line 6: bhop chain info / strafes */
 		if ( cg.bhopChain >= 2 ) {
@@ -426,6 +460,94 @@ static void Jump_BeginTakeoff( float xySpeed ) {
 	}
 }
 
+static int strafeGuideDir;
+static int strafeGuideInput;
+static int strafeGuideGood;
+static float strafeGuideYawDelta;
+static float strafeGuideAimOffset;
+static float strafeGuideTurnRate;
+static float strafeGuideIdealTurnRate;
+static qboolean strafeGuideAimValid;
+static qboolean strafeGuideSmoothValid;
+static float strafeGuidePrevYaw;
+static qboolean strafeGuidePrevYawValid;
+
+static void CG_UpdateStrafeGuide( const usercmd_t *cmd, float xySpeed ) {
+	float curYaw, yawDelta, absYaw, yawRate, idealRate, turnError, smoothStep, rawOffset;
+	int inputDir = 0;
+
+	if ( !cg_strafeGuide.integer ) {
+		strafeGuideDir = 0;
+		strafeGuideInput = 0;
+		strafeGuideGood = 0;
+		strafeGuideYawDelta = 0.0f;
+		strafeGuideAimOffset = 0.0f;
+		strafeGuideTurnRate = 0.0f;
+		strafeGuideIdealTurnRate = 0.0f;
+		strafeGuideAimValid = qfalse;
+		strafeGuideSmoothValid = qfalse;
+		strafeGuidePrevYawValid = qfalse;
+		return;
+	}
+
+	curYaw = cg.predictedPlayerState.viewangles[YAW];
+	if ( !strafeGuidePrevYawValid ) {
+		strafeGuidePrevYaw = curYaw;
+		strafeGuidePrevYawValid = qtrue;
+	}
+	yawDelta = curYaw - strafeGuidePrevYaw;
+	while ( yawDelta > 180.0f ) yawDelta -= 360.0f;
+	while ( yawDelta < -180.0f ) yawDelta += 360.0f;
+	strafeGuidePrevYaw = curYaw;
+
+	if ( cmd->rightmove > 0 ) inputDir = 1;
+	else if ( cmd->rightmove < 0 ) inputDir = -1;
+
+	/* Matches existing sync logic: turning right wants A, turning left wants D. */
+	if ( yawDelta > 0.12f ) strafeGuideDir = -1;
+	else if ( yawDelta < -0.12f ) strafeGuideDir = 1;
+	else if ( inputDir ) strafeGuideDir = inputDir;
+	else strafeGuideDir = 0;
+
+	strafeGuideInput = inputDir;
+	strafeGuideYawDelta = yawDelta;
+	strafeGuideGood = ( inputDir != 0 && inputDir == strafeGuideDir && xySpeed > 80.0f ) ? 1 : 0;
+
+	absYaw = fabs( yawDelta );
+	yawRate = absYaw * 1000.0f / (float)( cg.frametime > 0 ? cg.frametime : 1 );
+
+	/* Stable degrees/second target; higher speed wants a smaller turn rate. */
+	idealRate = ( 480.0f / ( xySpeed + 160.0f ) ) * 125.0f;
+	if ( idealRate < 35.0f ) idealRate = 35.0f;
+	if ( idealRate > 260.0f ) idealRate = 260.0f;
+
+	smoothStep = (float)cg.frametime / 180.0f;
+	if ( smoothStep < 0.08f ) smoothStep = 0.08f;
+	if ( smoothStep > 0.35f ) smoothStep = 0.35f;
+
+	if ( xySpeed > 80.0f && strafeGuideDir != 0 ) {
+		turnError = ( yawRate - idealRate ) / idealRate;
+		if ( turnError < -1.0f ) turnError = -1.0f;
+		if ( turnError >  1.0f ) turnError =  1.0f;
+		rawOffset = turnError;
+		strafeGuideAimValid = qtrue;
+	} else {
+		rawOffset = 0.0f;
+		strafeGuideAimValid = qfalse;
+	}
+
+	if ( !strafeGuideSmoothValid ) {
+		strafeGuideAimOffset = rawOffset;
+		strafeGuideTurnRate = yawRate;
+		strafeGuideIdealTurnRate = idealRate;
+		strafeGuideSmoothValid = qtrue;
+	} else {
+		strafeGuideAimOffset += ( rawOffset - strafeGuideAimOffset ) * smoothStep;
+		strafeGuideTurnRate += ( yawRate - strafeGuideTurnRate ) * smoothStep;
+		strafeGuideIdealTurnRate += ( idealRate - strafeGuideIdealTurnRate ) * smoothStep;
+	}
+}
+
 
 /*
 ==================
@@ -448,7 +570,7 @@ void CG_UpdateJumpStats( void ) {
 	usercmd_t cmd;
 	int cmdNum;
 
-	if ( !cg_drawJumpStats.integer ) {
+	if ( !cg_drawJumpStats.integer && !cg_strafeGuide.integer ) {
 		return;
 	}
 
@@ -463,6 +585,10 @@ void CG_UpdateJumpStats( void ) {
 	/* get current input */
 	cmdNum = trap_GetCurrentCmdNumber();
 	trap_GetUserCmd( cmdNum, &cmd );
+	CG_UpdateStrafeGuide( &cmd, xySpeed );
+	if ( !cg_drawJumpStats.integer ) {
+		return;
+	}
 
 	/* --- On ground: check bhop chain expiry --- */
 	if ( !cg.jumpActive && cg.bhopChain > 0 &&
@@ -571,17 +697,11 @@ Movement Quality Bar
 ===========================================================================
 */
 
-#define MOVEBAR_W           JUMP_HUD_PANEL_W
-#define MOVEBAR_H           4
-#define MOVEBAR_GAP         3
-#define MOVEBAR_SEG_W       (MOVEBAR_W / 20)
-#define MOVEBAR_GAIN_THRESH 3.0f
-
 void CG_UpdateMovementBar( void ) {
 	float xySpeed, delta, quality;
 	vec3_t hvel;
 
-	if ( !cg_drawJumpStats.integer ) {
+	if ( !cg_drawJumpStats.integer && !cg_strafeGuide.integer ) {
 		return;
 	}
 
@@ -589,6 +709,12 @@ void CG_UpdateMovementBar( void ) {
 	hvel[1] = cg.predictedPlayerState.velocity[1];
 	hvel[2] = 0;
 	xySpeed = VectorLength( hvel );
+
+	if ( cg.time < cg.moveBarLastTime || cg.time - cg.moveBarLastTime > 1000 ) {
+		cg.moveBarCount = 0;
+		cg.moveBarHead = 0;
+		cg.moveBarLastTime = 0;
+	}
 
 	if ( cg.moveBarLastTime == 0 ) {
 		cg.moveBarPrevSpeed = xySpeed;
@@ -604,8 +730,8 @@ void CG_UpdateMovementBar( void ) {
 		if ( quality < -1.0f ) quality = -1.0f;
 
 		cg.moveBarQuality[cg.moveBarHead] = quality;
-		cg.moveBarHead = ( cg.moveBarHead + 1 ) % 20;
-		if ( cg.moveBarCount < 20 ) cg.moveBarCount++;
+		cg.moveBarHead = ( cg.moveBarHead + 1 ) % MOVEBAR_SEGMENTS;
+		if ( cg.moveBarCount < MOVEBAR_SEGMENTS ) cg.moveBarCount++;
 
 		cg.moveBarPrevSpeed = xySpeed;
 		cg.moveBarLastTime  = cg.time;
@@ -613,15 +739,14 @@ void CG_UpdateMovementBar( void ) {
 }
 
 void CG_DrawMovementBar( void ) {
-	int keysBaseY, barY, barX;
-	int i, idx, segX;
+	int keysBaseY, barY, barX, guideY, turnBarY;
+	int i, idx;
+	float segW, segX, dotX;
 	float q;
-	vec4_t segColor, borderColor;
+	vec4_t segColor, borderColor, emptyColor, guideBg, guideGood, guideBad, guideWarn, centerColor, dotColor;
+	char guideBuf[64];
 
-	if ( !cg_drawJumpStats.integer ) {
-		return;
-	}
-	if ( cg.moveBarCount == 0 ) {
+	if ( !cg_drawJumpStats.integer && !cg_strafeGuide.integer ) {
 		return;
 	}
 
@@ -630,13 +755,17 @@ void CG_DrawMovementBar( void ) {
 	barX = ( SCREEN_WIDTH - MOVEBAR_W ) / 2;
 
 	borderColor[0] = 0.0f; borderColor[1] = 0.0f; borderColor[2] = 0.0f; borderColor[3] = 0.4f;
-	CG_FillRect( barX - 1, barY - 1, MOVEBAR_W + 2, MOVEBAR_H + 2, borderColor, ALIGN_STRETCH );
+	emptyColor[0] = 0.10f; emptyColor[1] = 0.11f; emptyColor[2] = 0.10f; emptyColor[3] = 0.55f;
+	CG_FillRect( barX - 1, barY - 1, MOVEBAR_W + 2, MOVEBAR_H + 2, borderColor, ALIGN_CENTER );
+	CG_FillRect( barX, barY, MOVEBAR_W, MOVEBAR_H, emptyColor, ALIGN_CENTER );
+
+	segW = (float)MOVEBAR_W / (float)MOVEBAR_SEGMENTS;
 
 	for ( i = 0; i < cg.moveBarCount; i++ ) {
-		if ( cg.moveBarCount < 20 ) {
+		if ( cg.moveBarCount < MOVEBAR_SEGMENTS ) {
 			idx = i;
 		} else {
-			idx = ( cg.moveBarHead + i ) % 20;
+			idx = ( cg.moveBarHead + i ) % MOVEBAR_SEGMENTS;
 		}
 
 		q = cg.moveBarQuality[idx];
@@ -650,7 +779,36 @@ void CG_DrawMovementBar( void ) {
 		}
 		segColor[3] = 0.85f;
 
-		segX = barX + i * MOVEBAR_SEG_W;
-		CG_FillRect( segX, barY, MOVEBAR_SEG_W, MOVEBAR_H, segColor, ALIGN_STRETCH );
+		segX = (float)barX + (float)i * segW;
+		CG_FillRect( segX + 0.5f, barY, segW - 1.0f, MOVEBAR_H, segColor, ALIGN_CENTER );
+	}
+
+	if ( cg_strafeGuide.integer ) {
+		const char *want = strafeGuideDir < 0 ? "A" : ( strafeGuideDir > 0 ? "D" : "--" );
+		const char *state = strafeGuideGood ? "OK" : ( strafeGuideInput ? "BAD" : "TURN" );
+		guideY = barY - 28;
+		turnBarY = barY - 13;
+		Com_sprintf( guideBuf, sizeof( guideBuf ), "STRAFE %s  %s %.0f/%.0f", want, state, strafeGuideTurnRate, strafeGuideIdealTurnRate );
+		guideBg[0] = 0.02f; guideBg[1] = 0.025f; guideBg[2] = 0.02f; guideBg[3] = 0.58f;
+		guideGood[0] = 0.20f; guideGood[1] = 1.00f; guideGood[2] = 0.25f; guideGood[3] = 0.95f;
+		guideBad[0] = 1.00f; guideBad[1] = 0.25f; guideBad[2] = 0.18f; guideBad[3] = 0.95f;
+		guideWarn[0] = 1.00f; guideWarn[1] = 0.65f; guideWarn[2] = 0.15f; guideWarn[3] = 0.95f;
+		centerColor[0] = 0.92f; centerColor[1] = 0.92f; centerColor[2] = 0.92f; centerColor[3] = 0.80f;
+		CG_FillRect( barX, guideY - 2, MOVEBAR_W, 12, guideBg, ALIGN_CENTER );
+		CG_DrawStringExt( barX + 6, guideY, guideBuf,
+			strafeGuideGood ? guideGood : ( strafeGuideInput ? guideBad : guideWarn ),
+			qtrue, qtrue, 5, 8, 0, ALIGN_CENTER );
+
+		CG_FillRect( barX - 1, turnBarY - 1, MOVEBAR_W + 2, TURNBAR_H + 2, borderColor, ALIGN_CENTER );
+		CG_FillRect( barX, turnBarY, MOVEBAR_W, TURNBAR_H, guideBg, ALIGN_CENTER );
+		CG_FillRect( barX + MOVEBAR_W / 2 - 1, turnBarY - 2, 2, TURNBAR_H + 4, centerColor, ALIGN_CENTER );
+		dotX = (float)barX + ( ( strafeGuideAimOffset + 1.0f ) * 0.5f ) * (float)MOVEBAR_W;
+		if ( dotX < (float)barX + 2.0f ) dotX = (float)barX + 2.0f;
+		if ( dotX > (float)( barX + MOVEBAR_W - 3 ) ) dotX = (float)( barX + MOVEBAR_W - 3 );
+		dotColor[0] = strafeGuideAimValid ? ( 0.25f + 0.75f * fabs( strafeGuideAimOffset ) ) : 1.0f;
+		dotColor[1] = strafeGuideAimValid ? ( 1.00f - 0.75f * fabs( strafeGuideAimOffset ) ) : 0.65f;
+		dotColor[2] = strafeGuideAimValid ? 0.12f : 0.15f;
+		dotColor[3] = 0.95f;
+		CG_FillRect( dotX - 2.0f, turnBarY - 3, 4, TURNBAR_H + 6, dotColor, ALIGN_CENTER );
 	}
 }

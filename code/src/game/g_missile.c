@@ -934,6 +934,8 @@ gentity_t *fire_grenade( gentity_t *self, vec3_t start, vec3_t dir, int grenadeW
 	bolt->s.eType       = ET_MISSILE;
 	bolt->r.svFlags     = SVF_USE_CURRENT_ORIGIN | SVF_BROADCAST;
 	bolt->s.weapon      = grenadeWPID;
+	bolt->s.time        = bolt->nextthink;
+	bolt->s.time2       = level.time;
 	bolt->r.ownerNum    = self->s.number;
 	bolt->parent        = self;
 

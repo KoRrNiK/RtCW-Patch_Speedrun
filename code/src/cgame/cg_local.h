@@ -1705,7 +1705,14 @@ extern vmCvar_t cg_velocity_mode;
 extern vmCvar_t cg_velocity_x;
 extern vmCvar_t cg_velocity_y;
 extern vmCvar_t cg_velocity_scale;
+extern vmCvar_t cg_velocity_align;
+extern vmCvar_t cg_velocity_colorfade;
+extern vmCvar_t cg_velocity_peak;
+extern vmCvar_t cg_velocity_peak_reset;
 
+extern vmCvar_t cg_explosiveTimers;
+extern vmCvar_t cg_explosiveTimersHeld;
+extern vmCvar_t cg_explosiveTimersWorld;
 
 extern vmCvar_t cg_drawSnapshot;
 extern vmCvar_t cg_draw3dIcons;
@@ -1750,6 +1757,11 @@ extern vmCvar_t cg_gun_y;
 extern vmCvar_t cg_gun_z;
 extern vmCvar_t cg_drawGun;
 extern vmCvar_t cg_drawFPGun;
+extern vmCvar_t cg_weapon_color_mode;
+extern vmCvar_t cg_weapon_color;
+extern vmCvar_t cg_weapon_color_opacity;
+extern vmCvar_t cg_weapon_xray_strength;
+extern vmCvar_t cg_weapon_rainbow_speed;
 extern vmCvar_t cg_drawGamemodels;
 extern vmCvar_t cg_cursorHints;
 extern vmCvar_t cg_hintFadeTime;            //----(SA)	added
@@ -1837,6 +1849,7 @@ extern vmCvar_t cg_sightRange;
 extern vmCvar_t cg_pathLength;
 extern vmCvar_t cg_drawPos;
 extern vmCvar_t cg_drawJumpStats;
+extern vmCvar_t cg_strafeGuide;
 
 extern vmCvar_t cg_cameraOrbit;
 extern vmCvar_t cg_cameraOrbitDelay;

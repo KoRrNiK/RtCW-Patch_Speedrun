@@ -2089,7 +2089,115 @@ qboolean CG_DrawRealWeapons( centity_t *cent ) {
 CG_AddWeaponWithPowerups
 ========================
 */
+static void CG_SpeedrunWeaponRainbow( float phase, byte *r, byte *g, byte *b ) {
+	float red = 0.5f + 0.5f * (float)sin( phase );
+	float green = 0.5f + 0.5f * (float)sin( phase + 2.0943951f );
+	float blue = 0.5f + 0.5f * (float)sin( phase + 4.1887902f );
+	*r = (byte)( red * 255.0f );
+	*g = (byte)( green * 255.0f );
+	*b = (byte)( blue * 255.0f );
+}
+
+static void CG_SpeedrunWeaponColor( int mode, byte *outR, byte *outG, byte *outB, float *outAlpha ) {
+	int r = 26, g = 191, b = 255;
+	float colorAlpha = 1.0f;
+	byte rb, gb, bb;
+	if ( mode == 2 || mode == 4 || mode == 6 ) {
+		CG_SpeedrunWeaponRainbow( cg.time * 0.0018f * Com_Clamp( 0.1f, 5.0f, cg_weapon_rainbow_speed.value ), &rb, &gb, &bb );
+		r = rb;
+		g = gb;
+		b = bb;
+	} else if ( mode == 7 ) {
+		CG_SpeedrunWeaponRainbow( cg.time * 0.0035f * Com_Clamp( 0.1f, 5.0f, cg_weapon_rainbow_speed.value ), &rb, &gb, &bb );
+		r = (int)( (float)rb * 0.45f + 255.0f * 0.55f );
+		g = (int)( (float)gb * 0.45f + 255.0f * 0.55f );
+		b = (int)( (float)bb * 0.45f + 255.0f * 0.55f );
+		colorAlpha = 0.60f + 0.40f * ( 0.5f + 0.5f * (float)sin( cg.time * 0.006f ) );
+	} else {
+		sscanf( cg_weapon_color.string, "%d %d %d %f", &r, &g, &b, &colorAlpha );
+	}
+	*outR = (byte)Com_Clamp( 0.0f, 255.0f, (float)r );
+	*outG = (byte)Com_Clamp( 0.0f, 255.0f, (float)g );
+	*outB = (byte)Com_Clamp( 0.0f, 255.0f, (float)b );
+	*outAlpha = Com_Clamp( 0.0f, 1.0f, colorAlpha );
+}
+
+static void CG_SetSpeedrunWeaponEntityColor( refEntity_t *ent, byte r, byte g, byte b, float alpha ) {
+	ent->shaderRGBA[0] = r;
+	ent->shaderRGBA[1] = g;
+	ent->shaderRGBA[2] = b;
+	ent->shaderRGBA[3] = (byte)( Com_Clamp( 0.0f, 1.0f, alpha ) * 255.0f );
+}
+
+static void CG_AddSpeedrunWeaponColorOverlay( const refEntity_t *gun, playerState_t *ps, qboolean *skipBase ) {
+	static qhandle_t weaponTintShader = 0;
+	static qhandle_t weaponFlatShader = 0;
+	static qhandle_t weaponXrayShader = 0;
+	refEntity_t overlay;
+	refEntity_t glow;
+	float colorAlpha = 1.0f;
+	float opacity;
+	float xray;
+	int mode;
+	byte r, g, b;
+
+	if ( skipBase ) *skipBase = qfalse;
+	if ( !ps ) return;
+	mode = cg_weapon_color_mode.integer;
+	if ( mode <= 0 ) return;
+	opacity = Com_Clamp( 0.0f, 1.0f, cg_weapon_color_opacity.value );
+	if ( opacity <= 0.0f ) return;
+	CG_SpeedrunWeaponColor( mode, &r, &g, &b, &colorAlpha );
+
+	if ( !weaponTintShader ) {
+		weaponTintShader = trap_R_RegisterShader( "speedrunWeaponTint" );
+	}
+	if ( !weaponFlatShader ) {
+		weaponFlatShader = trap_R_RegisterShader( "speedrunWeaponFlat" );
+	}
+	if ( !weaponXrayShader ) {
+		weaponXrayShader = trap_R_RegisterShader( "speedrunWeaponXray" );
+	}
+
+	memcpy( &overlay, gun, sizeof( overlay ) );
+
+	if ( mode == 3 || mode == 4 ) {
+		if ( !weaponFlatShader ) return;
+		overlay.customShader = weaponFlatShader;
+		CG_SetSpeedrunWeaponEntityColor( &overlay, r, g, b, colorAlpha * opacity );
+		trap_R_AddRefEntityToScene( &overlay );
+		if ( skipBase ) *skipBase = qtrue;
+		return;
+	}
+
+	if ( mode == 5 || mode == 6 ) {
+		if ( !weaponXrayShader ) return;
+		xray = Com_Clamp( 0.0f, 1.0f, cg_weapon_xray_strength.value );
+		overlay.customShader = weaponFlatShader ? weaponFlatShader : weaponXrayShader;
+		CG_SetSpeedrunWeaponEntityColor( &overlay, r, g, b, colorAlpha * opacity * 0.65f );
+		trap_R_AddRefEntityToScene( &overlay );
+
+		memcpy( &glow, gun, sizeof( glow ) );
+		glow.customShader = weaponXrayShader;
+		glow.renderfx |= RF_DEPTHHACK | RF_MINLIGHT;
+		VectorScale( glow.axis[0], 1.012f + xray * 0.018f, glow.axis[0] );
+		VectorScale( glow.axis[1], 1.012f + xray * 0.018f, glow.axis[1] );
+		VectorScale( glow.axis[2], 1.012f + xray * 0.018f, glow.axis[2] );
+		glow.nonNormalizedAxes = qtrue;
+		CG_SetSpeedrunWeaponEntityColor( &glow, r, g, b, colorAlpha * opacity * ( 0.35f + xray * 0.65f ) );
+		trap_R_AddRefEntityToScene( &glow );
+		return;
+	}
+
+	if ( !weaponTintShader ) return;
+	overlay.customShader = weaponTintShader;
+	CG_SetSpeedrunWeaponEntityColor( &overlay, r, g, b, colorAlpha * opacity );
+	trap_R_AddRefEntityToScene( &overlay );
+}
+
 static void CG_AddWeaponWithPowerups( refEntity_t *gun, int powerups, playerState_t *ps, centity_t *cent ) {
+	qboolean skipBase = qfalse;
+	int weaponMode = ps ? cg_weapon_color_mode.integer : 0;
 
 	// don't render weapon models when gun drawing is disabled (first person only)
 	if ( ps && !cg_drawGun.integer ) {
@@ -2101,7 +2209,13 @@ static void CG_AddWeaponWithPowerups( refEntity_t *gun, int powerups, playerStat
 		gun->customShader = cgs.media.invisShader;
 		trap_R_AddRefEntityToScene( gun );
 	} else {
-		trap_R_AddRefEntityToScene( gun );
+		if ( weaponMode == 3 || weaponMode == 4 ) {
+			CG_AddSpeedrunWeaponColorOverlay( gun, ps, &skipBase );
+		}
+		if ( !skipBase ) {
+			trap_R_AddRefEntityToScene( gun );
+			CG_AddSpeedrunWeaponColorOverlay( gun, ps, &skipBase );
+		}
 
 		if ( powerups & ( 1 << PW_BATTLESUIT ) ) {
 			gun->customShader = cgs.media.battleWeaponShader;

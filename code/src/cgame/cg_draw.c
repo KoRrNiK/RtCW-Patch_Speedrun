@@ -41,6 +41,7 @@ menuDef_t *menuScoreboard = NULL;
 
 /* Forward declarations */
 static void CG_drawVelocity( void );
+static void CG_DrawExplosiveTimers( void );
 
 int sortedTeamPlayers[TEAM_MAXOVERLAY];
 int numSortedTeamPlayers;
@@ -967,6 +968,9 @@ static float CG_DrawFPS( float y ) {
 	cw = (int)( BIGCHAR_WIDTH * scale );
 	ch = (int)( BIGCHAR_HEIGHT * scale );
 	xPos = (int)cg_fpsX.value;
+	if ( cg_fpsX.integer == 0 && cg_fpsY.integer == 0 ) {
+		xPos = 500;
+	}
 
 	// don't use serverTime, because that will be drifting to
 	// correct for internet lag changes, timescales, timedemos, etc
@@ -1024,6 +1028,9 @@ static float CG_DrawTimer( float y ) {
 	cw = (int)( BIGCHAR_WIDTH * scale );
 	ch = (int)( BIGCHAR_HEIGHT * scale );
 	xPos = (int)cg_fpsX.value;
+	if ( cg_fpsX.integer == 0 && cg_fpsY.integer == 0 ) {
+		xPos = 500;
+	}
 
 	// NERVE - SMF - draw time remaining in multiplayer
 	if ( cgs.gametype == GT_WOLF ) {
@@ -3610,6 +3617,7 @@ static void CG_ScreenFade( void ) {
 
 
 static void CG_DrawKeystrokeOverlay( void );
+static float CG_CvarGetFloat( const char *name );
 
 /*
 =================
@@ -3701,15 +3709,14 @@ static void CG_Draw2D( void ) {
 	// Ridah, draw flash blends now
 	CG_DrawFlashBlend();
 
-	// Keystroke overlay
-	if ( cg_drawKeys.integer ) {
-		CG_DrawKeystrokeOverlay();
-	}
+	// Keystroke overlay is rendered by the client ImGui HUD.
 
 	// Speedometer (always visible when enabled)
 	if ( cg_drawVelocity.integer ) {
 		CG_drawVelocity();
 	}
+
+	CG_DrawExplosiveTimers();
 
 	// Position/angles HUD
 	CG_DrawPositionHUD();
@@ -3993,7 +4000,7 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 			qboolean wantsCheatTool = qfalse;
 			{
 				char tmp[4];
-				if ( cg_drawTriggers.integer || cg_drawEnemies.integer || cg_drawItems.integer || cg_drawEnemySight.integer || cg_drawAIPath.integer ) {
+				if ( cg_drawTriggers.integer || cg_drawEnemies.integer || cg_drawItems.integer || cg_drawEnemySight.integer || cg_drawAIPath.integer || cg_explosiveTimers.integer ) {
 					wantsCheatTool = qtrue;
 				}
 				trap_Cvar_VariableStringBuffer( "r_drawClips", tmp, sizeof( tmp ) );
@@ -4115,16 +4122,16 @@ static void CG_DrawKeystrokeKey( float x, float y, float w, float h,
 	textCol[3] = ( 0.50f + t * 0.50f ) * opacity;
 
 	// background
-	CG_FillRect( x, y, w, h, bg, ALIGN_BOTTOM );
+	CG_FillRect( x, y, w, h, bg, ALIGN_STRETCH );
 	// border
-	CG_DrawRect( x, y, w, h, 1, border, ALIGN_BOTTOM );
+	CG_DrawRect( x, y, w, h, 1, border, ALIGN_STRETCH );
 
 	// centered text, no shadow - nudge +1px right and +2px down to fix glyph offset
 	textW = labelLen * cW;
 	tx = x + ( w - textW ) * 0.5f + 1;
 	ty = y + ( h - cH ) * 0.5f + 2;
 	CG_DrawStringExt( (int)tx, (int)ty, label,
-		textCol, qtrue, qfalse, (int)cW, (int)cH, labelLen, ALIGN_BOTTOM );
+		textCol, qtrue, qfalse, (int)cW, (int)cH, labelLen, ALIGN_STRETCH );
 }
 
 static void CG_DrawMouseDirection( float cx, float cy, float radius,
@@ -4139,8 +4146,8 @@ static void CG_DrawMouseDirection( float cx, float cy, float radius,
 	border[0] = 0.20f; border[1] = 0.25f; border[2] = 0.18f;
 	border[3] = 0.25f * opacity;
 
-	CG_FillRect( cx - radius, cy - radius, radius * 2, radius * 2, bg, ALIGN_BOTTOM );
-	CG_DrawRect( cx - radius, cy - radius, radius * 2, radius * 2, 1, border, ALIGN_BOTTOM );
+	CG_FillRect( cx - radius, cy - radius, radius * 2, radius * 2, bg, ALIGN_STRETCH );
+	CG_DrawRect( cx - radius, cy - radius, radius * 2, radius * 2, 1, border, ALIGN_STRETCH );
 
 	/* direction dot */
 	dotR = radius * 0.25f;
@@ -4163,7 +4170,7 @@ static void CG_DrawMouseDirection( float cx, float cy, float radius,
 		dotCol[2] = 0.38f + t * 0.42f;
 		dotCol[3] = ( 0.60f + t * 0.40f ) * opacity;
 	}
-	CG_FillRect( dotX - dotR, dotY - dotR, dotR * 2, dotR * 2, dotCol, ALIGN_BOTTOM );
+	CG_FillRect( dotX - dotR, dotY - dotR, dotR * 2, dotR * 2, dotCol, ALIGN_STRETCH );
 }
 
 static void CG_DrawKeystrokeOverlay( void ) {
@@ -4259,16 +4266,16 @@ static void CG_DrawKeystrokeOverlay( void ) {
 	if ( ksMouse >= 1 ) numRows = 4;  /* + mouse row */
 	totalH = numRows * ( boxH + gap );
 
-	/* Position: ks_x=0 means auto-center, ks_y=0 means auto above statusbar */
+	/* Position: 0/0 falls back to fixed defaults used by the layout editor. */
 	if ( ksX > 0.01f ) {
 		baseX = ksX;
 	} else {
-		baseX = ( SCREEN_WIDTH - totalW ) * 0.5f;
+		baseX = 285.0f;
 	}
 	if ( ksY > 0.01f ) {
 		baseY = ksY;
 	} else {
-		baseY = STATUSBARHEIGHT - 10 - totalH;
+		baseY = 370.0f;
 	}
 
 	/* Row 1: [W] centered */
@@ -4332,35 +4339,115 @@ CG_Velocity
 // cg_velocity_mode: 0 = 3D (full), 1 = horizontal only (XY), 2 = vertical only (Z)
 // cg_velocity_type: 0 = bottom, 1 = center
 // cg_velocity_size: 0 = tiny, 1 = small, 2 = big, 3 = giant
-// cg_velocity_x/y: custom position (0 = auto)
+// cg_velocity_x/y: custom position (0/0 = fixed default)
 // cg_velocity_scale: text scale multiplier
-static void CG_drawVelocity( void ) {
-	char    *s;
-	int     x, y, font_w, font_h;
-	float   vel;
-	float   scale;
-	vec4_t  hcolor;
+// cg_velocity_align: 0 = left, 1 = center, 2 = right
+static float CG_CurrentVelocityValue( void ) {
+ float vel;
 
 	if ( cg.snap->ps.pm_flags & PMF_LADDER ) {
 		vel = 0;
 	} else if ( cg_velocity_mode.integer == 1 ) {
-		/* horizontal only (XY) */
 		vec3_t hvel;
 		hvel[0] = cg.snap->ps.velocity[0];
 		hvel[1] = cg.snap->ps.velocity[1];
 		hvel[2] = 0;
 		vel = VectorLength( hvel );
 	} else if ( cg_velocity_mode.integer == 2 ) {
-		/* vertical only (Z) */
 		vel = fabs( cg.snap->ps.velocity[2] );
 	} else {
-		/* 3D (default) */
 		vel = VectorLength( cg.snap->ps.velocity );
 	}
 
-	s = va( "%i", (int)vel );
+	return vel;
+}
+
+static void CG_DrawVelocityString( int x, int y, const char *s, int font_w, int font_h, int align, const float *color ) {
+	scralign_t screenAlign = ALIGN_TOPLEFT;
+	int text_w = CG_DrawStrlen( s ) * font_w;
+	if ( align == 1 ) {
+		x -= text_w / 2;
+		screenAlign = ALIGN_TOP;
+	} else if ( align == 2 ) {
+		x -= text_w;
+		screenAlign = ALIGN_TOPRIGHT;
+	}
+	CG_DrawStringExt( x, y, s, color, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, screenAlign );
+}
+
+static void CG_drawVelocity( void ) {
+	char    s[32];
+	char    peakS[32];
+	int     x, y, font_w, font_h, align;
+	float   vel;
+	float   scale;
+	vec4_t  hcolor;
+	static float lastGroundTouchVel = -1.0f;
+	static float colorBlend = 0.0f;
+	static qboolean speedoWasAirborne = qfalse;
+	static float peakVel = 0.0f;
+	float fadeScale;
+	float resetSpeed;
+	float delta;
+	float redBlend;
+	qboolean onGround;
+	vec4_t peakColor;
+
+	vel = CG_CurrentVelocityValue();
+
+	Com_sprintf( s, sizeof( s ), "%i", (int)vel );
 
 	hcolor[0] = 1.0f; hcolor[1] = 1.0f; hcolor[2] = 1.0f; hcolor[3] = 1.0f;
+	if ( cg_velocity_colorfade.integer ) {
+		onGround = ( cg.snap->ps.groundEntityNum != ENTITYNUM_NONE ) ? qtrue : qfalse;
+		if ( lastGroundTouchVel < 0.0f ) {
+			lastGroundTouchVel = vel;
+			speedoWasAirborne = onGround ? qfalse : qtrue;
+		}
+
+		if ( onGround && speedoWasAirborne ) {
+			delta = vel - lastGroundTouchVel;
+			if ( delta > 0.10f ) {
+				colorBlend = 1.0f;
+			} else if ( delta < -0.10f ) {
+				colorBlend = -1.0f;
+			} else {
+				colorBlend = 0.0f;
+			}
+			lastGroundTouchVel = vel;
+		} else if ( onGround ) {
+			lastGroundTouchVel = vel;
+		}
+
+		if ( !onGround ) speedoWasAirborne = qtrue;
+		else speedoWasAirborne = qfalse;
+
+		fadeScale = (float)cg.frametime / 850.0f;
+		if ( fadeScale < 0.01f ) fadeScale = 0.01f;
+		if ( fadeScale > 0.20f ) fadeScale = 0.20f;
+		if ( colorBlend > 0.0f ) {
+			colorBlend -= fadeScale;
+			if ( colorBlend < 0.0f ) colorBlend = 0.0f;
+		} else if ( colorBlend < 0.0f ) {
+			colorBlend += fadeScale;
+			if ( colorBlend > 0.0f ) colorBlend = 0.0f;
+		}
+
+		if ( colorBlend > 0.01f ) {
+			hcolor[0] = 1.0f - 0.95f * colorBlend;
+			hcolor[1] = 1.0f;
+			hcolor[2] = 1.0f - 0.95f * colorBlend;
+		} else if ( colorBlend < -0.01f ) {
+			redBlend = -colorBlend;
+			hcolor[0] = 1.0f;
+			hcolor[1] = 1.0f - 0.92f * redBlend;
+			hcolor[2] = 1.0f - 0.95f * redBlend;
+		}
+	} else {
+		lastGroundTouchVel = vel;
+		speedoWasAirborne = ( cg.snap->ps.groundEntityNum == ENTITYNUM_NONE ) ? qtrue : qfalse;
+		colorBlend = 0.0f;
+	}
 
 	switch ( cg_velocity_size.integer ) {
 		case 1:  font_w = SMALLCHAR_WIDTH;  font_h = SMALLCHAR_HEIGHT;  break;
@@ -4374,27 +4461,118 @@ static void CG_drawVelocity( void ) {
 	if ( scale <= 0 ) scale = 1.0f;
 	font_w = (int)( font_w * scale );
 	font_h = (int)( font_h * scale );
+	align = cg_velocity_align.integer;
+	if ( align < 0 ) align = 0;
+	if ( align > 2 ) align = 2;
 
-	// Custom position or auto
+	// Custom position or fixed default
 	if ( cg_velocity_x.integer || cg_velocity_y.integer ) {
 		x = cg_velocity_x.integer;
 		y = cg_velocity_y.integer;
-		CG_DrawStringExt( x, y, s, hcolor, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_CENTER );
 	} else {
-		// Auto-center horizontally
-		int digits = 1;
-		if ( vel >= 1000 ) digits = 4;
-		else if ( vel >= 100 ) digits = 3;
-		else if ( vel >= 10 ) digits = 2;
-
-		x = ( SCREEN_WIDTH / 2 ) - ( digits * font_w / 2 );
+		x = 320;
 
 		if ( cg_velocity_type.integer == 0 ) {
-			y = font_h >= GIANTCHAR_HEIGHT ? ( STATUSBARHEIGHT - 30 ) : ( STATUSBARHEIGHT + 5 );
-			CG_DrawStringExt( x, y, s, hcolor, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_BOTTOM );
+			y = 457;
 		} else {
-			y = font_h >= GIANTCHAR_HEIGHT ? ( STATUSBARHEIGHT / 2 ) + 40 : ( STATUSBARHEIGHT / 2 ) + 30;
-			CG_DrawStringExt( x, y, s, hcolor, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_CENTER );
+			y = 256;
+		}
+	}
+	if ( cg_velocity_peak.integer ) {
+		resetSpeed = cg_velocity_peak_reset.value;
+		if ( resetSpeed < 1.0f ) resetSpeed = 1.0f;
+		if ( vel <= resetSpeed || cg.snap->ps.groundEntityNum == ENTITYNUM_NONE ) {
+			if ( vel <= resetSpeed ) peakVel = 0.0f;
+		}
+		if ( vel > peakVel ) peakVel = vel;
+		if ( peakVel > resetSpeed ) {
+			peakColor[0] = 0.58f;
+			peakColor[1] = 0.92f;
+			peakColor[2] = 0.34f;
+			peakColor[3] = 1.0f;
+			Com_sprintf( peakS, sizeof( peakS ), "%i", (int)peakVel );
+			CG_DrawVelocityString( x, y - font_h - 3, peakS, font_w, font_h, align, peakColor );
+		}
+	}
+	CG_DrawVelocityString( x, y, s, font_w, font_h, align, hcolor );
+}
+
+static qboolean CG_SpeedrunCheatsEnabled( void ) {
+	char cheatsBuf[8];
+	trap_Cvar_VariableStringBuffer( "sv_cheats", cheatsBuf, sizeof( cheatsBuf ) );
+	return atoi( cheatsBuf ) != 0;
+}
+
+static void CG_DrawExplosiveTimerBox( float x, float y, const char *label, float remaining, float total, qboolean centered ) {
+	vec4_t bg = { 0.02f, 0.02f, 0.025f, 0.68f };
+	vec4_t border = { 0.95f, 0.74f, 0.28f, 0.92f };
+	vec4_t fill = { 0.95f, 0.36f, 0.20f, 0.92f };
+	vec4_t text = { 1.0f, 0.95f, 0.70f, 1.0f };
+	char buf[64];
+	float frac;
+	float w;
+	float h = 26.0f;
+
+	if ( total <= 0.0f ) total = 1.0f;
+	if ( remaining < 0.0f ) remaining = 0.0f;
+	frac = remaining / total;
+	if ( frac < 0.0f ) frac = 0.0f;
+	if ( frac > 1.0f ) frac = 1.0f;
+	Com_sprintf( buf, sizeof( buf ), "%s %.2fs", label, remaining );
+	w = (float)( CG_DrawStrlen( buf ) * SMALLCHAR_WIDTH + 18 );
+	if ( w < 112.0f ) w = 112.0f;
+	if ( w > 190.0f ) w = 190.0f;
+	if ( centered ) {
+		x -= w * 0.5f;
+	}
+	CG_FillRect( x, y, w, h, bg, ALIGN_STRETCH );
+	CG_DrawRect( x, y, w, h, 1.0f, border, ALIGN_STRETCH );
+	CG_FillRect( x + 6.0f, y + h - 8.0f, ( w - 12.0f ) * frac, 4.0f, fill, ALIGN_STRETCH );
+	CG_DrawStringExt( x + 6.0f, y + 5.0f, buf, text, qfalse, qtrue, SMALLCHAR_WIDTH, SMALLCHAR_HEIGHT, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_STRETCH );
+}
+
+static void CG_DrawExplosiveTimers( void ) {
+	playerState_t *ps;
+	int i;
+	int drawn;
+	float remaining;
+	float total;
+	float sx, sy;
+	centity_t *cent;
+	entityState_t *es;
+	vec3_t labelPos;
+
+	if ( !cg_explosiveTimers.integer || !CG_SpeedrunCheatsEnabled() || !cg.snap ) return;
+	ps = &cg.snap->ps;
+	drawn = 0;
+
+	if ( cg_explosiveTimersHeld.integer && ps->grenadeTimeLeft > 0 && ( ps->weapon == WP_GRENADE_LAUNCHER || ps->weapon == WP_GRENADE_PINEAPPLE || ps->weapon == WP_DYNAMITE ) ) {
+		if ( ps->weapon == WP_DYNAMITE ) {
+			total = 8.0f;
+			remaining = 8.0f - (float)ps->grenadeTimeLeft * 0.001f;
+			CG_DrawExplosiveTimerBox( 320.0f, 304.0f, "held dyn", remaining, total, qtrue );
+		} else {
+			total = 4.0f;
+			remaining = (float)ps->grenadeTimeLeft * 0.001f;
+			CG_DrawExplosiveTimerBox( 320.0f, 304.0f, "held nade", remaining, total, qtrue );
+		}
+	}
+
+	if ( !cg_explosiveTimersWorld.integer ) return;
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		cent = &cg_entities[i];
+		if ( !cent->currentValid ) continue;
+		es = &cent->currentState;
+		if ( es->eType != ET_MISSILE ) continue;
+		if ( es->weapon != WP_GRENADE_LAUNCHER && es->weapon != WP_GRENADE_PINEAPPLE && es->weapon != WP_DYNAMITE ) continue;
+		if ( es->time <= cg.time ) continue;
+		remaining = (float)( es->time - cg.time ) * 0.001f;
+		total = es->time2 > 0 && es->time > es->time2 ? (float)( es->time - es->time2 ) * 0.001f : ( es->weapon == WP_DYNAMITE ? 8.0f : 4.0f );
+		VectorCopy( cent->lerpOrigin, labelPos );
+		labelPos[2] += 24.0f;
+		if ( TrigVis_WorldToScreen( labelPos, &sx, &sy ) ) {
+			CG_DrawExplosiveTimerBox( sx, sy - 18.0f, es->weapon == WP_DYNAMITE ? "dynamite" : "grenade", remaining, total, qtrue );
+			if ( ++drawn >= 8 ) break;
 		}
 	}
 }
