@@ -2617,6 +2617,8 @@ void CL_Vid_Restart_f( void ) {
 	CL_ShutdownUI();
 	// shutdown the CGame
 	CL_ShutdownCGame();
+	// renderer restart invalidates OpenGL texture ids used by Dear ImGui
+	CL_SpeedrunImGui_InvalidateDeviceObjects();
 	// shutdown the renderer and clear the renderer interface
 	CL_ShutdownRef();
 	// client is no longer pure untill new checksums are sent

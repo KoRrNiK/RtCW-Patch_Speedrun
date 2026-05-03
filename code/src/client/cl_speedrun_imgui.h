@@ -7,6 +7,7 @@ extern "C" {
 
 void CL_SpeedrunImGui_Init( void );
 void CL_SpeedrunImGui_Shutdown( void );
+void CL_SpeedrunImGui_InvalidateDeviceObjects( void );
 void CL_SpeedrunImGui_Draw( void );
 int  CL_SpeedrunImGui_WndProc( void *hWnd, unsigned int uMsg, unsigned int wParam, long lParam );
 int  CL_SpeedrunImGui_IsOpen( void );
