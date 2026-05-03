@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 extern void G_CheckForCursorHints( gentity_t *ent );
+extern int bh_movement_integer;
 
 
 
@@ -697,6 +698,10 @@ void ClientEvents( gentity_t *ent, int oldEventSequence ) {
 			fallSoundMul *= 2;  // double range for falls greater than FALL_SHORT
 
 			if ( eventParm & SURF_SLICK ) { // don't stun when you drop onto slick
+				stunTime = 0;
+			}
+
+			if ( bh_movement_integer ) {
 				stunTime = 0;
 			}
 

@@ -43,10 +43,58 @@ int bg_pmove_gameskill_integer;
 int bh_movement_integer;
 int bh_autojump_integer;
 
+#define HL1_NON_JUMP_VELOCITY 140.0f
+#define HL1_CROUCH_SPEED 120.0f
+#define HL1_DUCKING_MULTIPLIER 0.375f
+#define HL1_ACCELERATE 10.0f
+#define HL1_AIRACCELERATE 10.0f
+#define HL1_FRICTION 4.0f
+#define HL1_STOPSPEED 100.0f
+#define HL1_JUMP_HEIGHT 45.0f
+
 static qboolean PM_HL1CrouchJumpHeld( void ) {
 	return ( bh_movement_integer && pm && pm->cmd.upmove == 0 &&
 		( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
 		( pm->cmd.wbuttons & WBUTTON_JUMP ) ) ? qtrue : qfalse;
+}
+
+static qboolean PM_HL1JumpHeld( void ) {
+	return ( bh_movement_integer && pm && ( pm->cmd.upmove >= 10 || PM_HL1CrouchJumpHeld() ) ) ? qtrue : qfalse;
+}
+
+static qboolean PM_HL1DuckHeld( void ) {
+	return ( bh_movement_integer && pm && ( pm->cmd.upmove < 0 || ( pm->cmd.wbuttons & WBUTTON_CROUCH ) ) ) ? qtrue : qfalse;
+}
+
+static void PM_HL1ScaleDuckedCmd( usercmd_t *cmd ) {
+	if ( !bh_movement_integer || !( pm->ps->pm_flags & PMF_DUCKED ) ) {
+		return;
+	}
+
+	// Half-Life crops command movement while ducked instead of directly
+	// killing momentum. 0.375 gives ~120u duck movement at g_speed 320.
+	cmd->forwardmove = (int)( cmd->forwardmove * HL1_DUCKING_MULTIPLIER );
+	cmd->rightmove = (int)( cmd->rightmove * HL1_DUCKING_MULTIPLIER );
+	cmd->upmove = (int)( cmd->upmove * HL1_DUCKING_MULTIPLIER );
+}
+
+static void PM_HL1SetVelocityForGroundPlane( void ) {
+	float n2;
+
+	if ( !bh_movement_integer || !pml.walking ) {
+		return;
+	}
+
+	n2 = pml.groundTrace.plane.normal[2];
+	if ( n2 < MIN_WALK_NORMAL ) {
+		return;
+	}
+
+	// Move parallel to the walkable plane while keeping the XY speed from HL1's
+	// flat wish velocity. This avoids treating ramps as walls and removes the
+	// forward-vs-strafe speed mismatch on inclined floors.
+	pm->ps->velocity[2] = -( pm->ps->velocity[0] * pml.groundTrace.plane.normal[0] +
+		pm->ps->velocity[1] * pml.groundTrace.plane.normal[1] ) / n2;
 }
 
 // JPW NERVE
@@ -92,9 +140,9 @@ float pm_slagWadeScale    = 0.70;
 
 float pm_accelerate       = 10;
 float pm_airaccelerate    = 1;
-float pm_hl1airaccelerate = 15;	// HL1-style air acceleration value (higher than HL1's 10 for more responsive turns)
-float pm_hl1maxairspeed   = 30;	// HL1-style max air wishspeed for strafing
-float pm_hl1aircontrol    = 150;	// CPM-style air control strength for speed-preserving turns
+float pm_hl1airaccelerate = 14;	// HL1-style air acceleration, tuned for RtCW frametime/input
+float pm_hl1maxairspeed   = 35;	// HL1-style max air wishspeed for strafing
+float pm_hl1aircontrol    = 55;	// light speed-preserving turn assist for RtCW HL1 feel
 float pm_wateraccelerate  = 4;
 float pm_slagaccelerate   = 2;
 float pm_flyaccelerate    = 8;
@@ -193,6 +241,8 @@ Slide off of the impacting surface
 void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce ) {
 	float backoff;
 	float change;
+	float in2d;
+	float out2d;
 	int i;
 
 	backoff = DotProduct( in, normal );
@@ -206,6 +256,22 @@ void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce ) {
 	for ( i = 0 ; i < 3 ; i++ ) {
 		change = normal[i] * backoff;
 		out[i] = in[i] - change;
+	}
+
+	/* Momentum-style HL1 slope fix: if the player is holding jump while hitting
+	   a walkable incline, keep horizontal speed instead of letting the plane clip
+	   bleed it away.  Damage/landing still happens elsewhere; this only affects
+	   velocity clipping for the player velocity vector. */
+	if ( PM_HL1JumpHeld() && in == pm->ps->velocity && out == pm->ps->velocity &&
+		 normal[2] >= 0.7f && out[2] <= HL1_NON_JUMP_VELOCITY &&
+		 normal[0] * in[0] + normal[1] * in[1] < 0.0f ) {
+		in2d = in[0] * in[0] + in[1] * in[1];
+		out2d = out[0] * out[0] + out[1] * out[1];
+		if ( out2d <= in2d ) {
+			out[0] = in[0];
+			out[1] = in[1];
+			out[2] = 0.0f;
+		}
 	}
 }
 
@@ -284,8 +350,10 @@ static void PM_Friction( void ) {
 		if ( pml.walking && !( pml.groundTrace.surfaceFlags & SURF_SLICK ) ) {
 			// if getting knocked back, no friction
 			if ( !( pm->ps->pm_flags & PMF_TIME_KNOCKBACK ) ) {
-				control = speed < pm_stopspeed ? pm_stopspeed : speed;
-				drop += control * pm_friction * pml.frametime;
+				float stopspeed = bh_movement_integer ? HL1_STOPSPEED : pm_stopspeed;
+				float friction = bh_movement_integer ? HL1_FRICTION : pm_friction;
+				control = speed < stopspeed ? stopspeed : speed;
+				drop += control * friction * pm->ps->friction * pml.frametime;
 			}
 		}
 	}
@@ -345,12 +413,15 @@ static void PM_Accelerate( vec3_t wishdir, float wishspeed, float accel ) {
 		return;
 	}
 	accelspeed = accel * pml.frametime * wishspeed;
+	if ( bh_movement_integer ) {
+		accelspeed *= pm->ps->friction;
+	}
 	if ( accelspeed > addspeed ) {
 		accelspeed = addspeed;
 	}
 
 	// Ridah, variable friction for AI's
-	if ( pm->ps->groundEntityNum != ENTITYNUM_NONE ) {
+	if ( !bh_movement_integer && pm->ps->groundEntityNum != ENTITYNUM_NONE ) {
 		accelspeed *= ( 1.0 / pm->ps->friction );
 	}
 	if ( accelspeed > addspeed ) {
@@ -393,6 +464,7 @@ without getting a sqrt(2) distortion in speed.
 */
 static float PM_CmdScale( usercmd_t *cmd ) {
 	int max;
+	int upmove;
 	float total;
 	float scale;
 
@@ -408,22 +480,31 @@ static float PM_CmdScale( usercmd_t *cmd ) {
 		}
 	}
 
+	upmove = cmd->upmove;
+	if ( bh_movement_integer && upmove < 0 && ( cmd->wbuttons & WBUTTON_CROUCH ) ) {
+		// HL1 duck is a hull change, not real vertical movement.  Do not let
+		// crouch reduce air-strafe/wish speed through cmdscale.
+		upmove = 0;
+	}
+
 	max = abs( cmd->forwardmove );
 	if ( abs( cmd->rightmove ) > max ) {
 		max = abs( cmd->rightmove );
 	}
-	if ( abs( cmd->upmove ) > max ) {
-		max = abs( cmd->upmove );
+	if ( abs( upmove ) > max ) {
+		max = abs( upmove );
 	}
 	if ( !max ) {
 		return 0;
 	}
 
 	total = sqrt( cmd->forwardmove * cmd->forwardmove
-				  + cmd->rightmove * cmd->rightmove + cmd->upmove * cmd->upmove );
+				  + cmd->rightmove * cmd->rightmove + upmove * upmove );
 	scale = (float)pm->ps->speed * max / ( 127.0 * total );
 
-	if ( pm->cmd.buttons & BUTTON_SPRINT && pm->ps->sprintTime > 50 ) {
+	if ( bh_movement_integer ) {
+		// HL1 movement uses g_speed directly (default 320), not RtCW's 0.8 run scale.
+	} else if ( pm->cmd.buttons & BUTTON_SPRINT && pm->ps->sprintTime > 50 ) {
 		scale *= pm->ps->sprintSpeedScale;
 	} else {
 		scale *= pm->ps->runSpeedScale;
@@ -581,7 +662,7 @@ static qboolean PM_CheckJump( void ) {
 	pm->ps->pm_flags |= PMF_JUMP_HELD;
 
 	pm->ps->groundEntityNum = ENTITYNUM_NONE;
-	pm->ps->velocity[2] = JUMP_VELOCITY;
+	pm->ps->velocity[2] = bh_movement_integer ? sqrt( 2.0f * pm->ps->gravity * HL1_JUMP_HEIGHT ) : JUMP_VELOCITY;
 	PM_AddEvent( EV_JUMP );
 
 	if ( pm->cmd.forwardmove >= 0 ) {
@@ -834,7 +915,7 @@ static void PM_AirAccelerateHL( vec3_t wishdir, float wishspeed, float accel ) {
 	if ( addspeed <= 0 ) {
 		return;
 	}
-	accelspeed = accel * wishspeed * pml.frametime;
+	accelspeed = accel * wishspeed * pml.frametime * pm->ps->friction;
 	if ( accelspeed > addspeed ) {
 		accelspeed = addspeed;
 	}
@@ -857,6 +938,10 @@ This prevents speed loss during sharp mouse turns while bhop strafing.
 static void PM_AirControl( vec3_t wishdir, float wishspeed ) {
 	float zspeed, speed, dot, k;
 	int i;
+
+	if ( !bh_movement_integer || pm_hl1aircontrol <= 0.0f ) {
+		return;
+	}
 
 	if ( wishspeed == 0.0f ) {
 		return;
@@ -906,10 +991,10 @@ static void PM_AirMove( void ) {
 
 	PM_Friction();
 
-	fmove = pm->cmd.forwardmove;
-	smove = pm->cmd.rightmove;
-
 	cmd = pm->cmd;
+	PM_HL1ScaleDuckedCmd( &cmd );
+	fmove = cmd.forwardmove;
+	smove = cmd.rightmove;
 	scale = PM_CmdScale( &cmd );
 
 // Ridah, moved this down, so we use the actual movement direction
@@ -1067,6 +1152,9 @@ static void PM_WalkMove( void ) {
 				pm->ps->jumpTime = pm->cmd.serverTime;
 
 				stamtake = 2000;    // amount to take for jump
+				if ( bh_movement_integer ) {
+					stamtake = 0;
+				}
 
 				// take time from powerup before taking it from sprintTime
 				if ( pm->ps->powerups[PW_NOFATIGUE] ) {
@@ -1096,10 +1184,10 @@ static void PM_WalkMove( void ) {
 
 	PM_Friction();
 
-	fmove = pm->cmd.forwardmove;
-	smove = pm->cmd.rightmove;
-
 	cmd = pm->cmd;
+	PM_HL1ScaleDuckedCmd( &cmd );
+	fmove = cmd.forwardmove;
+	smove = cmd.rightmove;
 	scale = PM_CmdScale( &cmd );
 
 // Ridah, moved this down, so we use the actual movement direction
@@ -1110,18 +1198,27 @@ static void PM_WalkMove( void ) {
 	pml.forward[2] = 0;
 	pml.right[2] = 0;
 
-	// project the forward and right directions onto the ground plane
-	PM_ClipVelocity( pml.forward, pml.groundTrace.plane.normal, pml.forward, OVERCLIP );
-	PM_ClipVelocity( pml.right, pml.groundTrace.plane.normal, pml.right, OVERCLIP );
+	// HL1 keeps command wish velocity flat on walkable slopes.  RtCW's ground-plane
+	// projection makes forward uphill movement fight the plane while side movement
+	// gets over-amplified, so keep the HL1 path XY-only here.
+	if ( !bh_movement_integer ) {
+		// project the forward and right directions onto the ground plane
+		PM_ClipVelocity( pml.forward, pml.groundTrace.plane.normal, pml.forward, OVERCLIP );
+		PM_ClipVelocity( pml.right, pml.groundTrace.plane.normal, pml.right, OVERCLIP );
+	}
 	//
 	VectorNormalize( pml.forward );
 	VectorNormalize( pml.right );
 
-	for ( i = 0 ; i < 3 ; i++ ) {
+	for ( i = 0 ; i < ( bh_movement_integer ? 2 : 3 ) ; i++ ) {
 		wishvel[i] = pml.forward[i] * fmove + pml.right[i] * smove;
 	}
-	// when going up or down slopes the wish velocity should Not be zero
-//	wishvel[2] = 0;
+	if ( bh_movement_integer ) {
+		wishvel[2] = 0;
+	} else {
+		// when going up or down slopes the wish velocity should Not be zero
+//		wishvel[2] = 0;
+	}
 
 	VectorCopy( wishvel, wishdir );
 	wishspeed = VectorNormalize( wishdir );
@@ -1129,13 +1226,19 @@ static void PM_WalkMove( void ) {
 
 	// clamp the speed lower if ducking
 	if ( pm->ps->pm_flags & PMF_DUCKED ) {
+		float crouchWishMax = bh_movement_integer ? HL1_CROUCH_SPEED : pm->ps->speed * pm->ps->crouchSpeedScale;
 		/*
 		if ( wishspeed > pm->ps->speed * pm_duckScale ) {
 			wishspeed = pm->ps->speed * pm_duckScale;
 		}
 		*/
-		if ( wishspeed > pm->ps->speed * pm->ps->crouchSpeedScale ) {
-			wishspeed = pm->ps->speed * pm->ps->crouchSpeedScale;
+		if ( bh_movement_integer ) {
+			float hspeed = sqrt( pm->ps->velocity[0] * pm->ps->velocity[0] + pm->ps->velocity[1] * pm->ps->velocity[1] );
+			if ( hspeed < crouchWishMax && wishspeed > crouchWishMax ) {
+				wishspeed = crouchWishMax;
+			}
+		} else if ( wishspeed > crouchWishMax ) {
+			wishspeed = crouchWishMax;
 		}
 	}
 
@@ -1161,11 +1264,17 @@ static void PM_WalkMove( void ) {
 		accelerate = pm_airaccelerate;
 	} else if ( ( pm->ps->stats[STAT_HEALTH] <= 0 ) && pm->ps->aiChar && ( pml.groundTrace.surfaceFlags & SURF_MONSTERSLICK ) )    {
 		accelerate = pm_airaccelerate;
+	} else if ( bh_movement_integer ) {
+		accelerate = HL1_ACCELERATE;
 	} else {
 		accelerate = pm_accelerate;
 	}
 
 	PM_Accelerate( wishdir, wishspeed, accelerate );
+
+	if ( bh_movement_integer ) {
+		PM_HL1SetVelocityForGroundPlane();
+	}
 
 	//Com_Printf("velocity = %1.1f %1.1f %1.1f\n", pm->ps->velocity[0], pm->ps->velocity[1], pm->ps->velocity[2]);
 	//Com_Printf("velocity1 = %1.1f\n", VectorLength(pm->ps->velocity));
@@ -1174,7 +1283,7 @@ static void PM_WalkMove( void ) {
 		pm->ps->velocity[2] -= pm->ps->gravity * pml.frametime;
 	} else if ( ( pm->ps->stats[STAT_HEALTH] <= 0 ) && pm->ps->aiChar && ( pml.groundTrace.surfaceFlags & SURF_MONSTERSLICK ) )   {
 		pm->ps->velocity[2] -= pm->ps->gravity * pml.frametime;
-	} else {
+	} else if ( !bh_movement_integer ) {
 		// don't reset the z velocity for slopes
 //		pm->ps->velocity[2] = 0;
 	}
@@ -1191,18 +1300,20 @@ static void PM_WalkMove( void ) {
 	}
 
 
-	vel = VectorLength( pm->ps->velocity );
-	VectorCopy( pm->ps->velocity, oldvel );
+	if ( !bh_movement_integer ) {
+		vel = VectorLength( pm->ps->velocity );
+		VectorCopy( pm->ps->velocity, oldvel );
 
-	// slide along the ground plane
-	PM_ClipVelocity( pm->ps->velocity, pml.groundTrace.plane.normal,
-					 pm->ps->velocity, OVERCLIP );
+		// slide along the ground plane
+		PM_ClipVelocity( pm->ps->velocity, pml.groundTrace.plane.normal,
+						 pm->ps->velocity, OVERCLIP );
 
-	// RF, only maintain speed if the direction is similar
-	if ( DotProduct( pm->ps->velocity, oldvel ) > 0 ) {
-		// don't decrease velocity when going up or down a slope
-		VectorNormalize( pm->ps->velocity );
-		VectorScale( pm->ps->velocity, vel, pm->ps->velocity );
+		// RF, only maintain speed if the direction is similar
+		if ( DotProduct( pm->ps->velocity, oldvel ) > 0 ) {
+			// don't decrease velocity when going up or down a slope
+			VectorNormalize( pm->ps->velocity );
+			VectorScale( pm->ps->velocity, vel, pm->ps->velocity );
+		}
 	}
 
 	// don't do anything if standing still
@@ -1596,7 +1707,7 @@ static void PM_GroundTrace( void ) {
 
 	point[0] = pm->ps->origin[0];
 	point[1] = pm->ps->origin[1];
-	point[2] = pm->ps->origin[2] - 0.25;
+	point[2] = pm->ps->origin[2] - ( bh_movement_integer ? 2.0f : 0.25f );
 
 	pm->trace( &trace, pm->ps->origin, pm->mins, pm->maxs, point, pm->ps->clientNum, pm->tracemask );
 	pml.groundTrace = trace;
@@ -1617,7 +1728,8 @@ static void PM_GroundTrace( void ) {
 	}
 
 	// check if getting thrown off the ground
-	if ( pm->ps->velocity[2] > 0 && DotProduct( pm->ps->velocity, trace.plane.normal ) > 10 ) {
+	if ( pm->ps->velocity[2] > 0 && DotProduct( pm->ps->velocity, trace.plane.normal ) > 10 &&
+		 ( !bh_movement_integer || pm->ps->velocity[2] > 180.0f ) ) {
 		if ( pm->debugLevel ) {
 			Com_Printf( "%i:kickoff\n", c_pmove );
 		}
@@ -1666,48 +1778,36 @@ static void PM_GroundTrace( void ) {
 			Com_Printf( "%i:Land\n", c_pmove );
 		}
 
-		// HL1-style ramp boost: when hitting a steep slope with speed during bhop,
-		// redirect momentum along the slope instead of killing it.
-		// This lets you launch off ramps when moving fast.
-		// normal[2] < 0.80 = only slopes steeper than ~37 degrees (big ramps/surfs only)
+		// Momentum-style ramp handling for HL1 movement: clip velocity along
+		// the slope and only stay airborne if the clipped Z velocity is actually
+		// high enough.  No artificial boost is added here.
 		if ( bh_movement_integer && trace.plane.normal[2] < 0.80 ) {
 			float hspeed;
 			vec3_t hvel;
+			vec3_t clipped;
 			VectorCopy( pm->ps->velocity, hvel );
 			hvel[2] = 0;
 			hspeed = VectorLength( hvel );
 
-			// Only ramp-boost when moving fast enough (bhop speed)
 			if ( hspeed > 300 ) {
-				float slopeAngle = 1.0f - trace.plane.normal[2]; // 0=flat, ~0.3=steep walkable
-				float boostFactor = hspeed * slopeAngle * 1.4f;
+				VectorCopy( pm->ps->velocity, clipped );
+				PM_ClipVelocity( clipped, trace.plane.normal, clipped, OVERCLIP );
+				if ( clipped[2] > HL1_NON_JUMP_VELOCITY ) {
+					VectorCopy( clipped, pm->ps->velocity );
+					pm->ps->groundEntityNum = ENTITYNUM_NONE;
+					pml.groundPlane = qfalse;
+					pml.walking = qfalse;
 
-				// Clip velocity along the slope to redirect momentum
-				PM_ClipVelocity( pm->ps->velocity, trace.plane.normal,
-								 pm->ps->velocity, OVERCLIP );
-
-				// Add upward boost proportional to speed and slope steepness
-				if ( pm->ps->velocity[2] > 0 ) {
-					pm->ps->velocity[2] += boostFactor;
-				} else {
-					pm->ps->velocity[2] = boostFactor;
+					if ( pm->cmd.forwardmove >= 0 ) {
+						BG_AnimScriptEvent( pm->ps, ANIM_ET_JUMP, qfalse, qtrue );
+						pm->ps->pm_flags &= ~PMF_BACKWARDS_JUMP;
+					} else {
+						BG_AnimScriptEvent( pm->ps, ANIM_ET_JUMPBK, qfalse, qtrue );
+						pm->ps->pm_flags |= PMF_BACKWARDS_JUMP;
+					}
+					PM_AddTouchEnt( trace.entityNum );
+					return;
 				}
-
-				// Launch off the ramp - don't land
-				pm->ps->groundEntityNum = ENTITYNUM_NONE;
-				pml.groundPlane = qfalse;
-				pml.walking = qfalse;
-
-				if ( pm->cmd.forwardmove >= 0 ) {
-					BG_AnimScriptEvent( pm->ps, ANIM_ET_JUMP, qfalse, qtrue );
-					pm->ps->pm_flags &= ~PMF_BACKWARDS_JUMP;
-				} else {
-					BG_AnimScriptEvent( pm->ps, ANIM_ET_JUMPBK, qfalse, qtrue );
-					pm->ps->pm_flags |= PMF_BACKWARDS_JUMP;
-				}
-				// Skip CrashLand and landing timer
-				PM_AddTouchEnt( trace.entityNum );
-				return;
 			}
 		}
 
@@ -1812,7 +1912,7 @@ static void PM_CheckDuck( void ) {
 	}
 
 	// Duck detection
-	if ( pm->cmd.upmove < 0 ) {
+	if ( pm->cmd.upmove < 0 || PM_HL1DuckHeld() ) {
 		// Crouch key held alone
 		pm->ps->pm_flags |= PMF_DUCKED;
 	} else if ( PM_HL1CrouchJumpHeld() ) {
@@ -4165,6 +4265,12 @@ PM_Sprint
 */
 //----(SA)	cleaned up for SP (10/22/01)
 void PM_Sprint( void ) {
+	if ( bh_movement_integer ) {
+		pm->ps->sprintExertTime = 0;
+		pm->ps->sprintTime = 20000;
+		return;
+	}
+
 	if (    ( pm->cmd.buttons & BUTTON_SPRINT ) &&
 			( pm->cmd.forwardmove || pm->cmd.rightmove ) &&
 			!( pm->ps->pm_flags & PMF_DUCKED ) &&

@@ -44,11 +44,25 @@
     	fullScreen MENU_FALSE
     	visible MENU_TRUE
 		style WINDOW_STYLE_EMPTY
-		border 1
+		border 0
 		bordersize 1
 		bordercolor .34 .35 .24 1
     	rect 10 400 10 70
     	scralign bottomLeft
+
+		itemDef {
+			name "stambar_border"
+			decoration
+			visible MENU_TRUE
+			rect -2 -2 10 70
+			scralign bottomLeft
+			style WINDOW_STYLE_EMPTY
+			border 1
+			bordersize 1
+			bordercolor .34 .35 .24 1
+			cvarTest "bh_movement"
+			showCvar { "0" }
+		}
 
 		itemDef {
 			name "stambar"

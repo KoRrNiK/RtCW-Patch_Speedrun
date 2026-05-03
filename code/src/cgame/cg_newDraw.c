@@ -1464,6 +1464,9 @@ float CG_GetValue( int ownerDraw, int type ) {
 #define SPRINTTIME 20000.0f
 
 	case CG_STAMINA:    //----(SA)	added
+		if ( bh_movement.integer ) {
+			return 0.0f;
+		}
 		if ( type == RANGETYPE_RELATIVE ) {
 			return (float)cg.snap->ps.sprintTime / SPRINTTIME;
 		} else {
@@ -2179,6 +2182,10 @@ static void CG_DrawFatigue( rectDef_t *rect, vec4_t color, int align ) {
 	float barFrac;  //, omBarFrac;
 	int flags = 0;
 	float chargeTime;       // DHM - Nerve
+
+	if ( bh_movement.integer ) {
+		return;
+	}
 
 	barFrac = (float)cg.snap->ps.sprintTime / SPRINTTIME;
 //	omBarFrac = 1.0f-barFrac;
