@@ -405,6 +405,29 @@ UI_Shutdown
 void UI_Shutdown( void ) {
 }
 
+static qboolean UI_GetBlackbarSafeRange( float *safeLeft, float *safeRight ) {
+	int left, right, total, maxTotal;
+
+	if ( !trap_Cvar_VariableValue( "cg_blackbars" ) ) return qfalse;
+	left = (int)trap_Cvar_VariableValue( "cg_blackbarLeft" );
+	right = (int)trap_Cvar_VariableValue( "cg_blackbarRight" );
+	if ( left < 0 ) left = 0;
+	if ( right < 0 ) right = 0;
+	if ( left <= 0 && right <= 0 ) return qfalse;
+
+	maxTotal = uiInfo.uiDC.glconfig.vidWidth - 320;
+	if ( maxTotal < 0 ) maxTotal = 0;
+	total = left + right;
+	if ( total > maxTotal && total > 0 ) {
+		left = (int)( (float)left * (float)maxTotal / (float)total );
+		right = maxTotal - left;
+	}
+
+	if ( safeLeft ) *safeLeft = (float)left;
+	if ( safeRight ) *safeRight = (float)( uiInfo.uiDC.glconfig.vidWidth - right );
+	return qtrue;
+}
+
 /*
 ================
 UI_AdjustFrom640
@@ -415,7 +438,8 @@ Adjusted for resolution and screen aspect ratio
 void UI_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 	float	xscale, lb_xscale, yscale, minscale, vertscale;	// Knightmare added
 	float	tmp_x, tmp_y, tmp_w, tmp_h, tmp_left, tmp_right;	// Knightmare added
-	float	xleft, xright;
+	float	xleft, xright, safeLeft, safeRight;
+	qboolean blackbarSafe;
 
 	int scr_surroundlayout = trap_Cvar_VariableValue( "scr_surroundlayout" );
 	float scr_surroundleft = trap_Cvar_VariableValue( "scr_surroundleft" );
@@ -448,13 +472,22 @@ void UI_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align 
 		xright = (float)uiInfo.uiDC.glconfig.vidWidth;
 		xscale = (float)uiInfo.uiDC.glconfig.vidWidth / SCREEN_WIDTH;
 	}
-
-	lb_xscale = (float)uiInfo.uiDC.glconfig.vidWidth / SCREEN_WIDTH;
+	blackbarSafe = UI_GetBlackbarSafeRange( &safeLeft, &safeRight );
+	if ( blackbarSafe ) {
+		if ( safeLeft > xleft ) xleft = safeLeft;
+		if ( safeRight < xright ) xright = safeRight;
+		if ( xright <= xleft ) {
+			xleft = safeLeft;
+			xright = safeRight;
+		}
+		xscale = ( xright - xleft ) / SCREEN_WIDTH;
+	}
+	lb_xscale = blackbarSafe ? xscale : (float)uiInfo.uiDC.glconfig.vidWidth / SCREEN_WIDTH;
 	yscale = (float)uiInfo.uiDC.glconfig.vidHeight / SCREEN_HEIGHT;
 	minscale = min(xscale, yscale);
 
 	// hack for 5:4 modes
-	if ( !(uiInfo.uiDC.xscale > uiInfo.uiDC.yscale) && align != ALIGN_LETTERBOX)
+	if ( !(xscale > yscale) && align != ALIGN_LETTERBOX)
 		align = ALIGN_STRETCH;
 
 	// scale for screen sizes
@@ -464,7 +497,7 @@ void UI_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align 
 	case ALIGN_CENTER:
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * uiInfo.uiDC.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -513,7 +546,7 @@ void UI_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align 
 			*h *= minscale;
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * uiInfo.uiDC.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y)
 			*y *= minscale;
@@ -525,7 +558,7 @@ void UI_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align 
 			*h *= minscale;
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * uiInfo.uiDC.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -640,7 +673,7 @@ void UI_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align 
 		break;
 	case ALIGN_STRETCH_ALL:
 		if (x)
-			*x *= lb_xscale;
+			*x = *x * lb_xscale + ( blackbarSafe ? xleft : 0.0f );
 		if (y) 
 			*y *= yscale;
 		if (w) 
@@ -653,7 +686,7 @@ void UI_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align 
 			tmp_x = *x;
 			tmp_w = *w;
 			tmp_left = tmp_x * xscale + xleft;
-			tmp_right = (tmp_x + tmp_w - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(uiInfo.uiDC.glconfig.vidWidth));
+			tmp_right = (tmp_x + tmp_w - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(xleft + xright));
 			*x = tmp_left;
 			*w = tmp_right - tmp_left;
 		}
@@ -666,7 +699,7 @@ void UI_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align 
 		if (x && w) {
 			tmp_x = *x;
 			tmp_w = *w;
-			tmp_left = (tmp_x - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(uiInfo.uiDC.glconfig.vidWidth));
+			tmp_left = (tmp_x - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(xleft + xright));
 			tmp_right = (tmp_x + tmp_w - SCREEN_WIDTH) * xscale + xright;
 			*x = tmp_left;
 			*w = tmp_right - tmp_left;

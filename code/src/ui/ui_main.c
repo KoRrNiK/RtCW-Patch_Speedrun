@@ -695,6 +695,46 @@ int frameCount = 0;
 int startTime;
 
 #define UI_FPS_FRAMES   4
+
+static void UI_DrawBlackbarBackdrop( void ) {
+	int left, right, total, maxTotal;
+	char colorText[64];
+	float color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	float r, g, b, a;
+
+	if ( !trap_Cvar_VariableValue( "cg_blackbars" ) ) return;
+	left = (int)trap_Cvar_VariableValue( "cg_blackbarLeft" );
+	right = (int)trap_Cvar_VariableValue( "cg_blackbarRight" );
+	if ( left < 0 ) left = 0;
+	if ( right < 0 ) right = 0;
+	if ( left <= 0 && right <= 0 ) return;
+
+	maxTotal = uiInfo.uiDC.glconfig.vidWidth - 320;
+	if ( maxTotal < 0 ) maxTotal = 0;
+	total = left + right;
+	if ( total > maxTotal && total > 0 ) {
+		left = (int)( (float)left * (float)maxTotal / (float)total );
+		right = maxTotal - left;
+	}
+
+	trap_Cvar_VariableStringBuffer( "cg_blackbarColor", colorText, sizeof( colorText ) );
+	if ( sscanf( colorText, "%f %f %f %f", &r, &g, &b, &a ) == 4 ) {
+		color[0] = Com_Clamp( 0.0f, 1.0f, r / 255.0f );
+		color[1] = Com_Clamp( 0.0f, 1.0f, g / 255.0f );
+		color[2] = Com_Clamp( 0.0f, 1.0f, b / 255.0f );
+		color[3] = Com_Clamp( 0.0f, 1.0f, a );
+	}
+
+	trap_R_SetColor( color );
+	if ( left > 0 ) {
+		trap_R_DrawStretchPic( 0, 0, left, uiInfo.uiDC.glconfig.vidHeight, 0, 0, 0, 1, uiInfo.uiDC.whiteShader );
+	}
+	if ( right > 0 ) {
+		trap_R_DrawStretchPic( uiInfo.uiDC.glconfig.vidWidth - right, 0, right, uiInfo.uiDC.glconfig.vidHeight, 0, 0, 0, 1, uiInfo.uiDC.whiteShader );
+	}
+	trap_R_SetColor( NULL );
+}
+
 void _UI_Refresh( int realtime ) {
 	static int index;
 	static int previousTimes[UI_FPS_FRAMES];
@@ -726,6 +766,7 @@ void _UI_Refresh( int realtime ) {
 	UI_UpdateCvars();
 
 	if ( Menu_Count() > 0 ) {
+		UI_DrawBlackbarBackdrop();
 		// paint all the menus
 		Menu_PaintAll();
 		// refresh server browser list
@@ -2715,8 +2756,47 @@ UI_CpickCursorToVirtual
 ===============
 */
 static void UI_CpickCursorToVirtual( float *outX, float *outY ) {
-	*outX = ( (float)DC->cursorx - 0.5f * DC->glconfig.vidWidth  ) / DC->minscale + 320.0f;
-	*outY = ( (float)DC->cursory - 0.5f * DC->glconfig.vidHeight ) / DC->minscale + 240.0f;
+	float xleft, xright, xscale, yscale, minscale;
+	int left, right, total, maxTotal;
+	int scr_surroundlayout = trap_Cvar_VariableValue( "scr_surroundlayout" );
+	float scr_surroundleft = trap_Cvar_VariableValue( "scr_surroundleft" );
+	float scr_surroundright = trap_Cvar_VariableValue( "scr_surroundright" );
+
+	if ( scr_surroundlayout != 0 && DC->screenAspect >= 3.6f ) {
+		xleft = ( scr_surroundleft > 0.0f && scr_surroundleft < 1.0f ) ? (float)DC->glconfig.vidWidth * scr_surroundleft : (float)DC->glconfig.vidWidth / 3.0f;
+		xright = ( scr_surroundright > 0.0f && scr_surroundright < 1.0f ) ? (float)DC->glconfig.vidWidth * scr_surroundright : (float)DC->glconfig.vidWidth * ( 2.0f / 3.0f );
+	} else {
+		xleft = 0.0f;
+		xright = (float)DC->glconfig.vidWidth;
+	}
+
+	if ( trap_Cvar_VariableValue( "cg_blackbars" ) ) {
+		left = (int)trap_Cvar_VariableValue( "cg_blackbarLeft" );
+		right = (int)trap_Cvar_VariableValue( "cg_blackbarRight" );
+		if ( left < 0 ) left = 0;
+		if ( right < 0 ) right = 0;
+		if ( left > 0 || right > 0 ) {
+			maxTotal = DC->glconfig.vidWidth - 320;
+			if ( maxTotal < 0 ) maxTotal = 0;
+			total = left + right;
+			if ( total > maxTotal && total > 0 ) {
+				left = (int)( (float)left * (float)maxTotal / (float)total );
+				right = maxTotal - left;
+			}
+			if ( (float)left > xleft ) xleft = (float)left;
+			if ( (float)( DC->glconfig.vidWidth - right ) < xright ) xright = (float)( DC->glconfig.vidWidth - right );
+			if ( xright <= xleft ) {
+				xleft = (float)left;
+				xright = (float)( DC->glconfig.vidWidth - right );
+			}
+		}
+	}
+
+	xscale = ( xright - xleft ) / 640.0f;
+	yscale = (float)DC->glconfig.vidHeight / 480.0f;
+	minscale = min( xscale, yscale );
+	*outX = ( (float)DC->cursorx - 0.5f * ( xleft + xright ) ) / minscale + 320.0f;
+	*outY = ( (float)DC->cursory - 0.5f * DC->glconfig.vidHeight ) / minscale + 240.0f;
 }
 
 /*

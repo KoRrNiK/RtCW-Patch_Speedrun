@@ -27,6 +27,7 @@
 	loadMenu { "ui/ingame_help.menu" }
 
 	// Speedrun additions
+	loadMenu { "ui/race.menu" }
 	loadMenu { "ui/ingame_livesplit.menu" }
 	loadMenu { "ui/colorpicker.menu" }
 }

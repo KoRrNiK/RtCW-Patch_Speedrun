@@ -69,6 +69,31 @@ int openMenuCount = 0;
 
 static qboolean debugMode = qfalse;
 
+static qboolean UI_BlackbarCapColor( const Window *w, vec4_t color ) {
+	char colorText[64];
+	float r, g, b, a;
+
+	if ( !w || !w->name ) return qfalse;
+	if ( Q_stricmp( w->name, "blackleft" ) && Q_stricmp( w->name, "blackright" ) ) return qfalse;
+
+	color[0] = 0.0f;
+	color[1] = 0.0f;
+	color[2] = 0.0f;
+	color[3] = 1.0f;
+
+	if ( DC && DC->getCVarString ) {
+		DC->getCVarString( "cg_blackbarColor", colorText, sizeof( colorText ) );
+		if ( sscanf( colorText, "%f %f %f %f", &r, &g, &b, &a ) == 4 ) {
+			color[0] = Com_Clamp( 0.0f, 1.0f, r / 255.0f );
+			color[1] = Com_Clamp( 0.0f, 1.0f, g / 255.0f );
+			color[2] = Com_Clamp( 0.0f, 1.0f, b / 255.0f );
+			color[3] = Com_Clamp( 0.0f, 1.0f, a );
+		}
+	}
+
+	return qtrue;
+}
+
 #define DOUBLE_CLICK_DELAY 300
 static int lastListBoxClickTime = 0;
 
@@ -853,7 +878,9 @@ void Window_Paint( Window *w, float fadeAmount, float fadeClamp, float fadeCycle
 
 	if ( w->style == WINDOW_STYLE_FILLED ) {
 		// box, but possible a shader that needs filled
-		if ( w->background ) {
+		if ( UI_BlackbarCapColor( w, color ) ) {
+			DC->fillRect( fillRect.x, fillRect.y, fillRect.w, fillRect.h, color, fillRect.scrAlign );
+		} else if ( w->background ) {
 			Fade( &w->flags, &w->backColor[3], fadeClamp, &w->nextTime, fadeCycle, qtrue, fadeAmount );
 			DC->setColor( w->backColor );
 			DC->drawHandlePic( fillRect.x, fillRect.y, fillRect.w, fillRect.h, w->background, fillRect.scrAlign );
@@ -885,7 +912,10 @@ void Window_Paint( Window *w, float fadeAmount, float fadeClamp, float fadeCycle
 		GradientBar_Paint( &fillRect, w->backColor );
 		// gradient bar
 	} else if ( w->style == WINDOW_STYLE_SHADER ) {
-		if ( w->flags & WINDOW_FORECOLORSET ) {
+		if ( UI_BlackbarCapColor( w, color ) ) {
+			DC->fillRect( fillRect.x, fillRect.y, fillRect.w, fillRect.h, color, fillRect.scrAlign );
+			return;
+		} else if ( w->flags & WINDOW_FORECOLORSET ) {
 			DC->setColor( w->foreColor );
 		}
 		DC->drawHandlePic( fillRect.x, fillRect.y, fillRect.w, fillRect.h, w->background, fillRect.scrAlign );
@@ -1053,6 +1083,74 @@ itemDef_t *Menu_ClearFocus( menuDef_t *menu ) {
 
 qboolean IsVisible( int flags ) {
 	return ( flags & WINDOW_VISIBLE && !( flags & WINDOW_FADINGOUT ) );
+}
+
+static void UIShared_GetScaleMetrics( float *xscaleOut, float *yscaleOut, float *minscaleOut, float *xleftOut, float *xrightOut ) {
+	float xscale, yscale, minscale;
+	float xleft, xright, safeLeft, safeRight;
+	int left, right, total, maxTotal;
+	qboolean blackbarSafe;
+	int scr_surroundlayout = DC->getCVarValue( "scr_surroundlayout" );
+	float scr_surroundleft = DC->getCVarValue( "scr_surroundleft" );
+	float scr_surroundright = DC->getCVarValue( "scr_surroundright" );
+
+	if (scr_surroundlayout != 0 && DC->screenAspect >= 3.6f)
+	{
+		if (scr_surroundleft > 0.0f && scr_surroundleft < 1.0f)
+			xleft = (float)DC->glconfig.vidWidth * scr_surroundleft;
+		else
+			xleft = (float)DC->glconfig.vidWidth / 3.0f;
+		if (scr_surroundright > 0.0f && scr_surroundright < 1.0f)
+			xright = (float)DC->glconfig.vidWidth * scr_surroundright;
+		else
+			xright = (float)DC->glconfig.vidWidth * (2.0f / 3.0f);
+		xscale = (xright - xleft) / SCREEN_WIDTH;
+	}
+	else
+	{
+		xleft = 0.0f;
+		xright = (float)DC->glconfig.vidWidth;
+		xscale = (float)DC->glconfig.vidWidth / SCREEN_WIDTH;
+	}
+
+	blackbarSafe = qfalse;
+	if ( DC->getCVarValue( "cg_blackbars" ) ) {
+		left = (int)DC->getCVarValue( "cg_blackbarLeft" );
+		right = (int)DC->getCVarValue( "cg_blackbarRight" );
+		if ( left < 0 ) left = 0;
+		if ( right < 0 ) right = 0;
+		if ( left > 0 || right > 0 ) {
+			maxTotal = DC->glconfig.vidWidth - 320;
+			if ( maxTotal < 0 ) maxTotal = 0;
+			total = left + right;
+			if ( total > maxTotal && total > 0 ) {
+				left = (int)( (float)left * (float)maxTotal / (float)total );
+				right = maxTotal - left;
+			}
+			safeLeft = (float)left;
+			safeRight = (float)( DC->glconfig.vidWidth - right );
+			blackbarSafe = qtrue;
+		}
+	}
+
+	if ( blackbarSafe ) {
+		if ( safeLeft > xleft ) xleft = safeLeft;
+		if ( safeRight < xright ) xright = safeRight;
+		if ( xright <= xleft ) {
+			xleft = safeLeft;
+			xright = safeRight;
+		}
+		xscale = ( xright - xleft ) / SCREEN_WIDTH;
+	}
+
+	yscale = (float)DC->glconfig.vidHeight / SCREEN_HEIGHT;
+	minscale = min(xscale, yscale);
+
+	if ( xscaleOut ) *xscaleOut = xscale;
+	if ( yscaleOut ) *yscaleOut = yscale;
+	if ( minscaleOut ) *minscaleOut = minscale;
+	if ( xleftOut ) *xleftOut = xleft;
+	if ( xrightOut ) *xrightOut = xright;
 }
 
 // Knightmare- reworked this to scale rect coords
@@ -4387,37 +4485,14 @@ void AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 	float	xscale, lb_xscale, yscale, minscale, vertscale;	// Knightmare added
 	float	tmp_x, tmp_y, tmp_w, tmp_h, tmp_left, tmp_right;	// Knightmare added
 	float	xleft, xright;
+	qboolean blackbarSafe;
 
-	int scr_surroundlayout = DC->getCVarValue( "scr_surroundlayout" );
-	float scr_surroundleft = DC->getCVarValue( "scr_surroundleft" );
-	float scr_surroundright = DC->getCVarValue( "scr_surroundright" );
-
-	// for eyefinity/surround setups, keep everything on the center monitor
-	if (scr_surroundlayout != 0 && DC->screenAspect >= 3.6f)
-	{
-		if (scr_surroundleft > 0.0f && scr_surroundleft < 1.0f)
-			xleft = (float)DC->glconfig.vidWidth * scr_surroundleft;
-		else
-			xleft = (float)DC->glconfig.vidWidth / 3.0f;
-		if (scr_surroundright > 0.0f && scr_surroundright < 1.0f)
-			xright = (float)DC->glconfig.vidWidth * scr_surroundright;
-		else
-			xright = (float)DC->glconfig.vidWidth * (2.0f / 3.0f);
-		xscale = (xright - xleft) / SCREEN_WIDTH;
-	}
-	else
-	{
-		xleft = 0.0f;
-		xright = (float)DC->glconfig.vidWidth;
-		xscale = (float)DC->glconfig.vidWidth / SCREEN_WIDTH;
-	}
-
-	lb_xscale = (float)DC->glconfig.vidWidth / SCREEN_WIDTH;
-	yscale = (float)DC->glconfig.vidHeight / SCREEN_HEIGHT;
-	minscale = min(xscale, yscale);
+	UIShared_GetScaleMetrics( &xscale, &yscale, &minscale, &xleft, &xright );
+	blackbarSafe = ( DC->getCVarValue( "cg_blackbars" ) && ( DC->getCVarValue( "cg_blackbarLeft" ) > 0.0f || DC->getCVarValue( "cg_blackbarRight" ) > 0.0f ) );
+	lb_xscale = blackbarSafe ? xscale : (float)DC->glconfig.vidWidth / SCREEN_WIDTH;
 
 	// hack for 5:4 modes
-	if ( !(DC->xscale > DC->yscale) && align != ALIGN_LETTERBOX)
+	if ( !(xscale > yscale) && align != ALIGN_LETTERBOX)
 		align = ALIGN_STRETCH;
 
 	// scale for screen sizes
@@ -4427,7 +4502,7 @@ void AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 	case ALIGN_CENTER:
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * DC->glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -4476,7 +4551,7 @@ void AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 			*h *= minscale;
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * DC->glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y)
 			*y *= minscale;
@@ -4488,7 +4563,7 @@ void AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 			*h *= minscale;
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * DC->glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -4603,7 +4678,7 @@ void AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 		break;
 	case ALIGN_STRETCH_ALL:
 		if (x)
-			*x *= lb_xscale;
+			*x = *x * lb_xscale + ( blackbarSafe ? xleft : 0.0f );
 		if (y) 
 			*y *= yscale;
 		if (w) 
@@ -4616,7 +4691,7 @@ void AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 			tmp_x = *x;
 			tmp_w = *w;
 			tmp_left = tmp_x * xscale + xleft;
-			tmp_right = (tmp_x + tmp_w - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(DC->glconfig.vidWidth));
+			tmp_right = (tmp_x + tmp_w - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(xleft + xright));
 			*x = tmp_left;
 			*w = tmp_right - tmp_left;
 		}
@@ -4629,7 +4704,7 @@ void AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 		if (x && w) {
 			tmp_x = *x;
 			tmp_w = *w;
-			tmp_left = (tmp_x - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(DC->glconfig.vidWidth));
+			tmp_left = (tmp_x - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(xleft + xright));
 			tmp_right = (tmp_x + tmp_w - SCREEN_WIDTH) * xscale + xright;
 			*x = tmp_left;
 			*w = tmp_right - tmp_left;
@@ -4664,14 +4739,18 @@ void AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align ) {
 
 // Knightmare- added for reverse-scaling objects for mouseover
 float GetScaleForAlign ( qboolean isY, scralign_t align ) {
+	float xscale, yscale, minscale;
+
+	UIShared_GetScaleMetrics( &xscale, &yscale, &minscale, NULL, NULL );
+
 	// hack for 4:3 modes
-	if ( !(DC->xscale > DC->yscale) && align != ALIGN_LETTERBOX)
+	if ( !(xscale > yscale) && align != ALIGN_LETTERBOX)
 		align = ALIGN_STRETCH;
 
 	switch (align)
 	{
 	case ALIGN_LETTERBOX:
-		return DC->xscale;
+		return xscale;
 	case ALIGN_CENTER:
 	case ALIGN_TOP:
 	case ALIGN_BOTTOM:
@@ -4681,22 +4760,22 @@ float GetScaleForAlign ( qboolean isY, scralign_t align ) {
 	case ALIGN_TOPLEFT:
 	case ALIGN_BOTTOMRIGHT:
 	case ALIGN_BOTTOMLEFT:
-		return DC->minscale;
+		return minscale;
 	case ALIGN_TOP_STRETCH:
 	case ALIGN_BOTTOM_STRETCH:
 		if (isY)
-			return DC->minscale;
+			return minscale;
 		else
-			return DC->xscale;
+			return xscale;
 	case ALIGN_STRETCH:
 	case ALIGN_STRETCH_LEFT_CENTER:
 	case ALIGN_STRETCH_RIGHT_CENTER:
 	case ALIGN_STRETCH_ALL:
 	default:
 			if (isY)
-			return DC->yscale;
+			return yscale;
 		else
-			return DC->xscale;
+			return xscale;
 	}
 }
 

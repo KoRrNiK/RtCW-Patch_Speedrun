@@ -186,33 +186,29 @@ menuDef {
 		visible 1
 		decoration
 		}
-		
-	// black left model cap for surround modes
+
+	// black left model cap for surround modes; runtime tint follows cg_blackbarColor
 	itemDef {
 		name blackleft
-		style WINDOW_STYLE_SHADER
+		style WINDOW_STYLE_FILLED
 		rect -120 0 120 480
 		scralign stretch
-		background "ui/assets/fadebox.tga"
-		forecolor 0 0 0 1
-		backcolor 0 0 0 1
-		visible 1
-		decoration
-		}
-		
-	// black right model cap for surround modes
-	itemDef {
-		name blackright
-		style WINDOW_STYLE_SHADER
-		rect 640 0 120 480
-		scralign stretch
-		background "ui/assets/fadebox.tga"
-		forecolor 0 0 0 1
 		backcolor 0 0 0 1
 		visible 1
 		decoration
 		}
 
+	// black right model cap for surround modes; runtime tint follows cg_blackbarColor
+	itemDef {
+		name blackright
+		style WINDOW_STYLE_FILLED
+		rect 640 0 120 480
+		scralign stretch
+		backcolor 0 0 0 1
+		visible 1
+		decoration
+		}
+		
 	itemDef {
 		name BLACKGRAD					// BLACKGRAD
 		style WINDOW_STYLE_SHADER
@@ -309,7 +305,7 @@ menuDef {
 		rect 0 410 250 10
 //		rect -256 410 506 10
 //		rect 233 410 17 10
-		scralign stretchLeftCenter	// bottom	// bottomStretch
+		scralign stretchLeftCenter	// bottom		// bottomStretch
 		background "gold_line"
 		visible 1
 		decoration
@@ -321,7 +317,7 @@ menuDef {
 		rect 390 410 250 10
 //		rect 390 410 506 10
 //		rect 390 410 17 10
-		scralign stretchRightCenter	// bottom	// bottomStretch
+		scralign stretchRightCenter	// bottom		// bottomStretch
 		background "gold_line"
 		visible 1
 		decoration
@@ -420,6 +416,25 @@ itemDef {
 		mouseEnter { fadein message_accept ; setitemcolor speedrun forecolor .95 1.0 .85 1 }
 		mouseExit { setitemcolor speedrun forecolor .75 .95 .55 .9 }
 		action { setcvar ui_speedrun_imgui_restore_pause 0 ; close main ; exec "speedrun_gui_open" ; play "sound/misc/zap.wav" ; }
+    }
+
+itemDef {
+		name race
+		text "RACE"
+		type 1
+		style 0
+		textstyle 6
+		rect 268 378 104 16
+		textalign 1
+		textscale .25
+		textalignx 52
+		textaligny 13
+		forecolor .75 .95 .55 .9
+		visible 1
+		textfont UI_FONT_NORMAL
+		mouseEnter { fadein message_accept ; setitemcolor race forecolor .95 1.0 .85 1 }
+		mouseExit { setitemcolor race forecolor .75 .95 .55 .9 }
+		action { setcvar ui_speedrun_imgui_restore_pause 0 ; close main ; exec "ls_race_open" ; play "sound/misc/zap.wav" ; }
     }
 	
 	itemDef {

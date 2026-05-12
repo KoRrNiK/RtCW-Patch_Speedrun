@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <float.h>
 #include <math.h>
+#include <stdint.h>
 
 extern "C" {
 #include "client.h"
@@ -18,6 +19,16 @@ void Key_ClearStates( void );
 
 static bool     s_imguiInitialized = false;
 static bool     s_imguiOpen = false;
+static bool     s_raceGuiOpen = false;
+static bool     s_raceGuiPinned = false;
+static bool     s_raceGuiRestoreAfterChat = false;
+static HWND     s_imguiHwnd = NULL;
+static bool     s_raceChatOpen = false;
+static bool     s_raceChatFocus = false;
+static int      s_raceChatPreviousCatcher = 0;
+static int      s_raceChatSuppressInputUntilMs = 0;
+static int      s_raceChatIgnoreSubmitUntilMs = 0;
+static char     s_raceChatInput[128] = "";
 static int      s_lastEnabledCvar = 0;
 static cvar_t  *s_imguiEnabled = NULL;
 static cvar_t  *s_imguiAlpha = NULL;
@@ -32,8 +43,13 @@ static cvar_t  *s_imguiWindowX = NULL;
 static cvar_t  *s_imguiWindowY = NULL;
 static cvar_t  *s_imguiWindowW = NULL;
 static cvar_t  *s_imguiWindowH = NULL;
+static cvar_t  *s_raceGuiWindowX = NULL;
+static cvar_t  *s_raceGuiWindowY = NULL;
+static cvar_t  *s_raceGuiWindowW = NULL;
+static cvar_t  *s_raceGuiWindowH = NULL;
 static int      s_lastFrameMs = 0;
 static float    s_imguiAnim = 1.0f;
+static float    s_raceGuiAnim = 1.0f;
 static bool     s_mouseDown[5] = { false, false, false, false, false };
 static float    s_mouseWheel = 0.0f;
 static const char *s_pendingBindCommand = NULL;
@@ -42,7 +58,7 @@ static bool     s_imguiMinimized = false;
 static char     s_settingsSearch[64] = "";
 static bool     s_imguiPinned = false;
 static ImFont  *s_imguiTimerFont = NULL;
-#define SRGUI_LIVESPLIT_FONT_COUNT 32
+#define SRGUI_LIVESPLIT_FONT_COUNT 33
 #define SRGUI_LIVESPLIT_FONT_TIER_COUNT 4
 static const float s_imguiLiveSplitFontTierPixels[SRGUI_LIVESPLIT_FONT_TIER_COUNT] = { 15.0f, 22.0f, 32.0f, 45.0f };
 static ImFont  *s_imguiLiveSplitFonts[SRGUI_LIVESPLIT_FONT_COUNT] = { NULL };
@@ -50,6 +66,18 @@ static ImFont  *s_imguiLiveSplitBoldFonts[SRGUI_LIVESPLIT_FONT_COUNT] = { NULL }
 static ImFont  *s_imguiLiveSplitFontTiers[SRGUI_LIVESPLIT_FONT_COUNT][SRGUI_LIVESPLIT_FONT_TIER_COUNT] = { NULL };
 static ImFont  *s_imguiLiveSplitBoldFontTiers[SRGUI_LIVESPLIT_FONT_COUNT][SRGUI_LIVESPLIT_FONT_TIER_COUNT] = { NULL };
 static bool     s_liveSplitEditActive = false;
+
+static bool CL_SpeedrunImGui_HasPanelOpen( void ) {
+	return s_imguiOpen || s_raceGuiOpen;
+}
+
+static void CL_ImGuiDrawLiveSplitOverlay( void );
+static bool CL_ImGuiShouldDrawZoneTimerOverlay( void );
+static void CL_ImGuiDrawZoneTimerOverlay( void );
+static bool CL_ImGuiShouldDrawRaceOverlay( void );
+static void CL_ImGuiDrawRaceOverlay( void );
+static bool CL_ImGuiShouldDrawRaceCountdown( void );
+static void CL_ImGuiDrawRaceCenterCountdown( void );
 
 static const char *s_imguiLiveSplitFontPaths[SRGUI_LIVESPLIT_FONT_COUNT] = {
 	"C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\consola.ttf", "C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\tahoma.ttf",
@@ -59,7 +87,8 @@ static const char *s_imguiLiveSplitFontPaths[SRGUI_LIVESPLIT_FONT_COUNT] = {
 	"C:\\Windows\\Fonts\\segoeuisb.ttf", "C:\\Windows\\Fonts\\segoeuil.ttf", "C:\\Windows\\Fonts\\segoeuii.ttf", "C:\\Windows\\Fonts\\ariali.ttf",
 	"C:\\Windows\\Fonts\\arialbi.ttf", "C:\\Windows\\Fonts\\cambria.ttf", "C:\\Windows\\Fonts\\cambriab.ttf", "C:\\Windows\\Fonts\\constan.ttf",
 	"C:\\Windows\\Fonts\\constanb.ttf", "C:\\Windows\\Fonts\\comic.ttf", "C:\\Windows\\Fonts\\comicbd.ttf", "C:\\Windows\\Fonts\\gadugi.ttf",
-	"C:\\Windows\\Fonts\\gadugib.ttf", "C:\\Windows\\Fonts\\bahnschrift.ttf", "C:\\Windows\\Fonts\\palai.ttf", "C:\\Windows\\Fonts\\palab.ttf"
+	"C:\\Windows\\Fonts\\gadugib.ttf", "C:\\Windows\\Fonts\\bahnschrift.ttf", "C:\\Windows\\Fonts\\palai.ttf", "C:\\Windows\\Fonts\\palab.ttf",
+	"C:\\Windows\\Fonts\\ariblk.ttf"
 };
 
 static const char *s_imguiLiveSplitBoldFontPaths[SRGUI_LIVESPLIT_FONT_COUNT] = {
@@ -70,24 +99,46 @@ static const char *s_imguiLiveSplitBoldFontPaths[SRGUI_LIVESPLIT_FONT_COUNT] = {
 	"C:\\Windows\\Fonts\\segoeuisb.ttf", "C:\\Windows\\Fonts\\segoeuib.ttf", "C:\\Windows\\Fonts\\segoeuiz.ttf", "C:\\Windows\\Fonts\\arialbi.ttf",
 	"C:\\Windows\\Fonts\\arialbi.ttf", "C:\\Windows\\Fonts\\cambriab.ttf", "C:\\Windows\\Fonts\\cambriab.ttf", "C:\\Windows\\Fonts\\constanb.ttf",
 	"C:\\Windows\\Fonts\\constanb.ttf", "C:\\Windows\\Fonts\\comicbd.ttf", "C:\\Windows\\Fonts\\comicbd.ttf", "C:\\Windows\\Fonts\\gadugib.ttf",
-	"C:\\Windows\\Fonts\\gadugib.ttf", "C:\\Windows\\Fonts\\bahnschrift.ttf", "C:\\Windows\\Fonts\\palab.ttf", "C:\\Windows\\Fonts\\palab.ttf"
+	"C:\\Windows\\Fonts\\gadugib.ttf", "C:\\Windows\\Fonts\\bahnschrift.ttf", "C:\\Windows\\Fonts\\palab.ttf", "C:\\Windows\\Fonts\\palab.ttf",
+	"C:\\Windows\\Fonts\\ariblk.ttf"
 };
 
 static bool CL_ImGuiLoadLiveSplitLargeFontTier( int fontIndex, int tier ) {
 	if ( tier <= 1 ) return true;
-	return fontIndex == 0 || fontIndex == 1 || fontIndex == 2 || fontIndex == 7 || fontIndex == 12 || fontIndex == 15 || fontIndex == 29;
+	return fontIndex == 0 || fontIndex == 1 || fontIndex == 2 || fontIndex == 7 || fontIndex == 12 || fontIndex == 15 || fontIndex == 29 || fontIndex == 32;
 }
 
 static float CL_ImGuiAutoBoxHeight( int rows ) {
 	float line = ImGui::GetFrameHeightWithSpacing();
-	return 8.0f + rows * line + ImGui::GetStyle().WindowPadding.y * 2.0f;
+	return 2.0f + rows * line + ImGui::GetStyle().WindowPadding.y * 2.0f;
+}
+
+static bool CL_ImGuiBeginAutoBox( const char *label ) {
+	return ImGui::BeginChild( label, ImVec2( 0, 0 ), ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings );
+}
+
+static bool CL_ImGuiSameLineIfFits( float nextWidth, float spacing = -1.0f ) {
+	float gap = spacing >= 0.0f ? spacing : ImGui::GetStyle().ItemSpacing.x;
+	if ( ImGui::GetContentRegionAvail().x < nextWidth + gap ) {
+		return false;
+	}
+	if ( spacing >= 0.0f ) {
+		ImGui::SameLine( 0.0f, spacing );
+	} else {
+		ImGui::SameLine();
+	}
+	return true;
 }
 
 static ImFont *CL_ImGuiAddFontFileSafe( ImGuiIO &io, const char *path, float sizePixels ) {
 	if ( !path || GetFileAttributesA( path ) == INVALID_FILE_ATTRIBUTES ) {
 		return NULL;
 	}
-	return io.Fonts->AddFontFromFileTTF( path, sizePixels );
+	ImFontConfig cfg;
+	cfg.OversampleH = 1;
+	cfg.OversampleV = 1;
+	cfg.PixelSnapH = true;
+	return io.Fonts->AddFontFromFileTTF( path, sizePixels, &cfg );
 }
 
 #define SRGUI_MAX_DEMOS 256
@@ -128,7 +179,10 @@ enum srGuiSettingType_t {
 	SRGUI_SETTING_BOOL,
 	SRGUI_SETTING_FLOAT,
 	SRGUI_SETTING_INT,
-	SRGUI_SETTING_COMMAND
+	SRGUI_SETTING_INPUT_INT,
+	SRGUI_SETTING_COLOR,
+	SRGUI_SETTING_COMMAND,
+	SRGUI_SETTING_PAGE
 };
 
 typedef struct {
@@ -143,37 +197,460 @@ typedef struct {
 	const char *command;
 } srGuiSettingEntry_t;
 
+#define SRGUI_BOOL( label, name, def, tags, cat ) { label, name, def, tags, cat, SRGUI_SETTING_BOOL, 0.0f, 0.0f, NULL }
+#define SRGUI_FLOAT( label, name, def, tags, cat, minv, maxv ) { label, name, def, tags, cat, SRGUI_SETTING_FLOAT, minv, maxv, NULL }
+#define SRGUI_INT( label, name, def, tags, cat, minv, maxv ) { label, name, def, tags, cat, SRGUI_SETTING_INT, (float)( minv ), (float)( maxv ), NULL }
+#define SRGUI_INPUT_INT( label, name, def, tags, cat, minv, maxv ) { label, name, def, tags, cat, SRGUI_SETTING_INPUT_INT, (float)( minv ), (float)( maxv ), NULL }
+#define SRGUI_COLOR( label, name, def, tags, cat ) { label, name, def, tags, cat, SRGUI_SETTING_COLOR, 0.0f, 0.0f, NULL }
+#define SRGUI_COMMAND( label, command, tags, cat ) { label, command, "", tags, cat, SRGUI_SETTING_COMMAND, 0.0f, 0.0f, command }
+#define SRGUI_PAGE( label, name, tags, cat ) { label, name, "", tags, cat, SRGUI_SETTING_PAGE, 0.0f, 0.0f, NULL }
+
 static const srGuiSettingEntry_t s_settingEntries[] = {
-	{ "Enable Timer", "cg_livesplit", "0", "timer run livesplit", 0, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Show LiveSplit", "ls_draw", "1", "overlay splits hud", 3, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Splits Opacity", "ls_opacity", "0.900000", "opacity alpha splits", 2, SRGUI_SETTING_FLOAT, 0.0f, 1.0f, NULL },
-	{ "Panel X", "ls_x", "6.666843", "position layout", 2, SRGUI_SETTING_FLOAT, 0.0f, 580.0f, NULL },
-	{ "Panel Y", "ls_y", "92.444427", "position layout", 2, SRGUI_SETTING_FLOAT, 0.0f, 440.0f, NULL },
-	{ "Panel Width", "ls_w", "215", "width layout", 2, SRGUI_SETTING_FLOAT, 80.0f, 400.0f, NULL },
-	{ "Show Ghost", "ls_ghost", "0", "ghost replay", 4, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Ghost Opacity", "ls_ghost_opacity", "60", "ghost opacity alpha", 4, SRGUI_SETTING_INT, 5, 255, NULL },
-	{ "Weapon Render Mode", "cg_weapon_color_mode", "0", "weapon color rainbow flat xray", 4, SRGUI_SETTING_INT, 0, 7, NULL },
-	{ "Weapon Opacity", "cg_weapon_color_opacity", "0.35", "weapon opacity alpha tint", 4, SRGUI_SETTING_FLOAT, 0.0f, 1.0f, NULL },
-	{ "Grid", "ui_speedrun_grid", "0", "grid layout siatka", 5, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Grid Size", "ui_speedrun_grid_size", "32", "grid size wymiar", 5, SRGUI_SETTING_FLOAT, 8.0f, 160.0f, NULL },
-	{ "Grid Opacity", "ui_speedrun_grid_opacity", "0.22", "grid opacity alpha", 5, SRGUI_SETTING_FLOAT, 0.02f, 0.75f, NULL },
-	{ "HUD Edit Mode", "ui_speedrun_layout_edit", "0", "drag move layout hud livesplit", 5, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Show FPS", "cg_drawfps", "0", "fps counter", 3, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "FPS X", "cg_fpsX", "500", "fps position", 3, SRGUI_SETTING_FLOAT, 0.0f, 640.0f, NULL },
-	{ "FPS Y", "cg_fpsY", "0", "fps position", 3, SRGUI_SETTING_FLOAT, 0.0f, 440.0f, NULL },
-	{ "Show Keystrokes", "cg_drawKeys", "1", "keys input overlay", 3, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Speedometer", "cg_drawVelocity", "1", "speed fps velocity", 3, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Velocity X", "cg_velocity_x", "320", "speedometer position", 3, SRGUI_SETTING_FLOAT, 0.0f, 640.0f, NULL },
-	{ "Velocity Y", "cg_velocity_y", "457", "speedometer position", 3, SRGUI_SETTING_FLOAT, 0.0f, 480.0f, NULL },
-	{ "HL1 Bhop Physics", "bh_movement", "0", "bhop movement", 4, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Auto Jump", "bh_autojump", "0", "bhop jump", 4, SRGUI_SETTING_BOOL, 0, 0, NULL },
-	{ "Start Run", "livesplit_start", "", "run timer start", 9, SRGUI_SETTING_COMMAND, 0, 0, "livesplit_start" },
-	{ "Reset Run", "livesplit_reset", "", "reset timer run", 9, SRGUI_SETTING_COMMAND, 0, 0, "livesplit_reset" },
-	{ "Save Position", "savepos", "", "save practice", 9, SRGUI_SETTING_COMMAND, 0, 0, "savepos" },
-	{ "Load Position", "loadpos", "", "load practice", 9, SRGUI_SETTING_COMMAND, 0, 0, "loadpos" },
-	{ "Demo Pause", "demo_pause", "", "demo playback", 8, SRGUI_SETTING_COMMAND, 0, 0, "demo_pause" },
-	{ "Demo Freecam", "demo_freecam", "", "demo camera", 8, SRGUI_SETTING_COMMAND, 0, 0, "demo_freecam" }
+	SRGUI_BOOL( "Enable Timer", "cg_livesplit", "0", "timer run livesplit wlacz", 0 ),
+	SRGUI_BOOL( "Show LiveSplit Panel", "ls_draw", "1", "overlay panel splits hud", 0 ),
+	SRGUI_PAGE( "LiveSplit Type", "ls_type", "timer external in-game typ combo", 0 ),
+	SRGUI_PAGE( "Run Mode", "ls_mode", "full game chapter individual level IL tryb", 0 ),
+	SRGUI_PAGE( "Chapter", "ls_mission", "mission chapter rozdzial", 0 ),
+	SRGUI_PAGE( "IL Map", "ls_map", "individual level map escape castle tram norway boss", 0 ),
+	SRGUI_BOOL( "100% Category", "ls_100pct", "0", "100 percent all secrets treasure", 0 ),
+	SRGUI_PAGE( "Compare Against", "ls_compare", "personal best segments average compare", 0 ),
+	SRGUI_PAGE( "Timing Method", "ls_timing", "game time real time timing czas", 0 ),
+	SRGUI_BOOL( "Timer Decimals", "sp_timer_decimals", "1", "timer decimals fractional values", 0 ),
+	SRGUI_BOOL( "Auto-Record Demos", "sp_autorecord", "0", "demo record automatic nagrywanie", 0 ),
+	SRGUI_COMMAND( "Open Race Control", "ls_race_open", "race lobby ghosts hud overlay control", 11 ),
+
+	SRGUI_PAGE( "Reset LiveSplit Style", "reset_livesplit_style", "style reset preset default wyglad", 2 ),
+	SRGUI_PAGE( "LiveSplit Font", "ls_imgui_font", "font czcionka arial black segoe consolas", 2 ),
+	SRGUI_BOOL( "Panel Border", "ls_imgui_show_border", "1", "style border ramka", 2 ),
+	SRGUI_BOOL( "Header Background", "ls_imgui_header_bg", "0", "style header title background", 2 ),
+	SRGUI_BOOL( "Panel Gradient", "ls_imgui_gradient", "0", "style gradient background", 2 ),
+	SRGUI_FLOAT( "Panel Width", "ls_w", "215", "style width szerokosc", 2, 80.0f, 400.0f ),
+	SRGUI_FLOAT( "Global Scale", "ls_scale", "0.550000", "style scale size", 2, 0.5f, 2.5f ),
+	SRGUI_FLOAT( "Padding", "ls_imgui_padding", "5", "style padding odstęp", 2, 3.0f, 14.0f ),
+	SRGUI_FLOAT( "Component Gap", "ls_imgui_component_gap", "4", "style gap spacing", 2, 0.0f, 12.0f ),
+	SRGUI_FLOAT( "Border Thickness", "ls_imgui_border_size", "0.500000", "style border thickness", 2, 0.5f, 4.0f ),
+	SRGUI_FLOAT( "Gradient Angle DEG", "ls_imgui_gradient_angle", "230", "style gradient angle", 2, 0.0f, 360.0f ),
+	SRGUI_BOOL( "Gradient on text", "ls_imgui_text_gradient", "0", "style text gradient", 2 ),
+	SRGUI_FLOAT( "Text Gradient Angle DEG", "ls_imgui_text_gradient_angle", "0", "style text gradient angle", 2, 0.0f, 360.0f ),
+	SRGUI_BOOL( "Title", "ls_imgui_show_title", "0", "style title game header", 2 ),
+	SRGUI_BOOL( "Attempt Counter", "ls_showatt", "1", "style attempts counter", 2 ),
+	SRGUI_BOOL( "Bold title/category", "ls_imgui_bold_title", "1", "style bold title category", 2 ),
+	SRGUI_BOOL( "Bold attempts", "ls_imgui_bold_attempts", "1", "style bold attempts", 2 ),
+	SRGUI_BOOL( "LIVE / READY / DONE", "ls_imgui_show_status", "0", "style status chip live ready done", 2 ),
+	SRGUI_BOOL( "Bold status text", "ls_imgui_bold_status", "0", "style bold status", 2 ),
+	SRGUI_BOOL( "Separators", "ls_showseps", "1", "style separators lines", 2 ),
+	SRGUI_BOOL( "Bold column labels", "ls_imgui_bold_header", "1", "style columns labels bold", 2 ),
+	SRGUI_BOOL( "Stage PB", "ls_showpb", "1", "style personal best pb", 2 ),
+	SRGUI_BOOL( "Stage BEST", "ls_showbest", "1", "style best segments", 2 ),
+	SRGUI_BOOL( "Bold IGT", "ls_imgui_bold_timer", "1", "style bold timer igt", 2 ),
+	SRGUI_BOOL( "Bold stage", "ls_imgui_bold_stage", "1", "style bold stage", 2 ),
+	SRGUI_BOOL( "Bold PB/BEST", "ls_imgui_bold_info", "1", "style bold pb best", 2 ),
+	SRGUI_FLOAT( "IGT Size", "ls_imgui_timer_size", "1.630000", "style timer igt size", 2, 0.75f, 2.00f ),
+	SRGUI_FLOAT( "Stage Size", "ls_imgui_stage_size", "1.450000", "style stage size", 2, 0.55f, 1.60f ),
+	SRGUI_FLOAT( "PB/BEST Size", "ls_imgui_info_size", "0.650000", "style pb best size", 2, 0.55f, 1.25f ),
+	SRGUI_FLOAT( "PB/BEST horizontal gap", "ls_imgui_info_gap", "24", "style pb best gap", 2, 24.0f, 120.0f ),
+	SRGUI_FLOAT( "Timer / stats gap", "ls_imgui_timer_gap", "2", "style timer stats gap", 2, 2.0f, 24.0f ),
+	SRGUI_FLOAT( "PB/BEST side position", "ls_imgui_timer_split", "0.400000", "style pb best side split", 2, 0.40f, 0.76f ),
+	SRGUI_BOOL( "PB Delta (+/-)", "ls_showdeltas", "1", "style delta personal best", 2 ),
+	SRGUI_BOOL( "Best Delta (+/-)", "ls_showbestdeltas", "1", "style delta best", 2 ),
+	SRGUI_BOOL( "Current Row Background", "ls_imgui_current_bg", "1", "style current row background highlight", 2 ),
+	SRGUI_BOOL( "Rainbow gold BEST +/-", "ls_imgui_gold_rainbow", "1", "style rainbow gold delta", 2 ),
+	SRGUI_BOOL( "Bold all split rows", "ls_imgui_bold_splits", "0", "style bold splits rows", 2 ),
+	SRGUI_BOOL( "Bold stage names", "ls_imgui_bold_split_name", "0", "style bold stage split names", 2 ),
+	SRGUI_BOOL( "Bold BEST +/-", "ls_imgui_bold_split_best", "1", "style bold best delta", 2 ),
+	SRGUI_BOOL( "Bold +/-", "ls_imgui_bold_split_delta", "1", "style bold delta", 2 ),
+	SRGUI_BOOL( "Bold split time", "ls_imgui_bold_split_time", "1", "style bold split time", 2 ),
+	SRGUI_FLOAT( "Row Size", "ls_imgui_row_size", "0.88", "style split row size", 2, 0.75f, 1.45f ),
+	SRGUI_FLOAT( "Map Name Font", "ls_imgui_name_size", "0.92", "style map name font size", 2, 0.65f, 1.60f ),
+	SRGUI_FLOAT( "BEST +/- Font", "ls_imgui_bestdelta_size", "0.920000", "style best delta font", 2, 0.65f, 1.60f ),
+	SRGUI_FLOAT( "+/- Font", "ls_imgui_delta_size", "0.88", "style delta font", 2, 0.65f, 1.60f ),
+	SRGUI_FLOAT( "Time Font", "ls_imgui_time_size", "0.94", "style time font", 2, 0.65f, 1.60f ),
+	SRGUI_FLOAT( "Stage Name Width", "ls_imgui_col_name", "0.347525", "style column name width", 2, 0.22f, 0.78f ),
+	SRGUI_FLOAT( "BEST +/- Width", "ls_imgui_col_best", "0.574001", "style column best width", 2, 0.34f, 0.88f ),
+	SRGUI_FLOAT( "+/- Width", "ls_imgui_col_delta", "0.763122", "style column delta width", 2, 0.44f, 0.94f ),
+	SRGUI_BOOL( "Ghost Segment", "ls_imgui_show_ghostseg", "0", "style ghost segment", 2 ),
+	SRGUI_BOOL( "Bold ghost", "ls_imgui_bold_ghost", "0", "style bold ghost", 2 ),
+	SRGUI_BOOL( "Previous Segment", "ls_imgui_show_prevseg", "1", "style previous segment", 2 ),
+	SRGUI_BOOL( "Bold all statistics", "ls_imgui_bold_stats", "0", "style bold stats statistics", 2 ),
+	SRGUI_BOOL( "Bold all statistic values", "ls_imgui_bold_stats_values", "0", "style bold stats values", 2 ),
+	SRGUI_BOOL( "Show Sum of Best row", "ls_imgui_show_sob", "1", "style sum of best sob row", 2 ),
+	SRGUI_BOOL( "Bold Sum of Best label", "ls_imgui_bold_stat_sob_label", "0", "style sob label bold", 2 ),
+	SRGUI_BOOL( "Bold Sum of Best value", "ls_imgui_bold_stat_sob_value", "1", "style sob value bold", 2 ),
+	SRGUI_BOOL( "Show Possible Save row", "ls_imgui_show_possible_save", "1", "style possible save row", 2 ),
+	SRGUI_BOOL( "Bold Possible Save label", "ls_imgui_bold_stat_possible_label", "0", "style possible save label bold", 2 ),
+	SRGUI_BOOL( "Bold Possible Save value", "ls_imgui_bold_stat_possible_value", "1", "style possible save value bold", 2 ),
+	SRGUI_BOOL( "Show Best Possible row", "ls_imgui_show_best_possible", "1", "style best possible row", 2 ),
+	SRGUI_BOOL( "Bold Best Possible label", "ls_imgui_bold_stat_best_label", "0", "style best possible label bold", 2 ),
+	SRGUI_BOOL( "Bold Best Possible value", "ls_imgui_bold_stat_best_value", "1", "style best possible value bold", 2 ),
+	SRGUI_BOOL( "Rainbow when gold", "ls_imgui_prev_gold_rainbow", "0", "style previous gold rainbow", 2 ),
+	SRGUI_BOOL( "Bold previous label", "ls_imgui_bold_prev_label", "0", "style previous label bold", 2 ),
+	SRGUI_BOOL( "Bold previous value", "ls_imgui_bold_prev_value", "1", "style previous value bold", 2 ),
+	SRGUI_BOOL( "RGT", "ls_showrgt", "1", "style real game time rgt", 2 ),
+	SRGUI_BOOL( "Best Segments", "ls_imgui_show_bestsegments", "0", "style best segments", 2 ),
+	SRGUI_BOOL( "Bold RGT", "ls_imgui_bold_rgt", "1", "style bold rgt", 2 ),
+	SRGUI_FLOAT( "RGT Size", "ls_imgui_rgt_size", "1.250000", "style rgt size", 2, 0.65f, 1.60f ),
+	SRGUI_INT( "Max Visible Splits", "ls_maxrows", "6", "style max rows visible splits", 2, 0, 20 ),
+	SRGUI_PAGE( "Content Side", "ls_align", "style alignment side left center right", 2 ),
+	SRGUI_FLOAT( "Panel X Position", "ls_x", "6.666843", "style position x layout", 2, 0.0f, 580.0f ),
+	SRGUI_FLOAT( "Panel Y Position", "ls_y", "92.444427", "style position y layout", 2, 0.0f, 440.0f ),
+	SRGUI_FLOAT( "Splits Opacity", "ls_opacity", "0.900000", "style opacity alpha splits", 2, 0.0f, 1.0f ),
+	SRGUI_FLOAT( "Splits In Menu", "ls_opacity_ui", "0.900000", "style menu opacity alpha", 2, 0.0f, 1.0f ),
+	SRGUI_BOOL( "Text Shadow", "ls_text_shadow", "1", "style shadow text", 2 ),
+	SRGUI_FLOAT( "GUI Window Opacity", "ui_speedrun_imgui_alpha", "0.96", "gui window opacity alpha", 2, 0.70f, 1.0f ),
+	SRGUI_FLOAT( "GUI Card Opacity", "ui_speedrun_imgui_card_alpha", "0.92", "gui card opacity alpha", 2, 0.35f, 1.0f ),
+	SRGUI_BOOL( "GUI Rounded Corners", "ui_speedrun_imgui_rounding", "1", "gui rounded corners", 2 ),
+	SRGUI_BOOL( "GUI Animations", "ui_speedrun_imgui_animations", "1", "gui animations animacje", 2 ),
+	SRGUI_PAGE( "Reset GUI Window", "gui_reset_window", "gui reset window position size", 2 ),
+	SRGUI_PAGE( "Reset GUI Style", "gui_reset_style", "gui reset style colors", 2 ),
+	SRGUI_COLOR( "Color: Ahead", "ls_clr_ahead", "72 220 80 1.00", "style color ahead green", 2 ),
+	SRGUI_COLOR( "Color: Behind", "ls_clr_behind", "220 72 72 1.00", "style color behind red", 2 ),
+	SRGUI_COLOR( "Color: Gold", "ls_clr_gold", "255 220 50 1.00", "style color gold best", 2 ),
+	SRGUI_COLOR( "Color: Header", "ls_clr_header", "90 210 58 1.00", "style color header", 2 ),
+	SRGUI_COLOR( "Color: Timer", "ls_clr_timer", "224 246 214 1.00", "style color timer igt", 2 ),
+	SRGUI_COLOR( "Color: Text", "ls_clr_text", "214 224 210 0.92", "style color text", 2 ),
+	SRGUI_COLOR( "Color: Paused", "ls_clr_paused", "255 191 64 1.00", "style color paused", 2 ),
+	SRGUI_COLOR( "Color: Background", "ls_clr_bg", "10 10 15 0.63", "style color background gradient top", 2 ),
+	SRGUI_COLOR( "Color: Background 2", "ls_clr_bg2", "10 10 15 0.90", "style color gradient bottom", 2 ),
+	SRGUI_COLOR( "Color: Border", "ls_clr_border", "29 52 24 0.58", "style color border", 2 ),
+	SRGUI_COLOR( "Color: Map Name", "ls_clr_mapname", "140 158 128 0.85", "style color map name", 2 ),
+	SRGUI_COLOR( "Color: Current Split", "ls_clr_current", "86 210 55 1.00", "style color current split", 2 ),
+	SRGUI_COLOR( "Color: Completed Split", "ls_clr_completed", "120 130 118 0.62", "style color completed split", 2 ),
+	SRGUI_COLOR( "Color: Future Split", "ls_clr_future", "124 124 124 1.00", "style color future split", 2 ),
+	SRGUI_COLOR( "Color: Time Column All", "ls_clr_split_time", "218 226 214 0.92", "style color time column", 2 ),
+	SRGUI_COLOR( "Color: Time Column Current", "ls_clr_split_time_current", "224 246 214 1.00", "style color current time column", 2 ),
+	SRGUI_COLOR( "Color: Time Column Completed", "ls_clr_split_time_completed", "150 160 146 0.72", "style color completed time column", 2 ),
+	SRGUI_COLOR( "Color: Dim", "ls_clr_dim", "82 92 76 0.70", "style color dim muted", 2 ),
+	SRGUI_COLOR( "Color: Segment Timer", "ls_clr_segtimer", "178 190 172 0.84", "style color segment timer", 2 ),
+	SRGUI_COLOR( "Color: Separator", "ls_clr_sep", "22 36 18 0.34", "style color separator line", 2 ),
+	SRGUI_COLOR( "Color: Highlight", "ls_clr_highlight", "13 28 12 0.27", "style color highlight current row", 2 ),
+	SRGUI_COLOR( "Color: Label", "ls_clr_label", "140 158 128 0.85", "style color label", 2 ),
+	SRGUI_COLOR( "Color: Text Gradient End", "ls_clr_text_gradient2", "255 255 255 0.59", "style color text gradient", 2 ),
+	SRGUI_COLOR( "Color: Header Background", "ls_clr_header_bg", "10 18 12 0.68", "style color header background", 2 ),
+	SRGUI_COLOR( "Color: Game Title", "ls_clr_title", "90 210 58 1.00", "style color title", 2 ),
+	SRGUI_COLOR( "Color: Category / Attempt", "ls_clr_category", "132 158 120 0.88", "style color category attempt", 2 ),
+	SRGUI_COLOR( "Color: LIVE Chip", "ls_clr_status_live", "84 205 55 1.00", "style color status live", 2 ),
+	SRGUI_COLOR( "Color: READY Chip", "ls_clr_status_ready", "80 92 76 0.90", "style color status ready", 2 ),
+	SRGUI_COLOR( "Color: PAUSE Chip", "ls_clr_status_pause", "255 191 64 1.00", "style color status pause", 2 ),
+	SRGUI_COLOR( "Color: DONE Chip", "ls_clr_status_done", "64 217 64 1.00", "style color status done", 2 ),
+	SRGUI_COLOR( "Color: Chip Text", "ls_clr_status_text", "6 10 6 0.95", "style color status text", 2 ),
+	SRGUI_COLOR( "Color: Column Labels", "ls_clr_column_label", "128 142 118 0.68", "style color column labels", 2 ),
+	SRGUI_COLOR( "Color: Stage Timer", "ls_clr_stage_timer", "178 190 172 0.84", "style color stage timer", 2 ),
+	SRGUI_COLOR( "Color: PB Label", "ls_clr_pb_label", "128 142 118 0.68", "style color pb label", 2 ),
+	SRGUI_COLOR( "Color: PB Value", "ls_clr_pb_value", "218 226 214 0.92", "style color pb value", 2 ),
+	SRGUI_COLOR( "Color: BEST Label", "ls_clr_best_label", "128 142 118 0.68", "style color best label", 2 ),
+	SRGUI_COLOR( "Color: BEST Value", "ls_clr_best_value", "255 220 50 1.00", "style color best value", 2 ),
+	SRGUI_COLOR( "Color: Ghost Label", "ls_clr_ghost_label", "128 142 118 0.68", "style color ghost label", 2 ),
+	SRGUI_COLOR( "Color: Ghost Time", "ls_clr_ghost_time", "178 190 172 0.84", "style color ghost time", 2 ),
+	SRGUI_COLOR( "Color: Statistics Labels", "ls_clr_stat_label", "128 142 118 0.68", "style color statistics labels", 2 ),
+	SRGUI_COLOR( "Color: Sum of Best Label", "ls_clr_stat_sob_label", "128 142 118 0.68", "style color sob label", 2 ),
+	SRGUI_COLOR( "Color: Sum of Best Value", "ls_clr_stat_sob", "255 220 50 1.00", "style color sob value", 2 ),
+	SRGUI_COLOR( "Color: Possible Save Label", "ls_clr_stat_possible_label", "128 142 118 0.68", "style color possible save label", 2 ),
+	SRGUI_COLOR( "Color: Possible Save Value", "ls_clr_stat_possible_save", "72 220 80 1.00", "style color possible save value", 2 ),
+	SRGUI_COLOR( "Color: Possible Save Zero", "ls_clr_stat_possible_zero", "112 118 112 0.62", "style color possible save zero", 2 ),
+	SRGUI_COLOR( "Color: Possible Save Missing", "ls_clr_stat_possible_missing", "82 92 76 0.70", "style color possible save missing", 2 ),
+	SRGUI_COLOR( "Color: Best Possible Label", "ls_clr_stat_best_possible_label", "128 142 118 0.68", "style color best possible label", 2 ),
+	SRGUI_COLOR( "Color: Best Possible Value", "ls_clr_stat_best_possible", "255 220 50 1.00", "style color best possible value", 2 ),
+	SRGUI_COLOR( "Color: Previous Label", "ls_clr_prev_label", "128 142 118 0.68", "style color previous label", 2 ),
+	SRGUI_COLOR( "Color: Previous Ahead", "ls_clr_prev_ahead", "72 220 80 1.00", "style color previous ahead", 2 ),
+	SRGUI_COLOR( "Color: Previous Behind", "ls_clr_prev_behind", "220 72 72 1.00", "style color previous behind", 2 ),
+	SRGUI_COLOR( "Color: Previous Gold", "ls_clr_prev_gold", "255 220 50 1.00", "style color previous gold", 2 ),
+	SRGUI_COLOR( "Color: RGT", "ls_clr_rgt", "218 226 214 0.92", "style color rgt", 2 ),
+	SRGUI_COLOR( "Color: Inactive / Empty", "ls_clr_empty", "112 118 112 0.48", "style color empty inactive", 2 ),
+	SRGUI_COLOR( "GUI Accent", "ui_speedrun_imgui_accent", "92 210 54 1.00", "gui accent color", 2 ),
+	SRGUI_COLOR( "GUI Accent Gold", "ui_speedrun_imgui_accent_alt", "244 188 62 1.00", "gui accent gold color", 2 ),
+
+	SRGUI_BOOL( "Show Keystrokes", "cg_drawKeys", "1", "overlay keys input klawisze", 3 ),
+	SRGUI_BOOL( "Only During Gameplay", "ks_ingame_only", "1", "overlay keys gameplay only", 3 ),
+	SRGUI_PAGE( "Keys Layout", "ks_layout", "overlay keys layout classic horizontal compact mouse grid active", 3 ),
+	SRGUI_PAGE( "Press Effect", "ks_effect", "overlay keys effect glow pulse", 3 ),
+	SRGUI_FLOAT( "Keys X Position", "ks_x", "297", "overlay keys position x", 3, 0.0f, 600.0f ),
+	SRGUI_FLOAT( "Keys Y Position", "ks_y", "375", "overlay keys position y", 3, 0.0f, 460.0f ),
+	SRGUI_FLOAT( "Keys Scale", "ks_scale", "0.750000", "overlay keys scale size", 3, 0.3f, 4.0f ),
+	SRGUI_FLOAT( "Keys Font Scale", "ks_font_scale", "0.620000", "overlay keys font scale", 3, 0.30f, 2.4f ),
+	SRGUI_FLOAT( "Keys Box Width", "ks_box_w", "22", "overlay keys box width", 3, 14.0f, 80.0f ),
+	SRGUI_FLOAT( "Keys Box Height", "ks_box_h", "18", "overlay keys box height", 3, 12.0f, 54.0f ),
+	SRGUI_FLOAT( "Keys Gap", "ks_gap", "2", "overlay keys gap spacing", 3, 0.0f, 20.0f ),
+	SRGUI_FLOAT( "Keys Border Size", "ks_border_size", "1", "overlay keys border size", 3, 0.0f, 5.0f ),
+	SRGUI_FLOAT( "Mouse Grid Size", "ks_mouse_grid_size", "92", "overlay mouse grid size", 3, 48.0f, 220.0f ),
+	SRGUI_INT( "Mouse Grid Squares", "ks_mouse_grid_cells", "5", "overlay mouse grid cells squares", 3, 3, 12 ),
+	SRGUI_BOOL( "Mouse Total CM Counter", "ks_mouse_grid_cm", "1", "overlay mouse cm total counter", 3 ),
+	SRGUI_BOOL( "Mouse Run CM Counter", "ks_mouse_grid_run_cm", "1", "overlay mouse cm run counter", 3 ),
+	SRGUI_FLOAT( "Keys Opacity", "ks_opacity", "1.0", "overlay keys opacity alpha", 3, 0.0f, 1.0f ),
+	SRGUI_PAGE( "Mouse Display", "ks_mouse", "overlay mouse display clicks direction", 3 ),
+	SRGUI_PAGE( "Active Snap Side", "ks_active_anchor", "overlay active snap side anchor", 3 ),
+	SRGUI_INT( "Max Active Keys", "ks_active_max", "3", "overlay active max keys", 3, 1, 10 ),
+	SRGUI_BOOL( "Show Grid Buttons", "ks_grid_keys", "0", "overlay mouse grid buttons", 3 ),
+	SRGUI_PAGE( "Grid Button Direction", "ks_grid_keys_dir", "overlay grid button direction", 3 ),
+	SRGUI_FLOAT( "Grid Buttons X", "ks_grid_keys_x", "-35", "overlay grid buttons x", 3, -110.0f, 110.0f ),
+	SRGUI_FLOAT( "Grid Buttons Y", "ks_grid_keys_y", "-15", "overlay grid buttons y", 3, -110.0f, 110.0f ),
+	SRGUI_FLOAT( "Grid Buttons Font", "ks_grid_keys_font_scale", "0.72", "overlay grid buttons font", 3, 0.30f, 1.20f ),
+	SRGUI_BOOL( "Show Use", "ks_show_use", "0", "overlay keys use", 3 ),
+	SRGUI_BOOL( "Show Reload", "ks_show_reload", "0", "overlay keys reload", 3 ),
+	SRGUI_COLOR( "Keys Idle Background", "ks_clr_bg", "10 10 15 0.72", "overlay keys color idle background", 3 ),
+	SRGUI_COLOR( "Keys Active Background", "ks_clr_active", "26 61 18 0.88", "overlay keys color active background", 3 ),
+	SRGUI_COLOR( "Keys Idle Border", "ks_clr_border", "51 64 46 0.30", "overlay keys color idle border", 3 ),
+	SRGUI_COLOR( "Keys Active Border", "ks_clr_active_border", "107 191 56 0.85", "overlay keys color active border", 3 ),
+	SRGUI_COLOR( "Keys Idle Text", "ks_clr_text", "128 143 122 0.78", "overlay keys color idle text", 3 ),
+	SRGUI_COLOR( "Keys Active Text", "ks_clr_active_text", "219 247 184 1.00", "overlay keys color active text", 3 ),
+	SRGUI_COLOR( "Mouse checker squares", "ks_clr_grid_checker", "20 31 20 0.42", "overlay mouse grid checker color", 3 ),
+	SRGUI_COLOR( "Mouse center cross", "ks_clr_grid_cross", "235 219 89 0.72", "overlay mouse grid cross color", 3 ),
+	SRGUI_COLOR( "Mouse trail", "ks_clr_grid_trail", "140 242 77 0.90", "overlay mouse trail color", 3 ),
+	SRGUI_COLOR( "Mouse CM counter", "ks_clr_grid_cm", "217 242 179 0.88", "overlay mouse cm counter color", 3 ),
+	SRGUI_BOOL( "Speedometer", "cg_drawVelocity", "1", "overlay speedometer velocity predkosc", 3 ),
+	SRGUI_BOOL( "Position HUD", "cg_drawPos", "0", "overlay position pos coordinates", 3 ),
+	SRGUI_BOOL( "Jump Statistics", "cg_drawJumpStats", "0", "overlay jump stats", 3 ),
+	SRGUI_BOOL( "Strafe Guide", "cg_strafeGuide", "0", "overlay strafe guide", 3 ),
+	SRGUI_BOOL( "Show FPS", "cg_drawfps", "0", "overlay fps counter", 3 ),
+	SRGUI_BOOL( "Show Timer", "cg_drawTimer", "0", "overlay timer", 3 ),
+	SRGUI_BOOL( "Show IGT Timer", "ls_igttimer", "0", "overlay standalone igt timer", 3 ),
+	SRGUI_PAGE( "IGT Align", "ls_igttimer_align", "overlay igt align left center right", 3 ),
+	SRGUI_FLOAT( "IGT X Position", "ls_igttimer_x", "638", "overlay igt position x", 3, 0.0f, 640.0f ),
+	SRGUI_FLOAT( "IGT Y Position", "ls_igttimer_y", "240", "overlay igt position y", 3, 0.0f, 480.0f ),
+	SRGUI_FLOAT( "IGT Scale", "ls_igttimer_scale", "1.0", "overlay igt scale", 3, 0.3f, 4.0f ),
+	SRGUI_BOOL( "Show IGT Segment Timer", "ls_igtsegtimer", "0", "overlay igt segment timer", 3 ),
+	SRGUI_PAGE( "Speedometer Mode", "cg_velocity_mode", "overlay speedometer mode 3d horizontal vertical", 3 ),
+	SRGUI_PAGE( "Speedometer Text Size", "cg_velocity_size", "overlay speedometer text size", 3 ),
+	SRGUI_PAGE( "Speedometer Position", "cg_velocity_type", "overlay speedometer position bottom center", 3 ),
+	SRGUI_PAGE( "Speedometer Text Align", "cg_velocity_align", "overlay speedometer text align", 3 ),
+	SRGUI_BOOL( "Speed Change Color Fade", "cg_velocity_colorfade", "0", "overlay speedometer color fade", 3 ),
+	SRGUI_BOOL( "Peak Speed Above", "cg_velocity_peak", "0", "overlay speedometer peak", 3 ),
+	SRGUI_FLOAT( "Peak Reset Speed", "cg_velocity_peak_reset", "8", "overlay speedometer peak reset", 3, 1.0f, 80.0f ),
+	SRGUI_FLOAT( "Speedometer Scale", "cg_velocity_scale", "1.0", "overlay speedometer scale", 3, 0.25f, 4.0f ),
+	SRGUI_FLOAT( "Speedometer X Position", "cg_velocity_x", "320", "overlay speedometer position x", 3, 0.0f, 640.0f ),
+	SRGUI_FLOAT( "Speedometer Y Position", "cg_velocity_y", "457", "overlay speedometer position y", 3, 0.0f, 480.0f ),
+	SRGUI_FLOAT( "FPS Scale", "cg_fpsScale", "1.0", "overlay fps scale", 3, 0.25f, 4.0f ),
+	SRGUI_FLOAT( "FPS X Position", "cg_fpsX", "500", "overlay fps position x", 3, 0.0f, 640.0f ),
+	SRGUI_FLOAT( "FPS Y Position", "cg_fpsY", "0", "overlay fps position y", 3, 0.0f, 440.0f ),
+
+	SRGUI_BOOL( "HL1 Bhop Physics", "bh_movement", "0", "game bhop movement physics", 4 ),
+	SRGUI_BOOL( "Auto Jump", "bh_autojump", "0", "game bhop auto jump", 4 ),
+	SRGUI_FLOAT( "FOV Front-Back", "cg_fov", "90", "game fov field view front back", 4, 60.0f, 160.0f ),
+	SRGUI_FLOAT( "FOV Down-Up", "cg_fov_down", "90", "game fov down up", 4, 60.0f, 160.0f ),
+	SRGUI_FLOAT( "FOV Left-Right", "cg_fov_lr", "90", "game fov left right", 4, 0.0f, 160.0f ),
+	SRGUI_BOOL( "Black Sidebars", "cg_blackbars", "0", "game viewport black bars sidebars safe area gui", 4 ),
+	SRGUI_INT( "Left Black Bar", "cg_blackbarLeft", "0", "game viewport left black bar pixels", 4, 0, 4096 ),
+	SRGUI_INT( "Right Black Bar", "cg_blackbarRight", "0", "game viewport right black bar pixels", 4, 0, 4096 ),
+	SRGUI_COLOR( "Sidebar Color", "cg_blackbarColor", "0 0 0 1.00", "game viewport sidebars color safe area", 4 ),
+	SRGUI_PAGE( "Max FPS", "com_maxfps", "game fps max framerate", 4 ),
+	SRGUI_PAGE( "Weapon Hand", "cg_drawGun", "game weapon hand gun left right hidden", 4 ),
+	SRGUI_PAGE( "Weapon Render", "cg_weapon_color_mode", "game weapon render color rainbow flat xray pulse", 4 ),
+	SRGUI_COLOR( "Weapon Tint Color", "cg_weapon_color", "26 191 255 1.00", "game weapon tint color", 4 ),
+	SRGUI_FLOAT( "Weapon Tint Opacity", "cg_weapon_color_opacity", "0.35", "game weapon tint opacity alpha", 4, 0.0f, 1.0f ),
+	SRGUI_FLOAT( "Weapon X-Ray Strength", "cg_weapon_xray_strength", "0.65", "game weapon xray strength", 4, 0.0f, 1.0f ),
+	SRGUI_FLOAT( "Weapon Rainbow Speed", "cg_weapon_rainbow_speed", "1.0", "game weapon rainbow speed", 4, 0.1f, 5.0f ),
+	SRGUI_BOOL( "Show Ghost", "ls_ghost", "0", "game ghost replay", 4 ),
+	SRGUI_INT( "Ghost Opacity", "ls_ghost_opacity", "60", "game ghost opacity alpha", 4, 5, 255 ),
+
+	SRGUI_BOOL( "Show Grid", "ui_speedrun_grid", "0", "tools grid layout siatka", 5 ),
+	SRGUI_BOOL( "HUD Edit Mode", "ui_speedrun_layout_edit", "0", "tools hud edit drag layout", 5 ),
+	SRGUI_BOOL( "Show Labels", "ui_speedrun_grid_labels", "1", "tools grid labels", 5 ),
+	SRGUI_BOOL( "Center Lines", "ui_speedrun_grid_center", "1", "tools grid center lines", 5 ),
+	SRGUI_FLOAT( "Grid Size", "ui_speedrun_grid_size", "32", "tools grid size", 5, 8.0f, 160.0f ),
+	SRGUI_INT( "Major Every", "ui_speedrun_grid_major", "5", "tools grid major every", 5, 2, 10 ),
+	SRGUI_FLOAT( "Grid Opacity", "ui_speedrun_grid_opacity", "0.22", "tools grid opacity alpha", 5, 0.02f, 0.75f ),
+	SRGUI_PAGE( "Reset HUD positions", "reset_hud_positions", "tools reset hud positions layout", 5 ),
+	SRGUI_PAGE( "Custom Split Names", "split_names", "tools custom split names maps", 5 ),
+	SRGUI_PAGE( "Split Name: Escape!", "ls_name_escape1", "tools split name map escape1", 5 ),
+	SRGUI_PAGE( "Split Name: Castle Keep", "ls_name_escape2", "tools split name map escape2", 5 ),
+	SRGUI_PAGE( "Split Name: Tram Ride", "ls_name_tram", "tools split name map tram", 5 ),
+	SRGUI_PAGE( "Split Name: Village", "ls_name_village1", "tools split name map village1", 5 ),
+	SRGUI_PAGE( "Split Name: Catacombs", "ls_name_crypt1", "tools split name map crypt1", 5 ),
+	SRGUI_PAGE( "Split Name: Crypt", "ls_name_crypt2", "tools split name map crypt2", 5 ),
+	SRGUI_PAGE( "Split Name: Church", "ls_name_church", "tools split name map church", 5 ),
+	SRGUI_PAGE( "Split Name: Tomb", "ls_name_boss1", "tools split name map boss1", 5 ),
+	SRGUI_PAGE( "Split Name: Forest Compound", "ls_name_forest", "tools split name map forest", 5 ),
+	SRGUI_PAGE( "Split Name: Rocket Base", "ls_name_rocket", "tools split name map rocket", 5 ),
+	SRGUI_PAGE( "Split Name: Radar Installation", "ls_name_baseout", "tools split name map baseout", 5 ),
+	SRGUI_PAGE( "Split Name: Air Base Assault", "ls_name_assault", "tools split name map assault", 5 ),
+	SRGUI_PAGE( "Split Name: Kugelstadt", "ls_name_sfm", "tools split name map sfm", 5 ),
+	SRGUI_PAGE( "Split Name: The Bombed Factory", "ls_name_factory", "tools split name map factory", 5 ),
+	SRGUI_PAGE( "Split Name: The Trainyards", "ls_name_trainyard", "tools split name map trainyard", 5 ),
+	SRGUI_PAGE( "Split Name: Secret Weapons Facility", "ls_name_swf", "tools split name map swf", 5 ),
+	SRGUI_PAGE( "Split Name: Ice Station Norway", "ls_name_norway", "tools split name map norway", 5 ),
+	SRGUI_PAGE( "Split Name: X-Labs", "ls_name_xlabs", "tools split name map xlabs", 5 ),
+	SRGUI_PAGE( "Split Name: Super Soldier", "ls_name_boss2", "tools split name map boss2", 5 ),
+	SRGUI_PAGE( "Split Name: Bramburg Dam", "ls_name_dam", "tools split name map dam", 5 ),
+	SRGUI_PAGE( "Split Name: Paderborn Village", "ls_name_village2", "tools split name map village2", 5 ),
+	SRGUI_PAGE( "Split Name: Chateau Schufstaffel", "ls_name_chateau", "tools split name map chateau", 5 ),
+	SRGUI_PAGE( "Split Name: Unhallowed Ground", "ls_name_dark", "tools split name map dark", 5 ),
+	SRGUI_PAGE( "Split Name: The Dig", "ls_name_dig", "tools split name map dig", 5 ),
+	SRGUI_PAGE( "Split Name: Return to Castle Wolfenstein", "ls_name_castle", "tools split name map castle", 5 ),
+	SRGUI_PAGE( "Split Name: Heinrich", "ls_name_end", "tools split name map end heinrich", 5 ),
+
+	SRGUI_PAGE( "Bind LiveSplit Start", "bind_livesplit_start", "controls bind livesplit_start", 6 ),
+	SRGUI_PAGE( "Bind LiveSplit Pause / Resume", "bind_livesplit_pause", "controls bind livesplit_pause", 6 ),
+	SRGUI_PAGE( "Bind LiveSplit Undo Split", "bind_livesplit_undo", "controls bind livesplit_undo", 6 ),
+	SRGUI_PAGE( "Bind LiveSplit Skip Split", "bind_livesplit_skip", "controls bind livesplit_skip", 6 ),
+	SRGUI_PAGE( "Bind LiveSplit Reset", "bind_livesplit_reset", "controls bind livesplit_reset", 6 ),
+	SRGUI_PAGE( "Bind LiveSplit Reset No Save", "bind_livesplit_reset_nosave", "controls bind livesplit_reset_nosave", 6 ),
+	SRGUI_PAGE( "Bind LiveSplit Reset Category", "bind_livesplit_reset_category", "controls bind livesplit_reset_category", 6 ),
+	SRGUI_PAGE( "Bind LiveSplit Check Settings", "bind_livesplit_check", "controls bind livesplit_check", 6 ),
+	SRGUI_PAGE( "Bind Race Chat", "bind_ls_race_open_chat", "controls bind ls_race_open_chat race chat input show", 6 ),
+	SRGUI_PAGE( "Bind Demo Pause", "bind_demo_pause", "controls bind demo_pause", 6 ),
+	SRGUI_PAGE( "Bind Demo Speed Up", "bind_demo_speedup", "controls bind demo_speedup", 6 ),
+	SRGUI_PAGE( "Bind Demo Slow Down", "bind_demo_slowdown", "controls bind demo_slowdown", 6 ),
+	SRGUI_PAGE( "Bind Demo Skip Forward", "bind_demo_skipforward", "controls bind demo_skipforward", 6 ),
+	SRGUI_PAGE( "Bind Demo Rewind", "bind_demo_skipbackward", "controls bind demo_skipbackward", 6 ),
+	SRGUI_PAGE( "Bind Demo Step Frame", "bind_demo_stepframe", "controls bind demo_stepframe", 6 ),
+	SRGUI_PAGE( "Bind Demo Step Back", "bind_demo_stepframeback", "controls bind demo_stepframeback", 6 ),
+	SRGUI_PAGE( "Bind Demo Freecam", "bind_demo_freecam", "controls bind demo_freecam", 6 ),
+	SRGUI_PAGE( "Bind Demo Next Map", "bind_demo_nextmap", "controls bind demo_nextmap", 6 ),
+	SRGUI_PAGE( "Bind Demo Previous Map", "bind_demo_prevmap", "controls bind demo_prevmap", 6 ),
+	SRGUI_PAGE( "Bind Demo Toggle HUD", "bind_demo_togglehud", "controls bind demo_togglehud", 6 ),
+	SRGUI_PAGE( "Bind Demo Toggle Binds", "bind_demo_togglebinds", "controls bind demo_togglebinds", 6 ),
+	SRGUI_PAGE( "Bind Practice Save Position", "bind_savepos", "controls bind savepos", 6 ),
+	SRGUI_PAGE( "Bind Practice Load Position", "bind_loadpos", "controls bind loadpos", 6 ),
+	SRGUI_PAGE( "Bind Practice Rewind", "bind_rewind", "controls bind rewind", 6 ),
+
+	SRGUI_PAGE( "Records View Mode", "ls_mode_records", "records view mode full chapter individual", 7 ),
+	SRGUI_PAGE( "Records Difficulty", "g_gameskill_records", "records difficulty skill", 7 ),
+	SRGUI_PAGE( "Records Chapter", "ls_mission_records", "records chapter mission", 7 ),
+	SRGUI_COMMAND( "Refresh Records", "livesplit_sv_refresh", "records refresh", 7 ),
+	SRGUI_COMMAND( "Records Page Up", "livesplit_sv_pgup", "records page up", 7 ),
+	SRGUI_COMMAND( "Records Page Down", "livesplit_sv_pgdn", "records page down", 7 ),
+	SRGUI_PAGE( "Reset Row Gold", "records_reset_row_gold", "records reset selected row gold", 7 ),
+	SRGUI_PAGE( "Reset Row PB Seg", "records_reset_row_pbseg", "records reset selected row pb segment", 7 ),
+	SRGUI_PAGE( "Reset Row All", "records_reset_row_all", "records reset selected row all", 7 ),
+	SRGUI_COMMAND( "Reset Records Category", "livesplit_sv_reset_cat", "records reset category", 7 ),
+
+	SRGUI_PAGE( "Refresh Demos", "demos_refresh", "demos browser refresh", 8 ),
+	SRGUI_PAGE( "Play Selected Demo", "demos_play_selected", "demos browser play selected", 8 ),
+	SRGUI_COMMAND( "Open demos folder", "dir demos", "demos folder", 8 ),
+	SRGUI_PAGE( "Demo Filter", "demos_filter", "demos filter full mission il other", 8 ),
+	SRGUI_PAGE( "Demo Search", "demos_search", "demos search name", 8 ),
+	SRGUI_COMMAND( "Demo Pause", "demo_pause", "demo playback pause resume", 8 ),
+	SRGUI_COMMAND( "Demo Speed Up", "demo_speedup", "demo playback speed up", 8 ),
+	SRGUI_COMMAND( "Demo Slow Down", "demo_slowdown", "demo playback slow down", 8 ),
+	SRGUI_COMMAND( "Demo Skip Forward", "demo_skipforward", "demo playback skip forward", 8 ),
+	SRGUI_COMMAND( "Demo Rewind", "demo_skipbackward", "demo playback rewind skip backward", 8 ),
+	SRGUI_COMMAND( "Demo Freecam", "demo_freecam", "demo camera freecam", 8 ),
+	SRGUI_COMMAND( "Demo Toggle HUD", "demo_togglehud", "demo hud toggle", 8 ),
+	SRGUI_COMMAND( "Demo Step Frame", "demo_stepframe", "demo step frame", 8 ),
+	SRGUI_COMMAND( "Demo Step Back", "demo_stepframeback", "demo step back", 8 ),
+	SRGUI_COMMAND( "Demo Next Map", "demo_nextmap", "demo next map", 8 ),
+	SRGUI_COMMAND( "Demo Previous Map", "demo_prevmap", "demo previous map", 8 ),
+
+	SRGUI_COMMAND( "Start Run", "livesplit_start", "actions run timer start", 9 ),
+	SRGUI_COMMAND( "Pause / Resume", "livesplit_pause", "actions timer pause resume", 9 ),
+	SRGUI_COMMAND( "Check Settings", "livesplit_check", "actions validate speedrun settings", 9 ),
+	SRGUI_COMMAND( "Undo Split", "livesplit_undo", "actions split undo", 9 ),
+	SRGUI_COMMAND( "Skip Split", "livesplit_skip", "actions split skip", 9 ),
+	SRGUI_COMMAND( "Reset Run", "livesplit_reset", "actions reset timer run", 9 ),
+	SRGUI_COMMAND( "Reset No Save", "livesplit_reset_nosave", "actions reset no save", 9 ),
+	SRGUI_COMMAND( "Reset Category", "livesplit_reset_category", "actions reset category", 9 ),
+	SRGUI_COMMAND( "Save Position", "savepos", "actions practice save position", 9 ),
+	SRGUI_COMMAND( "Load Position", "loadpos", "actions practice load position", 9 ),
+	SRGUI_COMMAND( "Rewind Practice", "rewind", "actions practice rewind", 9 ),
+	SRGUI_COMMAND( "Toggle Speedrun GUI", "speedrun_gui", "actions gui toggle settings", 9 ),
+	SRGUI_COMMAND( "Dump LiveSplit Style", "speedrun_livesplit_dump", "actions style dump copy layout", 9 ),
+
+	SRGUI_BOOL( "Zone Timer", "sp_zone_timer", "0", "zones timer strefy", 10 ),
+	SRGUI_BOOL( "Draw Zones", "sp_zone_draw", "0", "zones draw render strefy", 10 ),
+	SRGUI_BOOL( "Edit Mode", "sp_zone_edit", "0", "zones editor edit handles", 10 ),
+	SRGUI_BOOL( "Progress X/X", "sp_zone_hud_progress", "1", "zones checkpoint progress", 10 ),
+	SRGUI_PAGE( "Zone Route Name", "sp_zone_route_name", "zones route name trasa", 10 ),
+	SRGUI_COMMAND( "Zone Add Start Look", "sp_zone_add_start", "zones create start look", 10 ),
+	SRGUI_COMMAND( "Zone Add Start Here", "sp_zone_add_start here", "zones create start here", 10 ),
+	SRGUI_COMMAND( "Zone CP Append Look", "sp_zone_add_checkpoint", "zones create checkpoint append look", 10 ),
+	SRGUI_COMMAND( "Zone CP Append Here", "sp_zone_add_checkpoint here", "zones create checkpoint append here", 10 ),
+	SRGUI_COMMAND( "Zone CP Insert Look", "sp_zone_insert_checkpoint", "zones create checkpoint insert look", 10 ),
+	SRGUI_COMMAND( "Zone CP Insert Here", "sp_zone_insert_checkpoint here", "zones create checkpoint insert here", 10 ),
+	SRGUI_COMMAND( "Zone Add Finish Look", "sp_zone_add_finish", "zones create finish look", 10 ),
+	SRGUI_COMMAND( "Zone Add Finish Here", "sp_zone_add_finish here", "zones create finish here", 10 ),
+	SRGUI_COMMAND( "Zone Add Race Look", "sp_zone_add_race", "zones create race look", 10 ),
+	SRGUI_COMMAND( "Zone Add Race Here", "sp_zone_add_race here", "zones create race here", 10 ),
+	SRGUI_COMMAND( "Zone Save", "sp_zone_save", "zones save", 10 ),
+	SRGUI_COMMAND( "Zone Load", "sp_zone_load", "zones load", 10 ),
+	SRGUI_COMMAND( "Zone Status", "sp_zone_status", "zones status", 10 ),
+	SRGUI_COMMAND( "Zone Reset Run", "sp_zone_reset", "zones reset run", 10 ),
+	SRGUI_COMMAND( "Zone Use Route", "sp_zone_route", "zones route selected use", 10 ),
+	SRGUI_COMMAND( "Zone Previous", "sp_zone_prev", "zones selection previous", 10 ),
+	SRGUI_COMMAND( "Zone Next", "sp_zone_next", "zones selection next", 10 ),
+	SRGUI_COMMAND( "Zone Order Up", "sp_zone_order_up", "zones order up", 10 ),
+	SRGUI_COMMAND( "Zone Order Down", "sp_zone_order_down", "zones order down", 10 ),
+	SRGUI_COMMAND( "Zone Delete", "sp_zone_delete", "zones delete selected", 10 ),
+	SRGUI_COMMAND( "Zone Clear All", "sp_zone_clear", "zones clear all", 10 ),
+	SRGUI_COMMAND( "Zone Reset Time", "sp_zone_reset_times selected", "zones reset selected time pb", 10 ),
+	SRGUI_COMMAND( "Zone Reset From", "sp_zone_reset_times from", "zones reset times from selected", 10 ),
+	SRGUI_COMMAND( "Zone Reset Route", "sp_zone_reset_times route", "zones reset route times", 10 ),
+	SRGUI_COMMAND( "Zone Set Start", "sp_zone_type start", "zones type start", 10 ),
+	SRGUI_COMMAND( "Zone Set Checkpoint", "sp_zone_type checkpoint", "zones type checkpoint cp", 10 ),
+	SRGUI_COMMAND( "Zone Set Finish", "sp_zone_type finish", "zones type finish", 10 ),
+	SRGUI_COMMAND( "Zone Set Race", "sp_zone_type race", "zones type race objective", 10 ),
+	SRGUI_COMMAND( "Zone Export Builtins", "sp_zone_export_builtins", "zones export builtin race", 10 ),
+	SRGUI_COMMAND( "Zone Grow", "sp_zone_grow 8", "zones resize grow", 10 ),
+	SRGUI_COMMAND( "Zone Shrink", "sp_zone_grow -8", "zones resize shrink", 10 ),
+	SRGUI_COMMAND( "Zone Move Up", "sp_zone_move 0 0 8", "zones move up", 10 ),
+	SRGUI_COMMAND( "Zone Move Down", "sp_zone_move 0 0 -8", "zones move down", 10 ),
+	SRGUI_COMMAND( "Zone Yaw Left", "sp_zone_rotate yaw -15", "zones rotate yaw left", 10 ),
+	SRGUI_COMMAND( "Zone Yaw Right", "sp_zone_rotate yaw 15", "zones rotate yaw right", 10 ),
+	SRGUI_COMMAND( "Zone Pitch Down", "sp_zone_rotate pitch -15", "zones rotate pitch down", 10 ),
+	SRGUI_COMMAND( "Zone Pitch Up", "sp_zone_rotate pitch 15", "zones rotate pitch up", 10 ),
+	SRGUI_COMMAND( "Zone Roll Left", "sp_zone_rotate roll -15", "zones rotate roll left", 10 ),
+	SRGUI_COMMAND( "Zone Roll Right", "sp_zone_rotate roll 15", "zones rotate roll right", 10 ),
+	SRGUI_COMMAND( "Zone Face View", "sp_zone_rotate view", "zones rotate align view", 10 ),
+	SRGUI_COMMAND( "Zone Reset Rotation", "sp_zone_rotate reset", "zones rotate reset", 10 ),
+	SRGUI_BOOL( "Draw Start", "sp_zone_draw_start", "1", "zones draw start", 10 ),
+	SRGUI_BOOL( "Draw CP", "sp_zone_draw_checkpoints", "1", "zones draw checkpoints cp", 10 ),
+	SRGUI_BOOL( "Draw Finish", "sp_zone_draw_finish", "1", "zones draw finish", 10 ),
+	SRGUI_BOOL( "Draw Race", "sp_zone_draw_race", "1", "zones draw race objectives", 10 ),
+	SRGUI_BOOL( "3D Text", "sp_zone_draw_labels", "1", "zones labels text 3d", 10 ),
+	SRGUI_BOOL( "Handles", "sp_zone_draw_handles", "1", "zones handles editor", 10 ),
+	SRGUI_BOOL( "Rotation Gizmo", "sp_zone_rotation_gizmo", "1", "zones handles rotation gizmo", 10 ),
+	SRGUI_BOOL( "Active Route Only", "sp_zone_draw_active_route_only", "0", "zones active route only", 10 ),
+	SRGUI_BOOL( "Dim Other Routes", "sp_zone_dim_inactive", "1", "zones dim inactive routes", 10 ),
+	SRGUI_BOOL( "Route Focus", "sp_zone_draw_run_target_only", "1", "zones route focus target only", 10 ),
+	SRGUI_BOOL( "Auto Names", "sp_zone_auto_names", "1", "zones auto names", 10 ),
+	SRGUI_COLOR( "Zone Start Color", "sp_zone_start_color", "82 255 112 1.00", "zones start color kolor", 10 ),
+	SRGUI_COLOR( "Zone CP Color", "sp_zone_color", "82 184 255 1.00", "zones checkpoint color kolor", 10 ),
+	SRGUI_COLOR( "Zone Finish Color", "sp_zone_finish_color", "255 108 86 1.00", "zones finish color kolor", 10 ),
+	SRGUI_INT( "Zone Opacity", "sp_zone_opacity", "75", "zones opacity alpha", 10, 5, 255 ),
+	SRGUI_INT( "Zone Border Alpha", "sp_zone_border_alpha", "230", "zones border alpha", 10, 20, 255 ),
+	SRGUI_FLOAT( "Zone Border Width", "sp_zone_border_width", "0.75", "zones border width", 10, 0.25f, 6.0f ),
+	SRGUI_INT( "Zone Inactive Alpha", "sp_zone_inactive_alpha", "28", "zones inactive alpha", 10, 0, 255 ),
+	SRGUI_FLOAT( "Zone Handle Size", "sp_zone_handle_size", "6", "zones handle size", 10, 2.0f, 24.0f ),
+	SRGUI_FLOAT( "Zone Handle Distance", "sp_zone_handle_max_dist", "1200", "zones handle distance", 10, 128.0f, 4096.0f ),
+	SRGUI_FLOAT( "Zone Hover Pixels", "sp_zone_hover_pixels", "18", "zones hover pixels", 10, 4.0f, 96.0f ),
+	SRGUI_FLOAT( "Zone Drag Speed", "sp_zone_drag_speed", "180", "zones drag speed", 10, 8.0f, 1024.0f ),
+	SRGUI_INT( "Zone Start Stop MS", "sp_zone_start_stop_ms", "220", "zones start stop milliseconds", 10, 0, 1500 ),
+	SRGUI_FLOAT( "Zone Timer X", "sp_zone_hud_x", "8", "zones timer position x", 10, 0.0f, 640.0f ),
+	SRGUI_FLOAT( "Zone Timer Y", "sp_zone_hud_y", "84", "zones timer position y", 10, 0.0f, 480.0f ),
+	SRGUI_FLOAT( "Zone Timer Scale", "sp_zone_hud_scale", "1.0", "zones timer scale", 10, 0.55f, 2.5f ),
+	SRGUI_FLOAT( "Zone Timer Alpha", "sp_zone_hud_alpha", "0.52", "zones timer alpha opacity", 10, 0.0f, 1.0f ),
+	SRGUI_COLOR( "Zone Timer Background Top", "sp_zone_timer_clr_bg2", "14 24 16 0.78", "zones timer color background top", 10 ),
+	SRGUI_COLOR( "Zone Timer Background Bottom", "sp_zone_timer_clr_bg", "5 8 7 0.86", "zones timer color background bottom", 10 ),
+	SRGUI_COLOR( "Zone Timer Border", "sp_zone_timer_clr_border", "105 170 70 0.46", "zones timer color border", 10 ),
+	SRGUI_COLOR( "Zone Timer Time", "sp_zone_timer_clr_time", "186 248 142 1.00", "zones timer color time", 10 ),
+	SRGUI_COLOR( "Zone Timer PB / Progress", "sp_zone_timer_clr_muted", "145 164 136 0.92", "zones timer color pb progress muted", 10 ),
+	SRGUI_COLOR( "Zone Timer Ahead", "sp_zone_timer_clr_ahead", "108 255 108 1.00", "zones timer color ahead", 10 ),
+	SRGUI_COLOR( "Zone Timer Behind", "sp_zone_timer_clr_behind", "255 92 72 1.00", "zones timer color behind", 10 ),
+	SRGUI_COLOR( "Zone Timer Gold", "sp_zone_timer_clr_gold", "255 220 46 1.00", "zones timer color gold", 10 ),
+	SRGUI_COLOR( "Zone Timer Neutral", "sp_zone_timer_clr_neutral", "235 190 62 1.00", "zones timer color neutral", 10 ),
+
+	SRGUI_COMMAND( "Enable sv_cheats", "sv_cheats 1\nsv_cheats 1", "dev cheats enable", 12 ),
+	SRGUI_BOOL( "Draw Triggers", "cg_drawTriggers", "0", "dev draw triggers", 12 ),
+	SRGUI_INT( "Trigger Opacity", "cg_triggerOpacity", "140", "dev trigger opacity alpha", 12, 5, 255 ),
+	SRGUI_INT( "Trigger Log", "g_triggerLog", "0", "dev trigger log console", 12, 0, 2 ),
+	SRGUI_COMMAND( "List Triggers", "sp_trigger_list", "dev trigger list names", 12 ),
+	SRGUI_BOOL( "Draw Enemies", "cg_drawEnemies", "0", "dev draw enemies", 12 ),
+	SRGUI_INT( "Enemy Opacity", "cg_enemyOpacity", "140", "dev enemy opacity alpha", 12, 5, 255 ),
+	SRGUI_BOOL( "Draw Items", "cg_drawItems", "0", "dev draw items", 12 ),
+	SRGUI_INT( "Item Opacity", "cg_itemOpacity", "140", "dev item opacity alpha", 12, 5, 255 ),
+	SRGUI_BOOL( "Explosive Timers", "cg_explosiveTimers", "0", "dev explosive timers", 12 ),
+	SRGUI_BOOL( "Held Grenade/Dynamite Timer", "cg_explosiveTimersHeld", "1", "dev held grenade dynamite timer", 12 ),
+	SRGUI_BOOL( "Pinned World Timers", "cg_explosiveTimersWorld", "1", "dev pinned world timers", 12 ),
+	SRGUI_PAGE( "Draw Clips", "r_drawClips", "dev draw clips xray depth", 12 ),
+	SRGUI_INT( "Clip Opacity", "r_clipOpacity", "120", "dev clip opacity alpha", 12, 0, 255 ),
+	SRGUI_BOOL( "Default Fonts", "cg_defaultFonts", "0", "dev default fonts vid_restart", 12 )
 };
+
+#undef SRGUI_BOOL
+#undef SRGUI_FLOAT
+#undef SRGUI_INT
+#undef SRGUI_INPUT_INT
+#undef SRGUI_COLOR
+#undef SRGUI_COMMAND
+#undef SRGUI_PAGE
 typedef struct {
 	const char *label;
 	const char *command;
@@ -188,6 +665,7 @@ static const srGuiBindEntry_t s_bindEntries[] = {
 	{ "LiveSplit Reset No Save", "livesplit_reset_nosave" },
 	{ "LiveSplit Reset Category", "livesplit_reset_category" },
 	{ "LiveSplit Check Settings", "livesplit_check" },
+	{ "Race Chat", "ls_race_open_chat" },
 	{ "Demo Pause", "demo_pause" },
 	{ "Demo Speed Up", "demo_speedup" },
 	{ "Demo Slow Down", "demo_slowdown" },
@@ -211,6 +689,14 @@ static cvar_t *CL_ImGuiCvar( const char *name, const char *defaultValue ) {
 	return Cvar_Get( name, defaultValue ? defaultValue : "0", CVAR_ARCHIVE );
 }
 
+static void CL_ImGuiForgetArchivedCvar( const char *name ) {
+	cvar_t *cv = Cvar_Get( name, "", 0 );
+	if ( cv && ( cv->flags & CVAR_ARCHIVE ) ) {
+		cv->flags &= ~( CVAR_ARCHIVE | CVAR_USER_CREATED );
+		cvar_modifiedFlags |= CVAR_ARCHIVE;
+	}
+}
+
 static void CL_SpeedrunImGui_ClearGameplayInput( void ) {
 	Key_ClearStates();
 	CL_ClearKeys();
@@ -221,6 +707,13 @@ static void CL_SpeedrunImGui_ClearGameplayInput( void ) {
 	cl.joystickAxis[AXIS_UP] = 0;
 	cl.joystickAxis[AXIS_YAW] = 0;
 	cl.joystickAxis[AXIS_PITCH] = 0;
+}
+
+static void CL_SpeedrunImGui_ClearRaceChatKeys( void ) {
+	if ( s_imguiInitialized && ImGui::GetCurrentContext() ) {
+		ImGuiIO &io = ImGui::GetIO();
+		io.ClearInputKeys();
+	}
 }
 
 static void CL_SpeedrunImGui_SetupKnownGLState( void ) {
@@ -240,8 +733,17 @@ static void CL_SpeedrunImGui_SetupKnownGLState( void ) {
 	glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 }
 
+static void CL_SpeedrunImGui_CapturePanelInput( bool hideActiveMenu ) {
+	if ( hideActiveMenu && uivm ) {
+		VM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
+	}
+	Key_SetCatcher( ( Key_GetCatcher() & ~KEYCATCH_CONSOLE ) | KEYCATCH_UI );
+}
+
 static void CL_SpeedrunImGui_Open( void ) {
 	bool openedInGame = cls.state == CA_ACTIVE;
+	s_raceGuiOpen = false;
+	s_raceGuiRestoreAfterChat = false;
 	s_imguiOpen = true;
 	s_lastEnabledCvar = 1;
 	s_imguiAnim = s_imguiAnimations && s_imguiAnimations->integer == 0 ? 1.0f : 0.0f;
@@ -259,10 +761,94 @@ static void CL_SpeedrunImGui_Open( void ) {
 	   which looks like ImGui opened without a usable window.  Keep KEYCATCH_UI
 	   active while ImGui is open so the client does not generate gameplay cmds
 	   under the panel. */
-	Key_SetCatcher( ( Key_GetCatcher() & ~KEYCATCH_CONSOLE ) | KEYCATCH_UI );
+	CL_SpeedrunImGui_CapturePanelInput( openedInGame );
 	if ( openedInGame ) {
 		Cvar_Set( "cl_paused", "1" );
 	}
+}
+
+static void CL_SpeedrunImGui_RestorePanelInput( bool restorePause ) {
+	if ( restorePause ) {
+		CL_SpeedrunImGui_ClearGameplayInput();
+		if ( uivm ) {
+			VM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_INGAME );
+		} else {
+			Key_SetCatcher( Key_GetCatcher() | KEYCATCH_UI );
+			Cvar_Set( "cl_paused", "1" );
+		}
+		if ( s_imguiRestorePause ) {
+			Cvar_Set( s_imguiRestorePause->name, "0" );
+		}
+	} else {
+		if ( uivm ) {
+			VM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
+		}
+		Key_SetCatcher( Key_GetCatcher() & ~( KEYCATCH_UI | KEYCATCH_CONSOLE ) );
+		CL_SpeedrunImGui_ClearGameplayInput();
+		Cvar_Set( "cl_paused", "0" );
+	}
+}
+
+static void CL_SpeedrunImGui_CloseRaceGui( void ) {
+	bool restorePause = s_imguiRestorePause && s_imguiRestorePause->integer != 0;
+	s_raceGuiOpen = false;
+	s_mouseDown[0] = s_mouseDown[1] = s_mouseDown[2] = false;
+	if ( s_raceChatOpen && !s_imguiOpen ) {
+		s_raceGuiRestoreAfterChat = true;
+		return;
+	}
+	if ( s_imguiOpen || s_raceChatOpen ) {
+		return;
+	}
+	s_raceGuiRestoreAfterChat = false;
+	CL_SpeedrunImGui_RestorePanelInput( restorePause );
+}
+
+extern "C" void CL_SpeedrunImGui_OpenRace( void ) {
+	bool openedInGame = cls.state == CA_ACTIVE;
+	s_imguiOpen = false;
+	s_raceGuiOpen = true;
+	s_raceGuiRestoreAfterChat = false;
+	s_raceGuiAnim = s_imguiAnimations && s_imguiAnimations->integer == 0 ? 1.0f : 0.0f;
+	s_lastEnabledCvar = 0;
+	if ( s_imguiEnabled ) {
+		Cvar_Set( s_imguiEnabled->name, "0" );
+	}
+	SetCursor( NULL );
+	CL_SpeedrunImGui_ClearGameplayInput();
+	CL_SpeedrunImGui_CapturePanelInput( openedInGame );
+	if ( openedInGame ) {
+		Cvar_Set( "cl_paused", "1" );
+		if ( s_imguiRestorePause ) {
+			Cvar_Set( s_imguiRestorePause->name, "1" );
+		}
+	}
+}
+
+extern "C" void CL_SpeedrunImGui_CloseAllForGameplay( void ) {
+	s_imguiOpen = false;
+	s_raceGuiOpen = false;
+	s_raceChatOpen = false;
+	s_raceGuiRestoreAfterChat = false;
+	s_pendingBindCommand = NULL;
+	s_mouseDown[0] = s_mouseDown[1] = s_mouseDown[2] = false;
+	s_lastEnabledCvar = 0;
+	if ( s_imguiEnabled ) {
+		Cvar_Set( s_imguiEnabled->name, "0" );
+	}
+	if ( s_imguiRestorePause ) {
+		Cvar_Set( s_imguiRestorePause->name, "0" );
+	}
+	if ( uivm ) {
+		VM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
+	}
+	Key_SetCatcher( Key_GetCatcher() & ~( KEYCATCH_UI | KEYCATCH_CONSOLE ) );
+	CL_SpeedrunImGui_ClearGameplayInput();
+	Cvar_Set( "cl_paused", "0" );
+}
+
+static void CL_SpeedrunImGui_CloseSettingsForRaceStart( void ) {
+	CL_SpeedrunImGui_CloseAllForGameplay();
 }
 
 static void CL_SpeedrunImGui_Close( void ) {
@@ -293,6 +879,51 @@ static void CL_SpeedrunImGui_Close( void ) {
 		CL_SpeedrunImGui_ClearGameplayInput();
 		Cvar_Set( "cl_paused", "0" );
 	}
+}
+
+static void CL_SpeedrunImGui_CloseRaceChat( void ) {
+	s_raceChatOpen = false;
+	s_raceChatFocus = false;
+	s_raceChatSuppressInputUntilMs = 0;
+	s_raceChatIgnoreSubmitUntilMs = Sys_Milliseconds() + 160;
+	s_raceChatInput[0] = '\0';
+	CL_SpeedrunImGui_ClearRaceChatKeys();
+	if ( !CL_SpeedrunImGui_HasPanelOpen() ) {
+		if ( s_raceGuiRestoreAfterChat ) {
+			bool restorePause = s_imguiRestorePause && s_imguiRestorePause->integer != 0;
+			s_raceGuiRestoreAfterChat = false;
+			CL_SpeedrunImGui_RestorePanelInput( restorePause );
+		} else {
+			Key_SetCatcher( s_raceChatPreviousCatcher & ~KEYCATCH_CONSOLE );
+			CL_SpeedrunImGui_ClearGameplayInput();
+		}
+	}
+}
+
+extern "C" void CL_SpeedrunImGui_OpenRaceChat( void ) {
+	int now = Sys_Milliseconds();
+	if ( s_raceChatOpen ) {
+		s_raceChatFocus = true;
+		s_raceChatSuppressInputUntilMs = now + 140;
+		s_raceChatIgnoreSubmitUntilMs = now + 220;
+		CL_SpeedrunImGui_ClearRaceChatKeys();
+		return;
+	}
+	s_raceChatPreviousCatcher = Key_GetCatcher();
+	s_raceChatOpen = true;
+	s_raceChatFocus = true;
+	s_raceChatSuppressInputUntilMs = now + 140;
+	s_raceChatIgnoreSubmitUntilMs = now + 220;
+	s_raceChatInput[0] = '\0';
+	CL_SpeedrunImGui_ClearRaceChatKeys();
+	if ( !CL_SpeedrunImGui_HasPanelOpen() ) {
+		CL_SpeedrunImGui_ClearGameplayInput();
+		Key_SetCatcher( ( Key_GetCatcher() & ~KEYCATCH_CONSOLE ) | KEYCATCH_UI );
+	}
+}
+
+extern "C" int CL_SpeedrunImGui_IsRaceChatOpen( void ) {
+	return s_raceChatOpen ? 1 : 0;
 }
 
 static ImGuiKey CL_ImGuiMapVK( WPARAM vk ) {
@@ -462,13 +1093,18 @@ static void CL_ImGuiLazyInit( void ) {
 	if ( s_imguiInitialized ) {
 		return;
 	}
+	int selectedFont = (int)Com_Clamp( 0.0f, (float)( SRGUI_LIVESPLIT_FONT_COUNT - 1 ), (float)Cvar_VariableIntegerValue( "ls_imgui_font" ) );
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO &io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	io.Fonts->TexDesiredWidth = 2048;
 	for ( int fontIndex = 0; fontIndex < SRGUI_LIVESPLIT_FONT_COUNT; ++fontIndex ) {
 		for ( int tier = 0; tier < SRGUI_LIVESPLIT_FONT_TIER_COUNT; ++tier ) {
+			if ( tier > 0 && fontIndex != selectedFont && fontIndex != 1 ) {
+				continue;
+			}
 			if ( !CL_ImGuiLoadLiveSplitLargeFontTier( fontIndex, tier ) ) {
 				continue;
 			}
@@ -502,19 +1138,157 @@ static void CL_ImGuiLazyInit( void ) {
 	s_imguiInitialized = true;
 }
 
+static void CL_ImGuiEnsureDeviceObjects( void ) {
+	if ( !s_imguiInitialized ) {
+		return;
+	}
+	ImGuiIO &io = ImGui::GetIO();
+	GLuint fontTex = (GLuint)(uintptr_t)io.Fonts->TexID;
+	if ( fontTex && glIsTexture( fontTex ) ) {
+		return;
+	}
+	if ( fontTex ) {
+		ImGui_ImplOpenGL2_DestroyDeviceObjects();
+	}
+	ImGui_ImplOpenGL2_CreateDeviceObjects();
+}
+
+static void CL_ImGuiUpdateMousePosition( ImGuiIO &io ) {
+	POINT point;
+	HWND hwnd;
+
+	if ( !CL_SpeedrunImGui_HasPanelOpen() && !s_raceChatOpen ) {
+		return;
+	}
+	hwnd = s_imguiHwnd ? s_imguiHwnd : GetActiveWindow();
+	if ( !hwnd ) {
+		return;
+	}
+	if ( GetCursorPos( &point ) && ScreenToClient( hwnd, &point ) ) {
+		io.AddMousePosEvent( (float)point.x, (float)point.y );
+	}
+}
+
+static void CL_ImGuiOptionTooltip( const char *title, const char *name, const char *desc, const char *defaultValue = NULL ) {
+	if ( !ImGui::IsItemHovered() ) {
+		return;
+	}
+	ImGui::BeginTooltip();
+	ImGui::PushTextWrapPos( ImGui::GetFontSize() * 28.0f );
+	if ( title && title[0] ) {
+		ImGui::TextColored( ImVec4( 0.70f, 0.95f, 0.45f, 1.0f ), "%s", title );
+	}
+	if ( desc && desc[0] ) {
+		ImGui::TextWrapped( "%s", desc );
+	}
+	if ( name && name[0] ) {
+		ImGui::Separator();
+		ImGui::TextDisabled( "cvar/command: %s", name );
+	}
+	if ( defaultValue && defaultValue[0] ) {
+		ImGui::TextDisabled( "default: %s", defaultValue );
+	}
+	ImGui::PopTextWrapPos();
+	ImGui::EndTooltip();
+}
+
+static const char *CL_ImGuiWidgetHint( const char *kind, const char *label ) {
+	return va( "%s for %s.", kind ? kind : "Option", label && label[0] ? label : "this setting" );
+}
+
+static const char *CL_ImGuiCanonicalBindableCommand( const char *command ) {
+	if ( !command || !command[0] ) {
+		return NULL;
+	}
+	for ( int i = 0; i < IM_ARRAYSIZE( s_bindEntries ); ++i ) {
+		if ( Q_stricmp( s_bindEntries[i].command, command ) == 0 ) {
+			return s_bindEntries[i].command;
+		}
+	}
+	return NULL;
+}
+
+static void CL_ImGuiDrawCommandBindTools( const char *command, const char *desc = NULL ) {
+	const char *bindCommand = CL_ImGuiCanonicalBindableCommand( command );
+	if ( !bindCommand ) {
+		return;
+	}
+	int keynum = Key_GetKey( bindCommand );
+	const char *keyName = keynum > 0 ? Key_KeynumToString( keynum, qtrue ) : "Unbound";
+	bool waiting = s_pendingBindCommand == bindCommand;
+	ImGui::PushID( bindCommand );
+	ImGui::SameLine( 0.0f, 8.0f );
+	ImGui::TextDisabled( "%s", waiting ? "press key..." : keyName );
+	CL_ImGuiOptionTooltip( "Current bind", bindCommand, desc ? desc : "Keyboard shortcut assigned to this command." );
+	ImGui::SameLine( 0.0f, 6.0f );
+	if ( ImGui::SmallButton( waiting ? "Cancel" : "Bind" ) ) {
+		s_pendingBindCommand = waiting ? NULL : bindCommand;
+	}
+	CL_ImGuiOptionTooltip( waiting ? "Cancel bind capture" : "Assign bind", bindCommand, waiting ? "Stops waiting for a key." : "Click, then press a key or mouse button for this command." );
+	ImGui::PopID();
+}
+
+static float CL_ImGuiOptionLabelWidth( void ) {
+	float avail = ImGui::GetContentRegionAvail().x;
+	float width = avail * 0.34f;
+	if ( avail < 300.0f ) return avail;
+	if ( width < 130.0f ) width = 130.0f;
+	if ( width > 245.0f ) width = 245.0f;
+	return width;
+}
+
+static bool s_imguiOptionLineCompact = false;
+
+static float CL_ImGuiOptionControlWidth( float minWidth = 120.0f ) {
+	float avail = ImGui::GetContentRegionAvail().x;
+	float reserve = ( !s_imguiOptionLineCompact && avail > 430.0f ) ? 130.0f : 0.0f;
+	float width = avail - reserve;
+	if ( width < minWidth ) width = avail;
+	if ( width > avail ) width = avail;
+	if ( width < 48.0f ) width = 48.0f;
+	return width;
+}
+
+static bool CL_ImGuiOptionCompactLayout( void ) {
+	return ImGui::GetContentRegionAvail().x < 430.0f;
+}
+
+static void CL_ImGuiBeginOptionLine( const char *label, const char *name, const char *hint, const char *defaultValue = NULL ) {
+	float x = ImGui::GetCursorPosX();
+	float labelWidth = CL_ImGuiOptionLabelWidth();
+	s_imguiOptionLineCompact = CL_ImGuiOptionCompactLayout();
+	ImGui::PushID( name && name[0] ? name : label );
+	ImGui::AlignTextToFramePadding();
+	if ( s_imguiOptionLineCompact ) {
+		ImGui::TextWrapped( "%s", label && label[0] ? label : "Option" );
+	} else {
+		ImGui::TextUnformatted( label && label[0] ? label : "Option" );
+	}
+	CL_ImGuiOptionTooltip( label, name, hint, defaultValue );
+	if ( !s_imguiOptionLineCompact ) {
+		ImGui::SameLine();
+		ImGui::SetCursorPosX( x + labelWidth );
+	}
+}
+
+static void CL_ImGuiEndOptionLine( const char *label, const char *name, const char *hint, const char *defaultValue = NULL ) {
+	if ( !s_imguiOptionLineCompact && name && name[0] && ImGui::GetContentRegionAvail().x > 118.0f ) {
+		ImGui::SameLine( 0.0f, 8.0f );
+		ImGui::TextDisabled( "%s", name );
+		CL_ImGuiOptionTooltip( label, name, hint, defaultValue );
+	}
+	ImGui::PopID();
+}
+
 static void CL_ImGuiBoolCvar( const char *label, cvar_t *cv, const char *hint = NULL ) {
 	bool v = cv && cv->integer != 0;
-	if ( ImGui::Checkbox( label, &v ) && cv ) {
+	const char *desc = hint ? hint : CL_ImGuiWidgetHint( "Toggles", label );
+	CL_ImGuiBeginOptionLine( label, cv ? cv->name : NULL, desc );
+	if ( ImGui::Checkbox( "##toggle", &v ) && cv ) {
 		Cvar_Set( cv->name, v ? "1" : "0" );
 	}
-	if ( cv ) {
-		ImGui::SameLine();
-		ImGui::TextDisabled( "%s", cv->name );
-	}
-	if ( hint && hint[0] ) {
-		ImGui::SameLine();
-		ImGui::TextDisabled( "%s", hint );
-	}
+	CL_ImGuiOptionTooltip( label, cv ? cv->name : NULL, desc );
+	CL_ImGuiEndOptionLine( label, cv ? cv->name : NULL, desc );
 }
 
 static void CL_ImGuiBoolCvarName( const char *label, const char *name, const char *defaultValue = "0", const char *hint = NULL ) {
@@ -527,25 +1301,56 @@ static void CL_ImGuiBoolCvarName( const char *label, const char *name, const cha
 static void CL_ImGuiSliderCvarName( const char *label, const char *name, const char *defaultValue, float minValue, float maxValue, const char *format = "%.2f" ) {
 	cvar_t *cv = CL_ImGuiCvar( name, defaultValue );
 	float v = cv ? cv->value : 0.0f;
-	ImGui::PushID( name );
-	if ( ImGui::SliderFloat( label, &v, minValue, maxValue, format ) && cv ) {
+	const char *desc = CL_ImGuiWidgetHint( "Adjusts", label );
+	CL_ImGuiBeginOptionLine( label, name, desc, defaultValue );
+	ImGui::SetNextItemWidth( CL_ImGuiOptionControlWidth() );
+	if ( ImGui::SliderFloat( "##value", &v, minValue, maxValue, format ) && cv ) {
 		Cvar_SetValue( cv->name, v );
 	}
-	ImGui::SameLine();
-	ImGui::TextDisabled( "%s", name );
-	ImGui::PopID();
+	CL_ImGuiOptionTooltip( label, name, desc, defaultValue );
+	CL_ImGuiEndOptionLine( label, name, desc, defaultValue );
 }
 
 static void CL_ImGuiIntSliderCvarName( const char *label, const char *name, const char *defaultValue, int minValue, int maxValue ) {
 	cvar_t *cv = CL_ImGuiCvar( name, defaultValue );
 	int v = cv ? cv->integer : 0;
-	ImGui::PushID( name );
-	if ( ImGui::SliderInt( label, &v, minValue, maxValue ) && cv ) {
+	const char *desc = CL_ImGuiWidgetHint( "Adjusts", label );
+	CL_ImGuiBeginOptionLine( label, name, desc, defaultValue );
+	ImGui::SetNextItemWidth( CL_ImGuiOptionControlWidth() );
+	if ( ImGui::SliderInt( "##value", &v, minValue, maxValue ) && cv ) {
 		Cvar_SetValue( cv->name, v );
 	}
-	ImGui::SameLine();
-	ImGui::TextDisabled( "%s", name );
-	ImGui::PopID();
+	CL_ImGuiOptionTooltip( label, name, desc, defaultValue );
+	CL_ImGuiEndOptionLine( label, name, desc, defaultValue );
+}
+
+static void CL_ImGuiIntInputCvarName( const char *label, const char *name, const char *defaultValue, int minValue, int maxValue ) {
+	cvar_t *cv = CL_ImGuiCvar( name, defaultValue );
+	int value = cv ? cv->integer : atoi( defaultValue ? defaultValue : "0" );
+	const char *desc = CL_ImGuiWidgetHint( "Edits", label );
+	CL_ImGuiBeginOptionLine( label, name, desc, defaultValue );
+	ImGui::SetNextItemWidth( CL_ImGuiOptionControlWidth( 92.0f ) );
+	if ( ImGui::InputInt( "##value", &value, 0, 0 ) && cv ) {
+		if ( value < minValue ) value = minValue;
+		if ( value > maxValue ) value = maxValue;
+		Cvar_SetValue( cv->name, value );
+	}
+	CL_ImGuiOptionTooltip( label, name, desc, defaultValue );
+	CL_ImGuiEndOptionLine( label, name, desc, defaultValue );
+}
+
+static void CL_ImGuiInputCvarName( const char *label, const char *name, const char *defaultValue, ImGuiInputTextFlags flags = 0 ) {
+	cvar_t *cv = CL_ImGuiCvar( name, defaultValue );
+	char buf[128];
+	Q_strncpyz( buf, cv && cv->string ? cv->string : defaultValue, sizeof( buf ) );
+	const char *desc = CL_ImGuiWidgetHint( "Edits text", label );
+	CL_ImGuiBeginOptionLine( label, name, desc, defaultValue );
+	ImGui::SetNextItemWidth( CL_ImGuiOptionControlWidth() );
+	if ( ImGui::InputText( "##value", buf, sizeof( buf ), flags ) && cv ) {
+		Cvar_Set( cv->name, buf );
+	}
+	CL_ImGuiOptionTooltip( label, name, desc, defaultValue );
+	CL_ImGuiEndOptionLine( label, name, desc, defaultValue );
 }
 
 static void CL_ImGuiComboCvar( const char *label, cvar_t *cv, const char *const *labels, const int *values, int count ) {
@@ -559,7 +1364,10 @@ static void CL_ImGuiComboCvar( const char *label, cvar_t *cv, const char *const 
 			}
 		}
 	}
-	if ( ImGui::BeginCombo( label, labels[current] ) ) {
+	const char *desc = CL_ImGuiWidgetHint( "Chooses", label );
+	CL_ImGuiBeginOptionLine( label, cv ? cv->name : NULL, desc );
+	ImGui::SetNextItemWidth( CL_ImGuiOptionControlWidth() );
+	if ( ImGui::BeginCombo( "##value", labels[current] ) ) {
 		for ( i = 0; i < count; ++i ) {
 			bool selected = ( i == current );
 			if ( ImGui::Selectable( labels[i], selected ) && cv ) {
@@ -571,10 +1379,8 @@ static void CL_ImGuiComboCvar( const char *label, cvar_t *cv, const char *const 
 		}
 		ImGui::EndCombo();
 	}
-	if ( cv ) {
-		ImGui::SameLine();
-		ImGui::TextDisabled( "%s", cv->name );
-	}
+	CL_ImGuiOptionTooltip( label, cv ? cv->name : NULL, desc );
+	CL_ImGuiEndOptionLine( label, cv ? cv->name : NULL, desc );
 }
 
 static void CL_ImGuiComboCvarName( const char *label, const char *name, const char *defaultValue, const char *const *labels, const int *values, int count ) {
@@ -597,8 +1403,11 @@ static void CL_ImGuiCommandComboCvarName( const char *label, const char *name, c
 			}
 		}
 	}
+	const char *desc = command ? command : CL_ImGuiWidgetHint( "Chooses", label );
+	CL_ImGuiBeginOptionLine( label, cv ? cv->name : NULL, desc, defaultValue );
 	ImGui::PushID( command );
-	if ( ImGui::BeginCombo( label, labels[current] ) ) {
+	ImGui::SetNextItemWidth( CL_ImGuiOptionControlWidth() );
+	if ( ImGui::BeginCombo( "##value", labels[current] ) ) {
 		for ( i = 0; i < count; ++i ) {
 			bool selected = ( i == current );
 			if ( ImGui::Selectable( labels[i], selected ) ) {
@@ -614,11 +1423,9 @@ static void CL_ImGuiCommandComboCvarName( const char *label, const char *name, c
 		}
 		ImGui::EndCombo();
 	}
-	if ( cv ) {
-		ImGui::SameLine();
-		ImGui::TextDisabled( "%s", cv->name );
-	}
+	CL_ImGuiOptionTooltip( label, cv ? cv->name : NULL, desc, defaultValue );
 	ImGui::PopID();
+	CL_ImGuiEndOptionLine( label, cv ? cv->name : NULL, desc, defaultValue );
 }
 
 static void CL_ImGuiStringComboCvarName( const char *label, const char *name, const char *defaultValue, const char *const *labels, const char *const *values, int count ) {
@@ -638,8 +1445,10 @@ static void CL_ImGuiStringComboCvarName( const char *label, const char *name, co
 			current = cv->integer - 1;
 		}
 	}
-	ImGui::PushID( name );
-	if ( ImGui::BeginCombo( label, labels[current] ) ) {
+	const char *desc = CL_ImGuiWidgetHint( "Chooses", label );
+	CL_ImGuiBeginOptionLine( label, name, desc, defaultValue );
+	ImGui::SetNextItemWidth( CL_ImGuiOptionControlWidth() );
+	if ( ImGui::BeginCombo( "##value", labels[current] ) ) {
 		for ( i = 0; i < count; ++i ) {
 			bool selected = ( i == current );
 			if ( ImGui::Selectable( labels[i], selected ) && cv ) {
@@ -651,11 +1460,15 @@ static void CL_ImGuiStringComboCvarName( const char *label, const char *name, co
 		}
 		ImGui::EndCombo();
 	}
-	if ( cv ) {
-		ImGui::SameLine();
+	CL_ImGuiOptionTooltip( label, name, desc, defaultValue );
+	if ( !s_imguiOptionLineCompact && cv && ImGui::GetContentRegionAvail().x > 156.0f ) {
+		ImGui::SameLine( 0.0f, 8.0f );
 		ImGui::TextDisabled( "%s = %s", cv->name, cv->string && cv->string[0] ? cv->string : values[current] );
+		CL_ImGuiOptionTooltip( label, name, desc, defaultValue );
+		ImGui::PopID();
+	} else {
+		CL_ImGuiEndOptionLine( label, name, desc, defaultValue );
 	}
-	ImGui::PopID();
 }
 
 static void CL_ImGuiColorCvarName( const char *label, const char *name, const float fallback[4] ) {
@@ -664,6 +1477,11 @@ static void CL_ImGuiColorCvarName( const char *label, const char *name, const fl
 	int r, g, b;
 	float a;
 	char buf[64];
+	float controlAvail;
+	float resetWidth = 62.0f;
+	float spacing = ImGui::GetStyle().ItemSpacing.x;
+	bool resetInline;
+	float colorWidth;
 
 	if ( cv && cv->string && sscanf( cv->string, "%d %d %d %f", &r, &g, &b, &a ) == 4 ) {
 		rgba[0] = Com_Clamp( 0.0f, 1.0f, r / 255.0f );
@@ -672,34 +1490,48 @@ static void CL_ImGuiColorCvarName( const char *label, const char *name, const fl
 		rgba[3] = Com_Clamp( 0.0f, 1.0f, a );
 	}
 
-	ImGui::PushID( name );
-	if ( ImGui::ColorEdit4( label, rgba, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_DisplayRGB ) && cv ) {
+	const char *desc = CL_ImGuiWidgetHint( "Edits color", label );
+	CL_ImGuiBeginOptionLine( label, name, desc );
+	controlAvail = ImGui::GetContentRegionAvail().x;
+	resetInline = controlAvail > 260.0f;
+	colorWidth = resetInline ? controlAvail - resetWidth - spacing : controlAvail;
+	if ( colorWidth < 120.0f ) colorWidth = controlAvail;
+	if ( colorWidth < 48.0f ) colorWidth = 48.0f;
+	ImGui::SetNextItemWidth( colorWidth );
+	if ( ImGui::ColorEdit4( "##value", rgba, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_DisplayRGB ) && cv ) {
 		Com_sprintf( buf, sizeof( buf ), "%d %d %d %.2f", (int)( rgba[0] * 255.0f + 0.5f ), (int)( rgba[1] * 255.0f + 0.5f ), (int)( rgba[2] * 255.0f + 0.5f ), rgba[3] );
 		Cvar_Set( cv->name, buf );
 	}
-	ImGui::SameLine();
+	CL_ImGuiOptionTooltip( label, name, desc );
+	if ( resetInline ) {
+		ImGui::SameLine( 0.0f, spacing );
+	}
 	if ( ImGui::SmallButton( "Reset" ) && cv ) {
 		Cvar_Set( cv->name, "" );
 	}
+	CL_ImGuiOptionTooltip( "Reset color", name, "Clears the custom color and lets the fallback/default color be used." );
 	ImGui::PopID();
 }
 
 static void CL_ImGuiCommandButton( const char *label, const char *command, const char *hint = NULL ) {
 	ImGuiStyle &style = ImGui::GetStyle();
-	ImGui::BeginChild( label, ImVec2( 0, 42 ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	CL_ImGuiBeginAutoBox( label );
 	ImDrawList *draw = ImGui::GetWindowDrawList();
 	ImVec2 p0 = ImGui::GetWindowPos();
 	ImVec2 p1 = ImVec2( p0.x + 5.0f, p0.y + ImGui::GetWindowHeight() - 1.0f );
 	draw->AddRectFilled( ImVec2( p0.x + 1.0f, p0.y + 1.0f ), p1, IM_COL32( 95, 175, 58, 120 ), style.ChildRounding > 1.0f ? style.ChildRounding - 1.0f : 0.0f, ImDrawFlags_RoundCornersLeft );
-	ImGui::SetCursorPos( ImVec2( 16.0f, 8.0f ) );
-	if ( ImGui::Button( label, ImVec2( 160, 0 ) ) ) {
+	ImGui::SetCursorPosX( 16.0f );
+	if ( ImGui::Button( label, ImVec2( ImGui::GetContentRegionAvail().x > 180.0f ? 160.0f : 0.0f, 0 ) ) ) {
 		Cbuf_AddText( command );
 		Cbuf_AddText( "\n" );
 	}
+	CL_ImGuiOptionTooltip( label, command, hint ? hint : "Runs this command immediately." );
 	if ( hint && hint[0] ) {
-		ImGui::SameLine( 0.0f, 14.0f );
+		CL_ImGuiSameLineIfFits( ImGui::CalcTextSize( hint ).x, 14.0f );
 		ImGui::TextDisabled( "%s", hint );
+		CL_ImGuiOptionTooltip( label, command, hint );
 	}
+	CL_ImGuiDrawCommandBindTools( command, hint );
 	ImGui::EndChild();
 }
 
@@ -740,26 +1572,52 @@ static bool CL_ImGuiIsFavorite( const srGuiSettingEntry_t *entry ) {
 	return Cvar_VariableIntegerValue( cvarName ) != 0;
 }
 
+static void CL_ImGuiParseColorFallback( const char *value, float out[4] ) {
+	int r, g, b;
+	float a;
+	out[0] = out[1] = out[2] = out[3] = 1.0f;
+	if ( value && sscanf( value, "%d %d %d %f", &r, &g, &b, &a ) == 4 ) {
+		out[0] = Com_Clamp( 0.0f, 1.0f, r / 255.0f );
+		out[1] = Com_Clamp( 0.0f, 1.0f, g / 255.0f );
+		out[2] = Com_Clamp( 0.0f, 1.0f, b / 255.0f );
+		out[3] = Com_Clamp( 0.0f, 1.0f, a );
+	}
+}
+
 static void CL_ImGuiRenderSettingEntry( const srGuiSettingEntry_t *entry, bool showCategoryButton ) {
 	char favName[96];
+	float colorFallback[4];
 	bool fav = CL_ImGuiIsFavorite( entry );
 	CL_ImGuiFavoriteCvarName( entry, favName, sizeof( favName ) );
 	ImGui::PushID( entry->name );
 	if ( ImGui::Button( fav ? "-" : "+", ImVec2( 24, 0 ) ) ) {
 		Cvar_Set( favName, fav ? "0" : "1" );
 	}
-	ImGui::SameLine();
+	CL_ImGuiSameLineIfFits( 176.0f );
 	if ( entry->type == SRGUI_SETTING_BOOL ) {
 		CL_ImGuiBoolCvarName( entry->label, entry->name, entry->defaultValue );
 	} else if ( entry->type == SRGUI_SETTING_FLOAT ) {
 		CL_ImGuiSliderCvarName( entry->label, entry->name, entry->defaultValue, entry->minValue, entry->maxValue, "%.2f" );
 	} else if ( entry->type == SRGUI_SETTING_INT ) {
 		CL_ImGuiIntSliderCvarName( entry->label, entry->name, entry->defaultValue, (int)entry->minValue, (int)entry->maxValue );
+	} else if ( entry->type == SRGUI_SETTING_INPUT_INT ) {
+		CL_ImGuiIntInputCvarName( entry->label, entry->name, entry->defaultValue, (int)entry->minValue, (int)entry->maxValue );
+	} else if ( entry->type == SRGUI_SETTING_COLOR ) {
+		CL_ImGuiParseColorFallback( entry->defaultValue, colorFallback );
+		CL_ImGuiColorCvarName( entry->label, entry->name, colorFallback );
+	} else if ( entry->type == SRGUI_SETTING_PAGE ) {
+		ImGui::Text( "%s", entry->label );
+		CL_ImGuiOptionTooltip( entry->label, entry->name, entry->tags );
+		if ( entry->name && entry->name[0] ) {
+			ImGui::SameLine();
+			ImGui::TextDisabled( "%s", entry->name );
+			CL_ImGuiOptionTooltip( entry->label, entry->name, entry->tags );
+		}
 	} else if ( entry->command ) {
 		CL_ImGuiCommandButton( entry->label, entry->command, entry->tags );
 	}
 	if ( showCategoryButton ) {
-		ImGui::SameLine();
+		CL_ImGuiSameLineIfFits( 36.0f );
 		if ( ImGui::SmallButton( "Go" ) ) {
 			s_imguiCategory = entry->category;
 		}
@@ -770,7 +1628,7 @@ static void CL_ImGuiRenderSettingEntry( const srGuiSettingEntry_t *entry, bool s
 static void CL_ImGuiDrawPinnedSettings( void ) {
 	int i, count = 0;
 	if ( !ImGui::CollapsingHeader( "Pinned Settings", ImGuiTreeNodeFlags_DefaultOpen ) ) return;
-	ImGui::BeginChild( "pinned_settings", ImVec2( 0, 154 ), true );
+	ImGui::PushStyleColor( ImGuiCol_Header, ImVec4( 0.10f, 0.17f, 0.08f, 0.82f ) );
 	for ( i = 0; i < IM_ARRAYSIZE( s_settingEntries ); ++i ) {
 		if ( CL_ImGuiIsFavorite( &s_settingEntries[i] ) ) {
 			CL_ImGuiRenderSettingEntry( &s_settingEntries[i], true );
@@ -780,15 +1638,16 @@ static void CL_ImGuiDrawPinnedSettings( void ) {
 	if ( count == 0 ) {
 		ImGui::TextDisabled( "No pinned settings yet. Use Search and press + next to an option." );
 	}
-	ImGui::EndChild();
+	ImGui::PopStyleColor();
+	ImGui::Spacing();
 }
 
 static void CL_ImGuiDrawSettingsSearchPage( void ) {
 	int i, count = 0;
-	CL_ImGuiSectionHeader( "Settings Search", "Type opacity, ghost, fps, bhop, reset, demo..." );
+	CL_ImGuiSectionHeader( "Settings Search", "Search cvars, colors, binds, zones, demos, records and commands." );
 	ImGui::SetNextItemWidth( -1.0f );
 	ImGui::InputTextWithHint( "##settings_search", "search settings and commands...", s_settingsSearch, sizeof( s_settingsSearch ) );
-	ImGui::BeginChild( "settings_search_results", ImVec2( 0, 0 ), true );
+	ImGui::Spacing();
 	if ( !s_settingsSearch[0] ) {
 		ImGui::TextDisabled( "Start typing to filter matching settings." );
 	} else {
@@ -802,7 +1661,6 @@ static void CL_ImGuiDrawSettingsSearchPage( void ) {
 			ImGui::TextDisabled( "No settings match '%s'.", s_settingsSearch );
 		}
 	}
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawLayoutGrid( void ) {
@@ -982,7 +1840,73 @@ static void CL_ImGuiSetAnchorAlignedCvar( cvar_t *xCv, cvar_t *alignCv, int oldA
 	Cvar_SetValue( alignCv->name, cvarValue );
 }
 
-static void CL_ImGuiDragLayoutElement( const char *label, const char *xCvar, const char *yCvar, const char *xDefault, const char *yDefault, float w, float h, bool autoWhenZero = false, bool mirrorAlign = false, float autoX = 0.0f, float autoY = 0.0f, const char *toggleCvar = NULL, const char *toggleCvar2 = NULL, const char *scaleCvar = NULL, const char *widthCvar = NULL, float minScale = 0.5f, float maxScale = 3.0f, float minWidth = 40.0f, float maxWidth = 640.0f, int anchorMode = 0, const char *alignCvar = NULL, int alignRightValue = 1, scralign_t screenAlign = ALIGN_STRETCH, const char *scaleDefault = "1.0", const char *widthDefault = "178", int alignModeCount = 2, const char *alignDefault = "0" ) {
+static void CL_ImGuiAdjustFrom640Raw( float *x, float *y, float *w, float *h, scralign_t align ) {
+	float xscale = cls.glconfig.vidWidth / 640.0f;
+	float yscale = cls.glconfig.vidHeight / 480.0f;
+	float minscale = xscale < yscale ? xscale : yscale;
+	float tx = x ? *x : 0.0f;
+	float ty = y ? *y : 0.0f;
+
+	switch ( align ) {
+	case ALIGN_TOP:
+	case ALIGN_CENTER:
+	case ALIGN_BOTTOM:
+		if ( x ) *x = ( tx - 320.0f ) * minscale + cls.glconfig.vidWidth * 0.5f;
+		if ( w ) *w *= minscale;
+		break;
+	case ALIGN_TOPRIGHT:
+	case ALIGN_RIGHT:
+	case ALIGN_BOTTOMRIGHT:
+		if ( x ) *x = ( tx - 640.0f ) * minscale + cls.glconfig.vidWidth;
+		if ( w ) *w *= minscale;
+		break;
+	case ALIGN_TOPLEFT:
+	case ALIGN_LEFT:
+	case ALIGN_BOTTOMLEFT:
+		if ( x ) *x = tx * minscale;
+		if ( w ) *w *= minscale;
+		break;
+	case ALIGN_STRETCH:
+	default:
+		if ( x ) *x = tx * xscale;
+		if ( w ) *w *= xscale;
+		break;
+	}
+
+	switch ( align ) {
+	case ALIGN_LEFT:
+	case ALIGN_CENTER:
+	case ALIGN_RIGHT:
+		if ( y ) *y = ( ty - 240.0f ) * minscale + cls.glconfig.vidHeight * 0.5f;
+		if ( h ) *h *= minscale;
+		break;
+	case ALIGN_BOTTOM:
+	case ALIGN_BOTTOMLEFT:
+	case ALIGN_BOTTOMRIGHT:
+		if ( y ) *y = ( ty - 480.0f ) * minscale + cls.glconfig.vidHeight;
+		if ( h ) *h *= minscale;
+		break;
+	case ALIGN_TOP:
+	case ALIGN_TOPLEFT:
+	case ALIGN_TOPRIGHT:
+		if ( y ) *y = ty * minscale;
+		if ( h ) *h *= minscale;
+		break;
+	case ALIGN_STRETCH:
+	default:
+		if ( y ) *y = ty * yscale;
+		if ( h ) *h *= yscale;
+		break;
+	}
+}
+
+enum {
+	SRGUI_LAYOUT_DIM_DEFAULT = 0,
+	SRGUI_LAYOUT_DIM_YSCALE,
+	SRGUI_LAYOUT_DIM_AVERAGE
+};
+
+static void CL_ImGuiDragLayoutElement( const char *label, const char *xCvar, const char *yCvar, const char *xDefault, const char *yDefault, float w, float h, bool autoWhenZero = false, bool mirrorAlign = false, float autoX = 0.0f, float autoY = 0.0f, const char *toggleCvar = NULL, const char *toggleCvar2 = NULL, const char *scaleCvar = NULL, const char *widthCvar = NULL, float minScale = 0.5f, float maxScale = 3.0f, float minWidth = 40.0f, float maxWidth = 640.0f, int anchorMode = 0, const char *alignCvar = NULL, int alignRightValue = 1, scralign_t screenAlign = ALIGN_STRETCH, const char *scaleDefault = "1.0", const char *widthDefault = "178", int alignModeCount = 2, const char *alignDefault = "0", bool rawScreenSpace = false, bool heightScalesWithScale = false, int dimensionScaleMode = SRGUI_LAYOUT_DIM_DEFAULT ) {
 	cvar_t *xCv = CL_ImGuiCvar( xCvar, xDefault );
 	cvar_t *yCv = CL_ImGuiCvar( yCvar, yDefault );
 	cvar_t *toggleCv = toggleCvar ? CL_ImGuiCvar( toggleCvar, "1" ) : NULL;
@@ -996,7 +1920,7 @@ static void CL_ImGuiDragLayoutElement( const char *label, const char *xCvar, con
 	float labelY = vy;
 	float scale = scaleCv ? Com_Clamp( minScale, maxScale, scaleCv->value ) : 1.0f;
 	float drawW = widthCv ? Com_Clamp( minWidth, maxWidth, widthCv->value ) : w * scale;
-	float drawH = widthCv ? h : h * scale;
+	float drawH = widthCv ? ( heightScalesWithScale ? h * scale : h ) : h * scale;
 	bool enabled = true;
 	if ( toggleCv && toggleCv->integer == 0 ) enabled = false;
 	if ( toggleCv2 && toggleCv2->integer == 0 ) enabled = false;
@@ -1019,13 +1943,32 @@ static void CL_ImGuiDragLayoutElement( const char *label, const char *xCvar, con
 	float y = vy;
 	float screenW = drawW;
 	float screenH = drawH;
-	SCR_AdjustFrom640( &x, &y, &screenW, &screenH, screenAlign );
+	float dxScale;
+	float dyScale;
+	if ( dimensionScaleMode != SRGUI_LAYOUT_DIM_DEFAULT ) {
+		float xscale = cls.glconfig.vidWidth / 640.0f;
+		float yscale = cls.glconfig.vidHeight / 480.0f;
+		float dimScale = dimensionScaleMode == SRGUI_LAYOUT_DIM_AVERAGE ? ( xscale + yscale ) * 0.5f : yscale;
+		x = vx * xscale;
+		y = vy * yscale;
+		screenW = drawW * dimScale;
+		screenH = drawH * dimScale;
+		dxScale = xscale;
+		dyScale = yscale;
+	} else if ( rawScreenSpace ) {
+		CL_ImGuiAdjustFrom640Raw( &x, &y, &screenW, &screenH, screenAlign );
+		dxScale = screenW / drawW;
+		dyScale = screenH / drawH;
+	} else {
+		SCR_AdjustFrom640( &x, &y, &screenW, &screenH, screenAlign );
+		dxScale = screenW / drawW;
+		dyScale = screenH / drawH;
+	}
 	ImVec2 pos = ImVec2( x, y );
 	ImVec2 size = ImVec2( screenW, screenH );
 	if ( size.x < 1.0f ) size.x = 1.0f;
 	if ( size.y < 1.0f ) size.y = 1.0f;
-	float dxScale = screenW / drawW;
-	float dyScale = screenH / drawH;
+	if ( size.y < 56.0f ) size.y = 56.0f;
 	if ( dxScale <= 0.0f ) dxScale = 1.0f;
 	if ( dyScale <= 0.0f ) dyScale = 1.0f;
 	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 0.0f, 0.0f ) );
@@ -1138,6 +2081,24 @@ static void CL_ImGuiDragLayoutElement( const char *label, const char *xCvar, con
 	ImGui::PopStyleVar( 4 );
 }
 
+static float CL_ImGuiRaceOverlayHandleHeight( void ) {
+	lsRaceUiSnapshot_t race;
+	int rowCount;
+	LS_RaceBuildSnapshot( &race );
+	rowCount = race.playerCount;
+	if ( rowCount > 8 ) rowCount = 8;
+	if ( rowCount < 1 ) rowCount = 1;
+	return 54.0f + rowCount * 28.0f;
+}
+
+static float CL_ImGuiZoneTimerHandleHeight( void ) {
+	char lastDelta[32];
+	char lastTotalDelta[32];
+	Cvar_VariableStringBuffer( "sp_zone_last_delta", lastDelta, sizeof( lastDelta ) );
+	Cvar_VariableStringBuffer( "sp_zone_last_total_delta", lastTotalDelta, sizeof( lastTotalDelta ) );
+	return ( Cvar_VariableIntegerValue( "sp_zone_delta_visible" ) != 0 && ( lastDelta[0] || lastTotalDelta[0] ) ) ? 76.0f : 54.0f;
+}
+
 static void CL_ImGuiDrawLayoutEditor( void ) {
 	cvar_t *edit = CL_ImGuiCvar( "ui_speedrun_layout_edit", "0" );
 	if ( !edit || edit->integer == 0 || cls.state != CA_ACTIVE ) return;
@@ -1146,10 +2107,14 @@ static void CL_ImGuiDrawLayoutEditor( void ) {
 	}
 	/* LiveSplit ImGui draws its own exact edit handles; the generic HUD box used
 	   the old fixed height and caused a second wrong resize/move box. */
-	CL_ImGuiDragLayoutElement( "Keys", "ks_x", "ks_y", CL_ImGuiKeysDefaultXString(), "370", CL_ImGuiKeysHandleWidth(), CL_ImGuiKeysHandleHeight(), false, false, 0.0f, 0.0f, "cg_drawKeys", NULL, "ks_scale", NULL, 0.3f, 4.0f, 40.0f, 640.0f, 0, NULL, 1, ALIGN_STRETCH );
+	CL_ImGuiDragLayoutElement( "Keys", "ks_x", "ks_y", CL_ImGuiKeysDefaultXString(), "370", CL_ImGuiKeysHandleWidth(), CL_ImGuiKeysHandleHeight(), false, false, 0.0f, 0.0f, "cg_drawKeys", NULL, "ks_scale", NULL, 0.3f, 4.0f, 40.0f, 640.0f, 0, NULL, 1, ALIGN_STRETCH, "1.0", "178", 2, "0", false, false, SRGUI_LAYOUT_DIM_AVERAGE );
 	CL_ImGuiDragLayoutElement( "Velocity", "cg_velocity_x", "cg_velocity_y", "320", "457", 44, CL_ImGuiVelocityHandleHeight(), false, false, 0.0f, 0.0f, "cg_drawVelocity", NULL, "cg_velocity_scale", NULL, 0.3f, 3.0f, 40.0f, 640.0f, Cvar_VariableIntegerValue( "cg_velocity_align" ) == 1 ? 1 : ( Cvar_VariableIntegerValue( "cg_velocity_align" ) == 2 ? 2 : 0 ), "cg_velocity_align", 2, Cvar_VariableIntegerValue( "cg_velocity_align" ) == 1 ? ALIGN_TOP : ( Cvar_VariableIntegerValue( "cg_velocity_align" ) == 2 ? ALIGN_TOPRIGHT : ALIGN_TOPLEFT ), "1.0", "178", 3, "1" );
 	CL_ImGuiDragLayoutElement( "FPS/Timer", "cg_fpsX", "cg_fpsY", "500", "0", 96, 40, true, false, 500.0f, 0.0f, "cg_drawFPS", "cg_drawTimer", "cg_fpsScale", NULL, 0.25f, 4.0f, 40.0f, 640.0f, Cvar_VariableIntegerValue( "cg_fpsAlign" ) == 1 ? 0 : 2, "cg_fpsAlign", 0, Cvar_VariableIntegerValue( "cg_fpsAlign" ) == 1 ? ALIGN_TOPLEFT : ALIGN_TOPRIGHT );
 	CL_ImGuiDragLayoutElement( "IGT", "ls_igttimer_x", "ls_igttimer_y", "638", "240", 72, Cvar_VariableIntegerValue( "ls_igtsegtimer" ) ? 18 : 10, false, false, 0.0f, 0.0f, "ls_igttimer", NULL, "ls_igttimer_scale", NULL, 0.3f, 4.0f, 40.0f, 640.0f, Cvar_VariableIntegerValue( "ls_igttimer_align" ) == 1 ? 1 : ( Cvar_VariableIntegerValue( "ls_igttimer_align" ) == 2 ? 2 : 0 ), "ls_igttimer_align", 2, ALIGN_STRETCH, "1.0", "178", 3, "2" );
+	CL_ImGuiDragLayoutElement( "Zone Timer", "sp_zone_hud_x", "sp_zone_hud_y", "8", "84", 214, CL_ImGuiZoneTimerHandleHeight(), false, false, 0.0f, 0.0f, "sp_zone_timer", NULL, "sp_zone_hud_scale", NULL, 0.55f, 2.5f, 40.0f, 640.0f, 0, NULL, 1, ALIGN_STRETCH, "1.0", "178", 2, "0", false, false, SRGUI_LAYOUT_DIM_YSCALE );
+	CL_ImGuiDragLayoutElement( "Race", "ls_race_overlay_x", "ls_race_overlay_y", "8", "72", 110, CL_ImGuiRaceOverlayHandleHeight(), false, false, 0.0f, 0.0f, "ls_race_overlay", NULL, "ls_race_overlay_scale", "ls_race_overlay_w", 0.35f, 1.8f, 110.0f, 500.0f, 0, NULL, 1, ALIGN_STRETCH, "0.5", "110", 2, "0", true, true );
+	CL_ImGuiDragLayoutElement( "Race Chat", "ls_race_chat_x", "ls_race_chat_y", "12", "300", 285, 132, false, false, 0.0f, 0.0f, "ls_race_chat", NULL, "ls_race_chat_scale", "ls_race_chat_w", 0.50f, 2.00f, 80.0f, 620.0f, 0, NULL, 1, ALIGN_STRETCH, "1.0", "285", 2, "0", true );
+	CL_ImGuiDragLayoutElement( "Race Chat Input", "ls_race_chat_input_x", "ls_race_chat_input_y", "12", "444", 285, 28, false, false, 0.0f, 0.0f, "ls_race_chat", NULL, "ls_race_chat_input_scale", "ls_race_chat_input_w", 0.50f, 2.00f, 80.0f, 620.0f, 0, NULL, 1, ALIGN_STRETCH, "1.0", "285", 2, "0", true );
 }
 
 static ImU32 CL_ImGuiColorU32( const char *name, const ImVec4 &fallback, float alphaMul = 1.0f ) {
@@ -1524,11 +2489,17 @@ static void CL_ImGuiEnsureKeystrokeCvars( void ) {
 	CL_ImGuiCvar( "ks_clr_grid_cm", "" );
 }
 
+static bool CL_ImGuiShouldDrawKeystrokesOverlay( void ) {
+	CL_ImGuiEnsureKeystrokeCvars();
+	if ( !Cvar_VariableIntegerValue( "cg_drawKeys" ) ) return false;
+	if ( cls.state < CA_ACTIVE ) return false;
+	if ( Cvar_VariableIntegerValue( "ks_ingame_only" ) && cls.keyCatchers && !Cvar_VariableIntegerValue( "ui_speedrun_layout_edit" ) && !CL_SpeedrunImGui_HasPanelOpen() ) return false;
+	return true;
+}
+
 static void CL_ImGuiDrawKeystrokesOverlay( void ) {
 	CL_ImGuiEnsureKeystrokeCvars();
-	if ( !Cvar_VariableIntegerValue( "cg_drawKeys" ) ) return;
-	if ( cls.state < CA_ACTIVE ) return;
-	if ( Cvar_VariableIntegerValue( "ks_ingame_only" ) && cls.keyCatchers && !Cvar_VariableIntegerValue( "ui_speedrun_layout_edit" ) ) return;
+	if ( !CL_ImGuiShouldDrawKeystrokesOverlay() ) return;
 
 	usercmd_t cmd = cl.cmds[cl.cmdNumber & CMD_MASK];
 	float sx = cls.glconfig.vidWidth / 640.0f;
@@ -1616,7 +2587,7 @@ static void CL_ImGuiDrawKeystrokesOverlay( void ) {
 		s_imguiKeystrokeMouseSpeed *= 0.90f;
 	}
 
-	ImDrawList *draw = ImGui::GetForegroundDrawList();
+	ImDrawList *draw = ImGui::GetBackgroundDrawList();
 	int tier = CL_ImGuiLiveSplitFontTierForScale( scale * localFontScale * screenScale );
 	ImFont *font = CL_ImGuiLiveSplitFont( 1, tier );
 	float fontSize = 11.5f * scale * localFontScale * screenScale;
@@ -1797,7 +2768,8 @@ static void CL_ImGuiAddTextShadow( ImDrawList *draw, ImVec2 pos, ImU32 col, cons
 	bool textGradient = Cvar_VariableIntegerValue( "ls_imgui_text_gradient" ) != 0;
 	if ( !text || !text[0] ) return;
 	if ( shadow ) {
-		draw->AddText( ImVec2( pos.x + 1.0f, pos.y + 1.0f ), IM_COL32( 0, 0, 0, 170 ), text );
+		int shadowAlpha = (int)( ( ( col >> 24 ) & 0xff ) * 0.67f );
+		draw->AddText( ImVec2( pos.x + 1.0f, pos.y + 1.0f ), IM_COL32( 0, 0, 0, shadowAlpha ), text );
 	}
 	if ( textGradient ) {
 		ImU32 col2 = CL_ImGuiColorU32( "ls_clr_text_gradient2", ImVec4( 0.36f, 0.82f, 0.21f, 1.00f ), 1.0f );
@@ -1866,12 +2838,67 @@ static void CL_ImGuiAddEllipsizedText( ImDrawList *draw, ImVec2 pos, ImVec2 clip
 	draw->PopClipRect();
 }
 
+static void CL_ImGuiAddEllipsizedTextSized( ImDrawList *draw, ImFont *font, float fontSize, ImVec2 pos, ImVec2 clipMin, ImVec2 clipMax, ImU32 col, const char *text, bool shadow ) {
+	char tmp[128];
+	int len;
+	float maxW;
+	if ( !text || !text[0] ) return;
+	if ( !font ) font = ImGui::GetFont();
+	if ( fontSize <= 0.0f ) fontSize = ImGui::GetFontSize();
+	maxW = clipMax.x - pos.x;
+	if ( maxW <= 8.0f ) return;
+	Q_strncpyz( tmp, text, sizeof( tmp ) );
+	if ( font->CalcTextSizeA( fontSize, FLT_MAX, 0.0f, tmp ).x > maxW ) {
+		len = (int)strlen( tmp );
+		while ( len > 3 ) {
+			tmp[len - 3] = '.';
+			tmp[len - 2] = '.';
+			tmp[len - 1] = '.';
+			tmp[len] = '\0';
+			if ( font->CalcTextSizeA( fontSize, FLT_MAX, 0.0f, tmp ).x <= maxW ) break;
+			len--;
+			tmp[len] = '\0';
+		}
+	}
+	draw->PushClipRect( clipMin, clipMax, true );
+	if ( shadow ) {
+		draw->AddText( font, fontSize, ImVec2( pos.x + 1.0f, pos.y + 1.0f ), IM_COL32( 0, 0, 0, ( col >> 24 ) & 255 ), tmp );
+	}
+	draw->AddText( font, fontSize, pos, col, tmp );
+	draw->PopClipRect();
+}
+
 static bool CL_ImGuiShouldDrawLiveSplitOverlay( void ) {
 	if ( !s_cg_livesplit || !s_cg_livesplit->integer ) return false;
 	if ( Cvar_VariableIntegerValue( "ls_type" ) == 1 ) return false;
 	if ( !Cvar_VariableIntegerValue( "ls_draw" ) ) return false;
 	if ( clc.demoplaying ) return false;
 	return true;
+}
+
+static bool CL_ImGuiShouldDrawZoneTimerOverlay( void ) {
+	if ( cls.state != CA_ACTIVE ) return false;
+	if ( !Cvar_VariableIntegerValue( "sp_zone_timer" ) && !Cvar_VariableIntegerValue( "sp_zone_edit" ) ) return false;
+	return true;
+}
+
+static bool CL_ImGuiShouldDrawRaceOverlay( void ) {
+	lsRaceUiSnapshot_t race;
+	LS_RaceBuildSnapshot( &race );
+	if ( !race.active ) return false;
+	if ( !Cvar_VariableIntegerValue( "ls_race_overlay" ) ) return false;
+	if ( clc.demoplaying ) return false;
+	return true;
+}
+
+static bool CL_ImGuiShouldDrawRaceCountdown( void ) {
+	lsRaceUiSnapshot_t race;
+	if ( cls.state != CA_ACTIVE ) return false;
+	LS_RaceBuildSnapshot( &race );
+	if ( !race.active ) return false;
+	if ( !Cvar_VariableIntegerValue( "ls_race_countdown_center" ) ) return false;
+	if ( clc.demoplaying ) return false;
+	return !Q_stricmp( race.state, "Countdown" );
 }
 
 static int CL_ImGuiLiveSplitFontTierForScale( float uiScale ) {
@@ -1930,23 +2957,803 @@ static ImU32 CL_ImGuiRainbowColorU32( float alphaMul ) {
 	return IM_COL32( (int)( r * 255.0f ), (int)( g * 255.0f ), (int)( b * 255.0f ), (int)( Com_Clamp( 0.0f, 1.0f, alphaMul * pulse ) * 255.0f ) );
 }
 
+static ImU32 CL_ImGuiZoneTimerDeltaColor( const char *delta, bool pb, float alphaMul ) {
+	if ( pb ) return CL_ImGuiColorU32( "sp_zone_timer_clr_gold", ImVec4( 1.00f, 0.86f, 0.18f, 1.00f ), alphaMul );
+	if ( delta && delta[0] == '-' ) return CL_ImGuiColorU32( "sp_zone_timer_clr_ahead", ImVec4( 0.42f, 1.00f, 0.42f, 1.00f ), alphaMul );
+	if ( delta && delta[0] == '+' ) return CL_ImGuiColorU32( "sp_zone_timer_clr_behind", ImVec4( 1.00f, 0.36f, 0.28f, 1.00f ), alphaMul );
+	return CL_ImGuiColorU32( "sp_zone_timer_clr_neutral", ImVec4( 0.92f, 0.74f, 0.24f, 1.00f ), alphaMul );
+}
+
+static void CL_ImGuiZoneTimerText( ImDrawList *draw, ImFont *font, float fontSize, ImVec2 pos, ImU32 col, const char *text, bool shadow ) {
+	if ( !draw || !font || !text || !text[0] ) return;
+	if ( shadow ) {
+		int shadowAlpha = (int)( ( ( col >> 24 ) & 0xff ) * 0.62f );
+		draw->AddText( font, fontSize, ImVec2( pos.x + 1.0f, pos.y + 1.0f ), IM_COL32( 0, 0, 0, shadowAlpha ), text );
+	}
+	draw->AddText( font, fontSize, pos, col, text );
+}
+
+static void CL_ImGuiZoneTimerTextRight( ImDrawList *draw, ImFont *font, float fontSize, float right, float y, ImU32 col, const char *text, bool shadow ) {
+	ImVec2 size;
+
+	if ( !font || !text || !text[0] ) return;
+	size = font->CalcTextSizeA( fontSize, 10000.0f, 0.0f, text );
+	CL_ImGuiZoneTimerText( draw, font, fontSize, ImVec2( right - size.x, y ), col, text, shadow );
+}
+
+typedef lsRaceUiPlayer_t srRaceRow_t;
+
+static void CL_ImGuiRacePrettyToken( char *text ) {
+	int charIndex;
+	if ( !text ) return;
+	for ( charIndex = 0; text[charIndex]; ++charIndex ) {
+		if ( text[charIndex] == '_' ) text[charIndex] = ' ';
+	}
+}
+
+static bool CL_ImGuiRaceReadySummary( const char *ready, char *out, int outSize ) {
+	int loaded;
+	int total;
+
+	if ( out && outSize > 0 ) out[0] = '\0';
+	if ( !ready || !ready[0] || !out || outSize <= 0 ) return false;
+	if ( sscanf( ready, "%d/%d", &loaded, &total ) != 2 ) return false;
+	if ( total <= 0 || loaded >= total ) return false;
+	Com_sprintf( out, outSize, "Ready %d/%d", loaded, total );
+	return true;
+}
+
+static bool CL_ImGuiRaceDrawOverlayState( const char *state ) {
+	if ( !state || !state[0] ) return false;
+	if ( !Q_stricmp( state, "READY" ) ) return false;
+	if ( !Q_stricmp( state, "RUN" ) ) return false;
+	return true;
+}
+
+static const char *CL_ImGuiRaceStateLabel( const char *state, bool compact ) {
+	if ( !state || !state[0] ) return compact ? "-" : "-";
+	if ( !Q_stricmp( state, "READY" ) ) return "";
+	if ( !Q_stricmp( state, "RUN" ) ) return "";
+	if ( !compact ) return state;
+	if ( !Q_stricmp( state, "FINISH" ) ) return "FIN";
+	if ( !Q_stricmp( state, "LOAD" ) ) return "LOD";
+	if ( !Q_stricmp( state, "MENU" ) ) return "MENU";
+	if ( !Q_stricmp( state, "LEFT" ) ) return "LEFT";
+	if ( !Q_stricmp( state, "TIMEOUT" ) ) return "TO";
+	if ( !Q_stricmp( state, "PAUSE" ) ) return "PAUSE";
+	if ( !Q_stricmp( state, "DEAD" ) ) return "DEAD";
+	return state;
+}
+
+static ImU32 CL_ImGuiRaceStateBgU32( const char *state ) {
+	if ( state && !Q_stricmp( state, "FINISH" ) ) return IM_COL32( 210, 170, 48, 205 );
+	if ( state && !Q_stricmp( state, "RUN" ) ) return IM_COL32( 86, 190, 58, 190 );
+	if ( state && !Q_stricmp( state, "READY" ) ) return IM_COL32( 72, 132, 68, 175 );
+	if ( state && !Q_stricmp( state, "LOAD" ) ) return IM_COL32( 72, 82, 68, 160 );
+	if ( state && !Q_stricmp( state, "MENU" ) ) return IM_COL32( 84, 96, 78, 190 );
+	if ( state && !Q_stricmp( state, "LEFT" ) ) return IM_COL32( 114, 96, 76, 190 );
+	if ( state && !Q_stricmp( state, "TIMEOUT" ) ) return IM_COL32( 132, 76, 58, 205 );
+	if ( state && !Q_stricmp( state, "PAUSE" ) ) return IM_COL32( 225, 154, 54, 205 );
+	if ( state && !Q_stricmp( state, "DEAD" ) ) return IM_COL32( 190, 58, 52, 205 );
+	return IM_COL32( 76, 84, 74, 150 );
+}
+
+static ImU32 CL_ImGuiRaceStateTextU32( const char *state ) {
+	if ( state && !Q_stricmp( state, "FINISH" ) ) return IM_COL32( 25, 21, 8, 255 );
+	if ( state && !Q_stricmp( state, "RUN" ) ) return IM_COL32( 8, 24, 8, 255 );
+	if ( state && !Q_stricmp( state, "PAUSE" ) ) return IM_COL32( 30, 18, 5, 255 );
+	return IM_COL32( 232, 242, 224, 255 );
+}
+
+static void CL_ImGuiRaceStateChip( const char *state, bool compact ) {
+	const char *label = CL_ImGuiRaceStateLabel( state, compact );
+	ImDrawList *draw = ImGui::GetWindowDrawList();
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImVec2 textSize = ImGui::CalcTextSize( label );
+	float padX = compact ? 5.0f : 7.0f;
+	float padY = compact ? 1.5f : 2.0f;
+	ImVec2 boxSize( textSize.x + padX * 2.0f, textSize.y + padY * 2.0f );
+	if ( !label || !label[0] ) {
+		ImGui::Dummy( ImVec2( 1.0f, ImGui::GetTextLineHeight() ) );
+		return;
+	}
+	draw->AddRectFilled( pos, ImVec2( pos.x + boxSize.x, pos.y + boxSize.y ), CL_ImGuiRaceStateBgU32( state ), compact ? 3.0f : 4.0f );
+	draw->AddText( ImVec2( pos.x + padX, pos.y + padY ), CL_ImGuiRaceStateTextU32( state ), label );
+	ImGui::Dummy( boxSize );
+}
+
+static float CL_ImGuiRaceStateChipWidth( const char *state, bool compact, float scale ) {
+	const char *label = CL_ImGuiRaceStateLabel( state, compact );
+	ImVec2 textSize = ImGui::CalcTextSize( label );
+	float padX = ( compact ? 4.0f : 6.0f ) * scale;
+	if ( !label || !label[0] ) return 0.0f;
+	return textSize.x + padX * 2.0f;
+}
+
+static void CL_ImGuiRaceDrawStateChipAt( ImDrawList *draw, ImVec2 pos, const char *state, bool compact, float scale ) {
+	const char *label = CL_ImGuiRaceStateLabel( state, compact );
+	ImVec2 textSize = ImGui::CalcTextSize( label );
+	float padX = ( compact ? 4.0f : 6.0f ) * scale;
+	float padY = ( compact ? 1.0f : 1.5f ) * scale;
+	ImVec2 boxSize( textSize.x + padX * 2.0f, textSize.y + padY * 2.0f );
+	if ( !label || !label[0] ) return;
+	draw->AddRectFilled( pos, ImVec2( pos.x + boxSize.x, pos.y + boxSize.y ), CL_ImGuiRaceStateBgU32( state ), 3.0f * scale );
+	draw->AddText( ImVec2( pos.x + padX, pos.y + padY ), CL_ImGuiRaceStateTextU32( state ), label );
+}
+
+static void CL_ImGuiRaceBuildCheatText( int flags, char *out, int outSize, bool compact ) {
+	bool any = false;
+	if ( !out || outSize <= 0 ) return;
+	out[0] = '\0';
+	if ( flags & 1 ) {
+		Q_strcat( out, outSize, compact ? "SV" : "sv_cheats" );
+		any = true;
+	}
+	if ( flags & 2 ) {
+		if ( any ) Q_strcat( out, outSize, compact ? "+" : " " );
+		Q_strcat( out, outSize, "god" );
+		any = true;
+	}
+	if ( flags & 4 ) {
+		if ( any ) Q_strcat( out, outSize, compact ? "+" : " " );
+		Q_strcat( out, outSize, compact ? "NC" : "noclip" );
+	}
+}
+
+static float CL_ImGuiRaceAlertChipWidth( const char *label, float scale ) {
+	ImVec2 textSize;
+	if ( !label || !label[0] ) return 0.0f;
+	textSize = ImGui::CalcTextSize( label );
+	return textSize.x + 8.0f * scale;
+}
+
+static void CL_ImGuiRaceDrawAlertChipAt( ImDrawList *draw, ImVec2 pos, const char *label, float scale ) {
+	ImVec2 textSize;
+	ImVec2 boxSize;
+	if ( !draw || !label || !label[0] ) return;
+	textSize = ImGui::CalcTextSize( label );
+	boxSize = ImVec2( textSize.x + 8.0f * scale, textSize.y + 2.0f * scale );
+	draw->AddRectFilled( pos, ImVec2( pos.x + boxSize.x, pos.y + boxSize.y ), IM_COL32( 205, 58, 46, 220 ), 3.0f * scale );
+	draw->AddText( ImVec2( pos.x + 4.0f * scale, pos.y + 1.0f * scale ), IM_COL32( 255, 238, 226, 255 ), label );
+}
+
+static void CL_ImGuiRaceBuildProgressText( const srRaceRow_t *row, char *out, int outSize, bool compact ) {
+	if ( !out || outSize <= 0 ) return;
+	out[0] = '\0';
+	if ( !row ) return;
+	if ( row->objectivesTotal > 0 && row->zonesTotal > 0 ) {
+		Com_sprintf( out, outSize, compact ? "P%d O%d/%d Z%d/%d" : "Pts %d   Obj %d/%d   Zones %d/%d", row->score, row->objectivesFound, row->objectivesTotal, row->zonesFound, row->zonesTotal );
+	} else if ( row->objectivesTotal > 0 ) {
+		Com_sprintf( out, outSize, compact ? "P%d O%d/%d" : "Pts %d   Obj %d/%d", row->score, row->objectivesFound, row->objectivesTotal );
+	} else if ( row->zonesTotal > 0 ) {
+		Com_sprintf( out, outSize, compact ? "P%d Z%d/%d" : "Pts %d   Zones %d/%d", row->score, row->zonesFound, row->zonesTotal );
+	} else if ( row->score > 0 ) {
+		Com_sprintf( out, outSize, compact ? "P%d" : "Pts %d", row->score );
+	}
+}
+
+static void CL_ImGuiRaceBuildRunnerLine( const srRaceRow_t *row, char *out, int outSize ) {
+	char stageText[64];
+
+	if ( !out || outSize <= 0 ) return;
+	out[0] = '\0';
+	if ( !row ) return;
+	Q_strncpyz( stageText, row->stage[0] ? row->stage : row->map, sizeof( stageText ) );
+	if ( stageText[0] && Q_stricmp( stageText, "-" ) ) {
+		Com_sprintf( out, outSize, "%s%s - %s", row->nick, row->local ? " *" : "", stageText );
+	} else {
+		Com_sprintf( out, outSize, "%s%s", row->nick, row->local ? " *" : "" );
+	}
+}
+
+static void CL_ImGuiDrawRaceOverlayList( srRaceRow_t *rows, int rowCount, bool compact, float scale ) {
+	ImDrawList *draw = ImGui::GetWindowDrawList();
+	ImFont *font = ImGui::GetFont();
+	float width = ImGui::GetContentRegionAvail().x;
+	float rowH = ( compact ? 22.0f : 26.0f ) * scale;
+	float gap = 3.0f * scale;
+	float pad = 5.0f * scale;
+	float lineH = ImGui::GetTextLineHeight();
+	float fontSize = ImGui::GetFontSize();
+	float igtFontSize = fontSize * 0.76f;
+	ImU32 textCol = IM_COL32( 226, 238, 218, 238 );
+	ImU32 dimCol = IM_COL32( 154, 172, 146, 220 );
+	ImU32 igtCol = IM_COL32( 168, 187, 158, 196 );
+	ImU32 goldCol = IM_COL32( 255, 214, 76, 255 );
+	int rowIndex;
+
+	if ( width < 80.0f ) return;
+	for ( rowIndex = 0; rowIndex < rowCount; ++rowIndex ) {
+		srRaceRow_t *row = &rows[rowIndex];
+		ImVec2 rowMin = ImGui::GetCursorScreenPos();
+		ImVec2 rowMax( rowMin.x + width, rowMin.y + rowH );
+		ImU32 bg = row->local ? IM_COL32( 35, 70, 28, 150 ) : ( row->finished ? IM_COL32( 76, 56, 18, 122 ) : ( rowIndex & 1 ? IM_COL32( 19, 25, 18, 132 ) : IM_COL32( 12, 17, 13, 122 ) ) );
+		ImU32 runnerCol = IM_COL32( row->red, row->green, row->blue, 245 );
+		ImU32 timerCol = row->finished ? goldCol : textCol;
+		char rankText[12];
+		char runnerText[96];
+		char cheatText[32];
+		int rank = row->rank > 0 ? row->rank : rowIndex + 1;
+		bool drawState = CL_ImGuiRaceDrawOverlayState( row->state );
+		bool drawCheat;
+		float rankW = 20.0f * scale;
+		float markerW = 11.0f * scale;
+		float topY = rowMin.y + ( rowH - lineH ) * 0.5f;
+		float right = rowMax.x - pad;
+		float timeColW = ( compact ? 92.0f : 104.0f ) * scale;
+		float timeW = ImGui::CalcTextSize( row->rgt ).x;
+		float igtW = ( row->stageIgt[0] && font ) ? font->CalcTextSizeA( igtFontSize, FLT_MAX, 0.0f, row->stageIgt ).x : 0.0f;
+		float timeGap = row->stageIgt[0] ? 5.0f * scale : 0.0f;
+		float chipColW = 0.0f;
+		float chipW;
+		float chipX;
+		float nameX = rowMin.x + pad + rankW + markerW;
+		float nameRight;
+		ImVec2 markerCenter;
+		float markerRadius = 3.4f * scale;
+		float rgtX;
+		float igtX;
+		float igtY;
+
+		if ( topY < rowMin.y + 2.0f * scale ) topY = rowMin.y + 2.0f * scale;
+		if ( timeColW < timeW + igtW + timeGap ) timeColW = timeW + igtW + timeGap;
+		CL_ImGuiRaceBuildCheatText( row->cheatFlags, cheatText, sizeof( cheatText ), true );
+		drawCheat = cheatText[0] ? true : false;
+		chipW = drawCheat ? CL_ImGuiRaceAlertChipWidth( cheatText, scale ) : ( drawState ? CL_ImGuiRaceStateChipWidth( row->state, true, scale ) : 0.0f );
+		if ( drawState || drawCheat ) {
+			chipColW = ( compact ? 38.0f : 48.0f ) * scale;
+			if ( chipColW < chipW ) chipColW = chipW;
+			chipX = right - timeColW - 6.0f * scale - chipColW + ( chipColW - chipW ) * 0.5f;
+			nameRight = right - timeColW - chipColW - 12.0f * scale;
+		} else {
+			chipX = right - timeColW;
+			nameRight = right - timeColW - 7.0f * scale;
+		}
+		if ( nameRight < nameX ) nameRight = nameX;
+
+		draw->AddRectFilled( rowMin, rowMax, bg, 4.0f * scale );
+		Com_sprintf( rankText, sizeof( rankText ), "%d", rank );
+		CL_ImGuiRaceBuildRunnerLine( row, runnerText, sizeof( runnerText ) );
+		CL_ImGuiAddTextShadow( draw, ImVec2( rowMin.x + pad, topY ), rank == 1 ? goldCol : dimCol, rankText, true );
+		markerCenter = ImVec2( rowMin.x + pad + rankW + markerW * 0.36f, rowMin.y + rowH * 0.50f );
+		draw->AddCircleFilled( markerCenter, markerRadius + 1.2f * scale, IM_COL32( 0, 0, 0, 150 ), 14 );
+		draw->AddCircleFilled( markerCenter, markerRadius, runnerCol, 14 );
+		draw->AddCircle( markerCenter, markerRadius + 0.5f * scale, IM_COL32( 230, 245, 216, 90 ), 14, 1.0f * scale );
+		CL_ImGuiAddEllipsizedText( draw, ImVec2( nameX, topY ), ImVec2( nameX, rowMin.y ), ImVec2( nameRight, rowMax.y ), runnerCol, runnerText, true );
+		if ( drawCheat ) {
+			CL_ImGuiRaceDrawAlertChipAt( draw, ImVec2( chipX, topY - 1.0f * scale ), cheatText, scale );
+		} else if ( drawState ) {
+			CL_ImGuiRaceDrawStateChipAt( draw, ImVec2( chipX, topY - 1.0f * scale ), row->state, true, scale );
+		}
+		rgtX = right - timeW;
+		if ( row->stageIgt[0] && font ) {
+			igtX = rgtX - timeGap - igtW;
+			igtY = topY + lineH - igtFontSize - 1.0f * scale;
+			draw->AddText( font, igtFontSize, ImVec2( igtX, igtY ), igtCol, row->stageIgt );
+		}
+		CL_ImGuiAddTextRight( draw, right, topY, timerCol, row->rgt, true );
+		ImGui::Dummy( ImVec2( width, rowH + gap ) );
+	}
+}
+
+static void CL_ImGuiDrawRaceRowsTable( const char *tableId, srRaceRow_t *rows, int rowCount, float height, bool compact ) {
+	ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_PadOuterX;
+	float rowHeight = compact ? 24.0f : 28.0f;
+	bool showProgress = Cvar_VariableIntegerValue( "ls_race_overlay_progress" ) != 0;
+	int columnCount = compact ? 6 : ( showProgress ? 9 : 6 );
+	if ( height > 0.0f ) flags |= ImGuiTableFlags_ScrollY;
+	if ( !compact ) flags |= ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX;
+	ImGui::PushStyleVar( ImGuiStyleVar_CellPadding, compact ? ImVec2( 5.0f, 3.0f ) : ImVec2( 7.0f, 5.0f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableHeaderBg, ImVec4( 0.12f, 0.20f, 0.09f, 0.98f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableRowBg, ImVec4( 0.025f, 0.040f, 0.030f, 0.64f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableRowBgAlt, ImVec4( 0.055f, 0.085f, 0.045f, 0.74f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableBorderStrong, ImVec4( 0.22f, 0.40f, 0.16f, 0.92f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableBorderLight, ImVec4( 0.12f, 0.22f, 0.10f, 0.64f ) );
+	if ( ImGui::BeginTable( tableId, columnCount, flags, ImVec2( 0, height ) ) ) {
+		ImGui::TableSetupColumn( "#", ImGuiTableColumnFlags_WidthFixed, compact ? 30.0f : 42.0f );
+		ImGui::TableSetupColumn( compact ? "Runner" : "Runner", ImGuiTableColumnFlags_WidthStretch, compact ? 1.20f : 1.35f );
+		ImGui::TableSetupColumn( "Stage", ImGuiTableColumnFlags_WidthStretch, compact ? 1.05f : 1.15f );
+		if ( compact ) {
+			ImGui::TableSetupColumn( showProgress ? "St/Pts" : "St", ImGuiTableColumnFlags_WidthFixed, showProgress ? 54.0f : 42.0f );
+			ImGui::TableSetupColumn( "RGT", ImGuiTableColumnFlags_WidthFixed, 64.0f );
+			ImGui::TableSetupColumn( "IGT", ImGuiTableColumnFlags_WidthFixed, 56.0f );
+		} else {
+			ImGui::TableSetupColumn( "State", ImGuiTableColumnFlags_WidthFixed, 76.0f );
+			if ( showProgress ) {
+				ImGui::TableSetupColumn( "Obj", ImGuiTableColumnFlags_WidthFixed, 70.0f );
+				ImGui::TableSetupColumn( "Zones", ImGuiTableColumnFlags_WidthFixed, 74.0f );
+				ImGui::TableSetupColumn( "Pts", ImGuiTableColumnFlags_WidthFixed, 50.0f );
+			}
+			ImGui::TableSetupColumn( "RGT", ImGuiTableColumnFlags_WidthFixed, 92.0f );
+			ImGui::TableSetupColumn( "IGT", ImGuiTableColumnFlags_WidthFixed, 88.0f );
+		}
+		ImGui::TableSetupScrollFreeze( 0, 1 );
+		ImGui::TableHeadersRow();
+		for ( int rowIndex = 0; rowIndex < rowCount; ++rowIndex ) {
+			srRaceRow_t *row = &rows[rowIndex];
+			char stageText[64];
+			char objText[32];
+			char zoneText[32];
+			char statePts[32];
+			char cheatText[48];
+			int rank = row->rank > 0 ? row->rank : rowIndex + 1;
+			ImVec4 playerColor = ImVec4( row->red / 255.0f, row->green / 255.0f, row->blue / 255.0f, 1.0f );
+			ImGui::TableNextRow( ImGuiTableRowFlags_None, rowHeight );
+			if ( row->local ) {
+				ImGui::TableSetBgColor( ImGuiTableBgTarget_RowBg0, IM_COL32( 46, 76, 28, 132 ) );
+			} else if ( row->finished ) {
+				ImGui::TableSetBgColor( ImGuiTableBgTarget_RowBg0, IM_COL32( 78, 62, 18, 96 ) );
+			}
+			ImGui::TableSetColumnIndex( 0 );
+			ImGui::TextColored( rank == 1 ? ImVec4( 1.0f, 0.82f, 0.26f, 1.0f ) : ImVec4( 0.70f, 0.78f, 0.66f, 0.92f ), "%d.", rank );
+			ImGui::TableSetColumnIndex( 1 );
+			ImGui::TextColored( playerColor, "%s%s", row->nick, row->local ? " *" : "" );
+			CL_ImGuiRaceBuildCheatText( row->cheatFlags, cheatText, sizeof( cheatText ), false );
+			if ( cheatText[0] ) {
+				ImGui::SameLine();
+				ImGui::TextColored( ImVec4( 1.0f, 0.28f, 0.22f, 1.0f ), "%s", cheatText );
+			}
+			ImGui::TableSetColumnIndex( 2 );
+			if ( row->progress > 0 ) Com_sprintf( stageText, sizeof( stageText ), "%02d %s", row->progress, row->stage[0] ? row->stage : row->map );
+			else Q_strncpyz( stageText, row->stage[0] ? row->stage : row->map, sizeof( stageText ) );
+			ImGui::TextUnformatted( stageText );
+			ImGui::TableSetColumnIndex( 3 );
+			if ( compact ) {
+				if ( showProgress ) {
+					const char *stateLabel = CL_ImGuiRaceStateLabel( row->state, true );
+					Com_sprintf( statePts, sizeof( statePts ), "%s%s%d", stateLabel, stateLabel[0] ? " " : "", row->score );
+					ImGui::TextUnformatted( statePts );
+				} else {
+					CL_ImGuiRaceStateChip( row->state, true );
+				}
+				ImGui::TableSetColumnIndex( 4 );
+				ImGui::TextColored( row->finished ? ImVec4( 1.0f, 0.82f, 0.26f, 1.0f ) : ImVec4( 0.86f, 0.93f, 0.82f, 1.0f ), "%s", row->rgt );
+				ImGui::TableSetColumnIndex( 5 );
+				ImGui::TextColored( ImVec4( 0.67f, 0.76f, 0.62f, 0.96f ), "%s", row->stageIgt );
+				continue;
+			}
+			CL_ImGuiRaceStateChip( row->state, false );
+			if ( showProgress ) {
+				Com_sprintf( objText, sizeof( objText ), "%d/%d", row->objectivesFound, row->objectivesTotal );
+				Com_sprintf( zoneText, sizeof( zoneText ), "%d/%d", row->zonesFound, row->zonesTotal );
+				ImGui::TableSetColumnIndex( 4 );
+				ImGui::TextColored( ImVec4( 0.78f, 0.88f, 0.70f, 1.0f ), "%s", row->objectivesTotal > 0 ? objText : "-" );
+				ImGui::TableSetColumnIndex( 5 );
+				ImGui::TextColored( ImVec4( 0.78f, 0.88f, 0.70f, 1.0f ), "%s", row->zonesTotal > 0 ? zoneText : "-" );
+				ImGui::TableSetColumnIndex( 6 );
+				ImGui::TextColored( ImVec4( 0.98f, 0.82f, 0.34f, 1.0f ), "%d", row->score );
+				ImGui::TableSetColumnIndex( 7 );
+			} else {
+				ImGui::TableSetColumnIndex( 4 );
+			}
+			ImGui::TextColored( row->finished ? ImVec4( 1.0f, 0.82f, 0.26f, 1.0f ) : ImVec4( 0.86f, 0.93f, 0.82f, 1.0f ), "%s", row->rgt );
+			ImGui::TableSetColumnIndex( showProgress ? 8 : 5 );
+			ImGui::TextColored( ImVec4( 0.67f, 0.76f, 0.62f, 0.96f ), "%s", row->stageIgt );
+		}
+		ImGui::EndTable();
+	}
+	ImGui::PopStyleColor( 5 );
+	ImGui::PopStyleVar();
+}
+
+static void CL_ImGuiDrawRaceCenterCountdown( void ) {
+	lsRaceUiSnapshot_t race;
+	char text[32];
+	ImDrawList *draw;
+	ImFont *font;
+	ImFont *numberFont;
+	float scale;
+	float labelSize;
+	float numberSize;
+	float maxTextWidth;
+	float cx;
+	float cy;
+	int selectedFont;
+	ImVec2 labelText;
+	ImVec2 numberText;
+	ImVec2 minPos;
+	ImVec2 maxPos;
+	ImU32 bg = IM_COL32( 10, 14, 10, 176 );
+	ImU32 border = IM_COL32( 114, 196, 70, 190 );
+	ImU32 muted = IM_COL32( 190, 214, 176, 230 );
+	ImU32 gold = IM_COL32( 255, 211, 86, 255 );
+	ImU32 shadow = IM_COL32( 0, 0, 0, 170 );
+
+	LS_RaceBuildSnapshot( &race );
+	Q_strncpyz( text, race.countdownText, sizeof( text ) );
+	if ( !text[0] ) return;
+	draw = ImGui::GetForegroundDrawList();
+	selectedFont = (int)Com_Clamp( 0.0f, (float)( SRGUI_LIVESPLIT_FONT_COUNT - 1 ), (float)Cvar_VariableIntegerValue( "ls_imgui_font" ) );
+	font = CL_ImGuiLiveSplitFont( selectedFont, 1 );
+	numberFont = CL_ImGuiLiveSplitBoldFont( selectedFont, 3 );
+	if ( !font ) font = ImGui::GetFont();
+	if ( !numberFont ) numberFont = font;
+	scale = Com_Clamp( 0.50f, 2.50f, Cvar_VariableValue( "ls_race_countdown_scale" ) );
+	labelSize = 13.0f * scale;
+	numberSize = 46.0f * scale;
+	labelText = font->CalcTextSizeA( labelSize, 10000.0f, 0.0f, "START IN" );
+	numberText = numberFont->CalcTextSizeA( numberSize, 10000.0f, 0.0f, text );
+	maxTextWidth = labelText.x > numberText.x ? labelText.x : numberText.x;
+	cx = cls.glconfig.vidWidth * 0.5f;
+	cy = cls.glconfig.vidHeight * 0.40f;
+	minPos = ImVec2( cx - maxTextWidth * 0.5f - 28.0f * scale, cy - 14.0f * scale );
+	maxPos = ImVec2( cx + maxTextWidth * 0.5f + 28.0f * scale, cy + labelText.y + numberText.y + 20.0f * scale );
+	draw->AddRectFilled( minPos, maxPos, bg, 6.0f * scale );
+	draw->AddRect( minPos, maxPos, border, 6.0f * scale, 0, 1.0f * scale );
+	draw->AddText( font, labelSize, ImVec2( cx - labelText.x * 0.5f + 1.0f, cy + 1.0f ), shadow, "START IN" );
+	draw->AddText( font, labelSize, ImVec2( cx - labelText.x * 0.5f, cy ), muted, "START IN" );
+	draw->AddText( numberFont, numberSize, ImVec2( cx - numberText.x * 0.5f + 2.0f, cy + labelText.y + 5.0f * scale + 2.0f ), shadow, text );
+	draw->AddText( numberFont, numberSize, ImVec2( cx - numberText.x * 0.5f, cy + labelText.y + 5.0f * scale ), gold, text );
+}
+
+static void CL_ImGuiDrawRaceOverlay( void ) {
+	lsRaceUiSnapshot_t race;
+	srRaceRow_t rows[8];
+	int rowCount, rowIndex;
+	char state[32];
+	char timer[32];
+	char ready[32];
+	char status[128];
+	char category[64];
+	char activeFlags[64];
+	char headerText[192];
+	float screenX, screenY, scale, x, y, width, height, alpha;
+	ImGuiWindowFlags flags;
+	ImDrawList *draw;
+	ImVec2 pos, size;
+	ImU32 colBg, colBg2, colBorder;
+	ImVec4 headerColor;
+	ImVec4 timerColor;
+	bool compactOverlay;
+	char readySummary[32];
+	bool hasActiveFlags;
+
+	LS_RaceBuildSnapshot( &race );
+	rowCount = race.playerCount;
+	if ( rowCount > IM_ARRAYSIZE( rows ) ) rowCount = IM_ARRAYSIZE( rows );
+	for ( rowIndex = 0; rowIndex < rowCount; ++rowIndex ) {
+		rows[rowIndex] = race.players[rowIndex];
+		CL_ImGuiRacePrettyToken( rows[rowIndex].stage );
+	}
+	compactOverlay = true;
+	Q_strncpyz( state, race.state, sizeof( state ) );
+	Q_strncpyz( timer, race.timer, sizeof( timer ) );
+	Q_strncpyz( ready, race.ready, sizeof( ready ) );
+	Q_strncpyz( status, race.status, sizeof( status ) );
+	Q_strncpyz( category, race.category, sizeof( category ) );
+	if ( !state[0] ) Q_strncpyz( state, "Idle", sizeof( state ) );
+	if ( !timer[0] ) Q_strncpyz( timer, "0.00", sizeof( timer ) );
+	if ( !ready[0] ) Q_strncpyz( ready, "0/0", sizeof( ready ) );
+	CL_ImGuiRaceReadySummary( ready, readySummary, sizeof( readySummary ) );
+	CL_ImGuiRaceBuildCheatText( race.localCheatFlags, activeFlags, sizeof( activeFlags ), false );
+	hasActiveFlags = activeFlags[0] != '\0';
+	Com_sprintf( headerText, sizeof( headerText ), "Race  %s", state );
+	if ( category[0] ) {
+		Q_strcat( headerText, sizeof( headerText ), "  " );
+		Q_strcat( headerText, sizeof( headerText ), category );
+	}
+	if ( readySummary[0] ) {
+		Q_strcat( headerText, sizeof( headerText ), "  " );
+		Q_strcat( headerText, sizeof( headerText ), readySummary );
+	}
+	if ( hasActiveFlags ) {
+		Q_strcat( headerText, sizeof( headerText ), "  " );
+		Q_strcat( headerText, sizeof( headerText ), activeFlags );
+	}
+
+	screenX = cls.glconfig.vidWidth / 640.0f;
+	screenY = cls.glconfig.vidHeight / 480.0f;
+	scale = Com_Clamp( 0.35f, 1.80f, Cvar_VariableValue( "ls_race_overlay_scale" ) ) * screenY;
+	x = Cvar_VariableValue( "ls_race_overlay_x" ) * screenX;
+	y = Cvar_VariableValue( "ls_race_overlay_y" ) * screenY;
+	width = Com_Clamp( 110.0f, 500.0f, Cvar_VariableValue( "ls_race_overlay_w" ) ) * screenX;
+	height = ( 54.0f + ( rowCount > 0 ? rowCount : 1 ) * 28.0f ) * scale;
+	alpha = Com_Clamp( 0.20f, 1.0f, Cvar_VariableValue( "ls_race_overlay_opacity" ) );
+	colBg = CL_ImGuiColorU32( "ls_clr_bg", ImVec4( 0.04f, 0.05f, 0.04f, 0.86f ), alpha );
+	colBg2 = CL_ImGuiColorU32( "ls_clr_bg2", ImVec4( 0.06f, 0.08f, 0.05f, 0.78f ), alpha );
+	colBorder = CL_ImGuiColorU32( "ls_clr_border", ImVec4( 0.18f, 0.32f, 0.14f, 0.72f ), alpha );
+	headerColor = ImGui::ColorConvertU32ToFloat4( CL_ImGuiColorU32( "ls_clr_title", ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), alpha ) );
+	timerColor = ImGui::ColorConvertU32ToFloat4( CL_ImGuiColorU32( "ls_clr_timer", ImVec4( 0.94f, 0.98f, 0.88f, 1.0f ), alpha ) );
+
+	flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs;
+	ImGui::SetNextWindowPos( ImVec2( x, y ), ImGuiCond_Always );
+	ImGui::SetNextWindowSize( ImVec2( width, height ), ImGuiCond_Always );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 8.0f * scale, 6.0f * scale ) );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 6.0f * scale );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowBorderSize, 0.0f );
+	ImGui::Begin( "Race ImGui Overlay", NULL, flags );
+	ImGui::SetWindowFontScale( scale );
+	draw = ImGui::GetWindowDrawList();
+	pos = ImGui::GetWindowPos();
+	size = ImGui::GetWindowSize();
+	draw->AddRectFilledMultiColor( pos, ImVec2( pos.x + size.x, pos.y + size.y ), colBg2, colBg2, colBg, colBg );
+	CL_ImGuiAddRectLines( draw, pos.x, pos.y, size.x, size.y, colBorder, 1.0f * scale );
+
+	{
+		ImVec2 headerPos = ImGui::GetCursorScreenPos();
+		float lineH = ImGui::GetTextLineHeight();
+		float contentRight = pos.x + ImGui::GetWindowContentRegionMax().x;
+		float timerW = ImGui::CalcTextSize( timer ).x;
+		float clipRight = contentRight - timerW - 8.0f * scale;
+		if ( clipRight > headerPos.x + 8.0f * scale ) {
+			CL_ImGuiAddEllipsizedText( draw, headerPos, ImVec2( headerPos.x, headerPos.y - 2.0f * scale ), ImVec2( clipRight, headerPos.y + lineH + 2.0f * scale ), ImGui::ColorConvertFloat4ToU32( headerColor ), headerText, true );
+		}
+		CL_ImGuiAddTextRight( draw, contentRight, headerPos.y, ImGui::ColorConvertFloat4ToU32( timerColor ), timer, true );
+		ImGui::Dummy( ImVec2( ImGui::GetContentRegionAvail().x, lineH + 2.0f * scale ) );
+	}
+	if ( status[0] && rowCount == 0 ) ImGui::TextDisabled( "%s", status );
+	ImGui::Separator();
+	if ( rowCount > 0 ) {
+		CL_ImGuiDrawRaceOverlayList( rows, rowCount, compactOverlay, scale );
+	} else {
+		ImGui::TextDisabled( "No players" );
+	}
+	ImGui::SetWindowFontScale( 1.0f );
+	ImGui::End();
+	ImGui::PopStyleVar( 3 );
+}
+
+static bool CL_ImGuiShouldDrawRaceChat( void ) {
+	lsRaceUiSnapshot_t race;
+	int now;
+	int i;
+	LS_RaceBuildSnapshot( &race );
+	if ( Cvar_VariableIntegerValue( "ls_race_chat" ) == 0 && !s_raceChatOpen ) return false;
+	if ( s_raceChatOpen ) return true;
+	now = Sys_Milliseconds();
+	for ( i = 0; i < LS_RACE_UI_CHAT_LINES; ++i ) {
+		if ( !race.chat[i].text[0] ) continue;
+		if ( race.chat[i].timeMs <= 0 || now - race.chat[i].timeMs < 7600 ) return true;
+	}
+	if ( !race.active ) return false;
+	return false;
+}
+
+static void CL_ImGuiRaceChatCommandText( const char *text, char *out, int outSize ) {
+	int i, o = 0;
+	if ( !out || outSize <= 0 ) return;
+	out[0] = '\0';
+	if ( !text ) return;
+	for ( i = 0; text[i] && o < outSize - 1; ++i ) {
+		unsigned char ch = (unsigned char)text[i];
+		if ( ch == '\r' || ch == '\n' || ch == ';' || ch == '"' || ch == '\\' ) continue;
+		if ( ch >= 32 && ch <= 126 ) out[o++] = (char)ch;
+	}
+	while ( o > 0 && out[o - 1] == ' ' ) o--;
+	out[o] = '\0';
+}
+
+static bool CL_ImGuiRaceSubmitChatInput( char *input, int inputSize ) {
+	char clean[128];
+	char cmd[192];
+	if ( !input || inputSize <= 0 ) {
+		return false;
+	}
+	CL_ImGuiRaceChatCommandText( input, clean, sizeof( clean ) );
+	input[0] = '\0';
+	if ( !clean[0] ) {
+		return false;
+	}
+	Com_sprintf( cmd, sizeof( cmd ), "ls_race_say \"%s\"\n", clean );
+	Cbuf_AddText( cmd );
+	return true;
+}
+
+static void CL_ImGuiDrawRaceChatOverlay( void ) {
+	lsRaceUiSnapshot_t race;
+	ImDrawList *draw = ImGui::GetForegroundDrawList();
+	ImFont *font = ImGui::GetFont();
+	float sx = cls.glconfig.vidWidth / 640.0f;
+	float sy = cls.glconfig.vidHeight / 480.0f;
+	float scale = Com_Clamp( 0.50f, 2.00f, Cvar_VariableValue( "ls_race_chat_scale" ) ) * Com_Clamp( 1.0f, 1.65f, sy );
+	float inputScale = Com_Clamp( 0.50f, 2.00f, Cvar_VariableValue( "ls_race_chat_input_scale" ) ) * Com_Clamp( 1.0f, 1.65f, sy );
+	float x = Cvar_VariableValue( "ls_race_chat_x" ) * sx;
+	float y = Cvar_VariableValue( "ls_race_chat_y" ) * sy;
+	float inputX = Cvar_VariableValue( "ls_race_chat_input_x" ) * sx;
+	float inputY = Cvar_VariableValue( "ls_race_chat_input_y" ) * sy;
+	float fontSize = ImGui::GetFontSize() * scale;
+	float lineH = fontSize + 2.0f * scale;
+	float pad = 6.0f * scale;
+	float width = Com_Clamp( 80.0f, 620.0f, Cvar_VariableValue( "ls_race_chat_w" ) ) * sx;
+	float inputWidth = Com_Clamp( 80.0f, 620.0f, Cvar_VariableValue( "ls_race_chat_input_w" ) ) * sx;
+	float rowGap = 4.0f * scale;
+	float rowH = lineH + pad * 1.15f;
+	float inputH = 25.0f * inputScale;
+	int i;
+	const lsRaceUiChatLine_t *lines[LS_RACE_UI_CHAT_LINES];
+	float alpha[LS_RACE_UI_CHAT_LINES];
+	int count = 0;
+	int now = Sys_Milliseconds();
+	ImVec4 chatBgFallback = ImVec4( 0.03f, 0.04f, 0.03f, 0.50f );
+	ImVec4 chatTextFallback = ImVec4( 0.89f, 0.94f, 0.86f, 0.95f );
+	ImVec4 inputBgFallback = ImVec4( 0.03f, 0.04f, 0.03f, 0.82f );
+	ImVec4 inputTextFallback = ImVec4( 0.88f, 0.94f, 0.84f, 1.0f );
+	ImU32 inputBg = CL_ImGuiColorU32( "ls_race_chat_input_bg", inputBgFallback );
+	ImU32 border = CL_ImGuiGuiAccentU32( 0.74f );
+	ImU32 inputText = CL_ImGuiColorU32( "ls_race_chat_input_text", inputTextFallback );
+
+	LS_RaceBuildSnapshot( &race );
+	for ( i = LS_RACE_UI_CHAT_LINES - 1; i >= 0; --i ) {
+		if ( race.chat[i].text[0] && count < IM_ARRAYSIZE( lines ) ) {
+			int age = race.chat[i].timeMs > 0 ? now - race.chat[i].timeMs : 0;
+			float a = 1.0f;
+			if ( age < 0 ) age = 0;
+			if ( !s_raceChatOpen ) {
+				if ( age >= 7600 ) continue;
+				if ( age > 6200 ) a = 1.0f - (float)( age - 6200 ) / 1400.0f;
+			}
+			alpha[count] = Com_Clamp( 0.0f, 1.0f, a );
+			lines[count] = &race.chat[i];
+			count++;
+		}
+	}
+	if ( x < 0.0f ) x = 0.0f;
+	if ( y < 0.0f ) y = 0.0f;
+	if ( inputX < 0.0f ) inputX = 0.0f;
+	if ( inputY < 0.0f ) inputY = 0.0f;
+	for ( i = 0; i < count; ++i ) {
+		const lsRaceUiChatLine_t *line = lines[i];
+		char nick[40];
+		float a = alpha[i];
+		int aText = (int)( 242.0f * a );
+		ImVec2 pos( x + pad, y + i * ( rowH + rowGap ) + pad * 0.50f );
+		ImU32 bg = CL_ImGuiColorU32( "ls_race_chat_bg", chatBgFallback, a );
+		ImU32 nickCol = IM_COL32( line->red, line->green, line->blue, aText );
+		ImU32 textCol = CL_ImGuiColorU32( "ls_race_chat_text", chatTextFallback, a );
+		float nickW;
+		float textW;
+		float rowW;
+		Com_sprintf( nick, sizeof( nick ), "%s:", line->nick[0] ? line->nick : "Runner" );
+		nickW = font->CalcTextSizeA( fontSize, FLT_MAX, 0.0f, nick ).x;
+		textW = font->CalcTextSizeA( fontSize, FLT_MAX, 0.0f, line->text ).x;
+		rowW = nickW + textW + pad * 3.8f;
+		if ( rowW > width ) rowW = width;
+		draw->AddRectFilled( ImVec2( x, pos.y - pad * 0.48f ), ImVec2( x + rowW, pos.y + rowH - pad * 0.38f ), bg, 4.0f * scale );
+		draw->AddText( font, fontSize, ImVec2( pos.x + 1.0f, pos.y + 1.0f ), IM_COL32( 0, 0, 0, (int)( 170.0f * a ) ), nick );
+		draw->AddText( font, fontSize, pos, nickCol, nick );
+		CL_ImGuiAddEllipsizedTextSized( draw, font, fontSize, ImVec2( pos.x + nickW + 4.0f * scale, pos.y ), ImVec2( pos.x + nickW, pos.y - 2.0f * scale ), ImVec2( x + width - pad, pos.y + lineH + 2.0f * scale ), textCol, line->text, true );
+	}
+	if ( s_raceChatOpen ) {
+		ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
+		ImGui::SetNextWindowPos( ImVec2( inputX, inputY ), ImGuiCond_Always );
+		ImGui::SetNextWindowSize( ImVec2( inputWidth, inputH ), ImGuiCond_Always );
+		ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 6.0f * inputScale, 3.0f * inputScale ) );
+		ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 4.0f * inputScale );
+		ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 4.0f * inputScale, 1.0f * inputScale ) );
+		ImGui::PushStyleColor( ImGuiCol_WindowBg, ImGui::ColorConvertU32ToFloat4( inputBg ) );
+		ImGui::PushStyleColor( ImGuiCol_Border, ImGui::ColorConvertU32ToFloat4( border ) );
+		ImGui::PushStyleColor( ImGuiCol_FrameBg, ImVec4( 0, 0, 0, 0 ) );
+		ImGui::PushStyleColor( ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4( inputText ) );
+		ImGui::Begin( "Race Chat Input", NULL, flags );
+		ImGui::SetWindowFontScale( inputScale );
+		if ( s_raceChatFocus ) {
+			ImGui::SetKeyboardFocusHere();
+			s_raceChatFocus = false;
+		}
+		ImGui::PushItemWidth( ImGui::GetContentRegionAvail().x );
+		if ( ImGui::InputTextWithHint( "##race_chat_input", "race chat...", s_raceChatInput, sizeof( s_raceChatInput ), ImGuiInputTextFlags_EnterReturnsTrue ) ) {
+			if ( Sys_Milliseconds() < s_raceChatIgnoreSubmitUntilMs ) {
+				s_raceChatInput[0] = '\0';
+				CL_SpeedrunImGui_ClearRaceChatKeys();
+			} else {
+				CL_ImGuiRaceSubmitChatInput( s_raceChatInput, sizeof( s_raceChatInput ) );
+				CL_SpeedrunImGui_CloseRaceChat();
+			}
+		}
+		ImGui::PopItemWidth();
+		ImGui::SetWindowFontScale( 1.0f );
+		ImGui::End();
+		ImGui::PopStyleColor( 4 );
+		ImGui::PopStyleVar( 3 );
+	}
+}
+
+static void CL_ImGuiDrawZoneTimerOverlay( void ) {
+	ImDrawList *draw;
+	ImFont *font;
+	ImFont *boldFont;
+	ImGuiWindowFlags flags;
+	char runTime[64];
+	char recordTime[64];
+	char lastDelta[32];
+	char lastTotalDelta[32];
+	char progressText[32];
+	char label[64];
+	float sx, sy, scale, x, y, w, h, pad, alphaMul, rounding;
+	float timerSize, smallSize, lineSize;
+	int selectedFont, fontTier;
+	bool showDelta, showProgress, shadow, lastDeltaPb, lastTotalDeltaPb;
+	ImU32 colBg, colBg2, colBorder, colTimer, colMuted, colSeg, colFull;
+
+	Cvar_VariableStringBuffer( "sp_zone_run_time", runTime, sizeof( runTime ) );
+	Cvar_VariableStringBuffer( "sp_zone_record_time", recordTime, sizeof( recordTime ) );
+	Cvar_VariableStringBuffer( "sp_zone_last_delta", lastDelta, sizeof( lastDelta ) );
+	Cvar_VariableStringBuffer( "sp_zone_last_total_delta", lastTotalDelta, sizeof( lastTotalDelta ) );
+	Cvar_VariableStringBuffer( "sp_zone_progress_text", progressText, sizeof( progressText ) );
+	if ( !runTime[0] ) Q_strncpyz( runTime, "0.000", sizeof( runTime ) );
+	if ( !recordTime[0] ) Q_strncpyz( recordTime, "-", sizeof( recordTime ) );
+	if ( !progressText[0] ) Q_strncpyz( progressText, "-", sizeof( progressText ) );
+
+	showDelta = Cvar_VariableIntegerValue( "sp_zone_delta_visible" ) != 0 && ( lastDelta[0] || lastTotalDelta[0] );
+	showProgress = Cvar_VariableIntegerValue( "sp_zone_hud_progress" ) != 0 && Cvar_VariableIntegerValue( "sp_zone_progress_count" ) > 0;
+	lastDeltaPb = Cvar_VariableIntegerValue( "sp_zone_last_delta_pb" ) != 0;
+	lastTotalDeltaPb = Cvar_VariableIntegerValue( "sp_zone_last_total_delta_pb" ) != 0;
+	shadow = Cvar_VariableIntegerValue( "ls_text_shadow" ) != 0;
+
+	sx = cls.glconfig.vidWidth / 640.0f;
+	sy = cls.glconfig.vidHeight / 480.0f;
+	scale = Com_Clamp( 0.55f, 2.5f, Cvar_VariableValue( "sp_zone_hud_scale" ) ) * sy;
+	x = Cvar_VariableValue( "sp_zone_hud_x" ) * sx;
+	y = Cvar_VariableValue( "sp_zone_hud_y" ) * sy;
+	w = 214.0f * scale;
+	h = ( showDelta ? 76.0f : 54.0f ) * scale;
+	pad = 8.0f * scale;
+	rounding = 5.0f * scale;
+	if ( rounding > 8.0f ) rounding = 8.0f;
+	alphaMul = Com_Clamp( 0.0f, 1.0f, Cvar_VariableValue( "sp_zone_hud_alpha" ) );
+
+	selectedFont = (int)Com_Clamp( 0.0f, (float)( SRGUI_LIVESPLIT_FONT_COUNT - 1 ), (float)Cvar_VariableIntegerValue( "ls_imgui_font" ) );
+	fontTier = CL_ImGuiLiveSplitFontTierForScale( scale );
+	font = CL_ImGuiLiveSplitFont( selectedFont, fontTier );
+	boldFont = CL_ImGuiLiveSplitBoldFont( selectedFont, fontTier );
+	if ( !font ) font = s_imguiTimerFont;
+	if ( !boldFont ) boldFont = font;
+	timerSize = 24.0f * scale;
+	smallSize = 11.0f * scale;
+	lineSize = 12.0f * scale;
+
+	colBg = CL_ImGuiColorU32( "sp_zone_timer_clr_bg", ImVec4( 0.02f, 0.03f, 0.03f, 0.86f ), alphaMul );
+	colBg2 = CL_ImGuiColorU32( "sp_zone_timer_clr_bg2", ImVec4( 0.06f, 0.10f, 0.07f, 0.78f ), alphaMul );
+	colBorder = CL_ImGuiColorU32( "sp_zone_timer_clr_border", ImVec4( 0.41f, 0.67f, 0.28f, 0.46f ), alphaMul );
+	colTimer = CL_ImGuiColorU32( "sp_zone_timer_clr_time", ImVec4( 0.73f, 0.97f, 0.56f, 1.00f ), alphaMul );
+	colMuted = CL_ImGuiColorU32( "sp_zone_timer_clr_muted", ImVec4( 0.57f, 0.64f, 0.53f, 0.92f ), alphaMul );
+	colSeg = CL_ImGuiZoneTimerDeltaColor( lastDelta, lastDeltaPb, alphaMul );
+	colFull = CL_ImGuiZoneTimerDeltaColor( lastTotalDelta, lastTotalDeltaPb, alphaMul );
+
+	flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs;
+	ImGui::SetNextWindowPos( ImVec2( x, y ), ImGuiCond_Always );
+	ImGui::SetNextWindowSize( ImVec2( w, h ), ImGuiCond_Always );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 0, 0 ) );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, rounding );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowBorderSize, 0.0f );
+	ImGui::Begin( "Zone Timer ImGui Overlay", NULL, flags );
+	draw = ImGui::GetWindowDrawList();
+	draw->AddRectFilledMultiColor( ImVec2( x, y ), ImVec2( x + w, y + h ), colBg2, colBg, colBg, colBg2 );
+	CL_ImGuiAddRectLines( draw, x, y, w, h, colBorder, 1.0f * scale );
+	CL_ImGuiZoneTimerTextRight( draw, boldFont, timerSize, x + w - pad, y + 5.0f * scale, colTimer, runTime, shadow );
+	Com_sprintf( label, sizeof( label ), "PB %s", recordTime[0] ? recordTime : "-" );
+	CL_ImGuiZoneTimerText( draw, font, smallSize, ImVec2( x + pad, y + 30.0f * scale ), colMuted, label, shadow );
+	if ( showProgress ) {
+		Com_sprintf( label, sizeof( label ), "CP %s", progressText );
+		CL_ImGuiZoneTimerTextRight( draw, font, smallSize, x + w - pad, y + 30.0f * scale, colMuted, label, shadow );
+	}
+	if ( showDelta ) {
+		Com_sprintf( label, sizeof( label ), "SEG %s", lastDelta[0] ? lastDelta : "-" );
+		CL_ImGuiZoneTimerTextRight( draw, font, lineSize, x + w - pad, y + 47.0f * scale, colSeg, label, shadow );
+		Com_sprintf( label, sizeof( label ), "FULL %s", lastTotalDelta[0] ? lastTotalDelta : "-" );
+		CL_ImGuiZoneTimerTextRight( draw, font, lineSize, x + w - pad, y + 61.0f * scale, colFull, label, shadow );
+	}
+	ImGui::End();
+	ImGui::PopStyleVar( 3 );
+}
+
 static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	lsWndState_t st;
 	ImDrawList *draw;
 	ImFont *overlayFont, *boldFont;
-	float sx, sy, uiScale, fontScale, x, y, w, rowH, panelH, contentX, contentR, textY, alphaMul, rounding, pad, nameR;
+	float sx, sy, uiScale, fontScale, x, y, w, rowH, panelH, contentX, contentR, textY, alphaMul, rounding, pad, nameR, componentGap, sepGap, afterSplitsGap, maxFontScale;
 	float bestR, deltaR, timeR, statusW, nameFrac, bestFrac, deltaFrac, timerCardH, headerY0, headerY1, splitsY0, splitsY1;
 	float timerSize, stageSize, infoSize, rgtSize, sideGap, timerSplit, splitNameSize, splitBestDeltaSize, splitDeltaSize, splitTimeSize, splitMaxSize;
 	float timerMainScale, timerMainLineH, timerStageLineH, timerInfoLineH, timerLowerH, timerTopPad, timerLineGap, timerBottomPad;
 	int i, scrollStart, scrollEnd, lastRow, cap, visibleRows, totalRows, statRows, selectedFont, fontTier;
 	int style, currentRow;
-	bool pinLast, showTitle, showHeader, showStats, showSeg, showRgt, showPb, showBest, showTimer, showSeps, showDeltas, showBestDeltas, showAtt, show100, showPrev, showGhostSeg, showBestSegments, showBorder, showHeaderBg, showStatus, showGradient, showCurrentBg, shadow, editMode, rightAligned;
-	bool showSob, showPossibleSave, showBestPossible, showGoldRainbow, titleBold, attemptsBold, statusBold, headerBold, timerBold, stageBold, infoBold, splitBold, prevLabelBold, prevValueBold, ghostBold, statsBold, rgtBold;
+	bool pinLast, hasPostSplits, showTitle, showHeader, showStats, showSeg, showRgt, showPb, showBest, showTimer, showSeps, showDeltas, showBestDeltas, showAtt, show100, showPrev, showGhostSeg, showBestSegments, showBorder, showHeaderBg, showStatus, showGradient, showCurrentBg, shadow, editMode, rightAligned;
+	bool showSob, showPossibleSave, showBestPossible, showGoldRainbow, showPrevGoldRainbow, titleBold, attemptsBold, statusBold, headerBold, timerBold, stageBold, infoBold, splitBold, prevLabelBold, prevValueBold, ghostBold, statsBold, statsValueBold, rgtBold;
 	bool splitNameBold, splitBestBold, splitDeltaBold, splitTimeBold, statSobLabelBold, statSobValueBold, statPossibleLabelBold, statPossibleValueBold, statBestLabelBold, statBestValueBold;
 	float borderThickness;
 	const char *curPbSeg, *curBestSeg, *curCompareLabel;
 	ImU32 colBg, colBg2, colBorder, colHeader, colTimer, colText, colMap, colCurrent, colCompleted, colFuture, colAhead, colBehind, colGold, colDim, colSeg, colPaused, colSep, colHl, colLabel, colPanelTop, colStatusLive, colStatusReady, colStatusDone;
-	ImU32 colStatusText, colPbValue, colBestValue, colPbLabel, colBestLabel, colPrevLabel, colPrevAhead, colPrevBehind, colPrevGold, colGhostLabel, colGhostTime, colStatLabel, colStatSob, colStatPossibleLabel, colStatPossible, colStatPossibleZero, colStatPossibleMissing, colStatBest, colRgt, colEmpty;
+	ImU32 colStatusText, colPbValue, colBestValue, colPbLabel, colBestLabel, colPrevLabel, colPrevAhead, colPrevBehind, colPrevGold, colGhostLabel, colGhostTime, colStatLabel, colStatSobLabel, colStatSob, colStatPossibleLabel, colStatPossible, colStatPossibleZero, colStatPossibleMissing, colStatBestLabel, colStatBest, colRgt, colEmpty, colSplitTime, colSplitTimeCurrent, colSplitTimeCompleted;
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground;
 
 	memcpy( &st, (const void *)&lswnd_state, sizeof( st ) );
@@ -1966,7 +3773,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	showBestDeltas = Cvar_VariableIntegerValue( "ls_showbestdeltas" ) != 0;
 	showAtt = Cvar_VariableIntegerValue( "ls_showatt" ) != 0;
 	show100 = Cvar_VariableIntegerValue( "ls_100pct" ) != 0;
-	showPrev = Cvar_VariableIntegerValue( "ls_imgui_show_prevseg" ) != 0;
+	showPrev = showStats && Cvar_VariableIntegerValue( "ls_imgui_show_prevseg" ) != 0;
 	showGhostSeg = Cvar_VariableIntegerValue( "ls_imgui_show_ghostseg" ) != 0;
 	showBestSegments = Cvar_VariableIntegerValue( "ls_imgui_show_bestsegments" ) != 0;
 	showBorder = Cvar_VariableIntegerValue( "ls_imgui_show_border" ) != 0;
@@ -1978,6 +3785,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	showPossibleSave = Cvar_VariableIntegerValue( "ls_imgui_show_possible_save" ) != 0;
 	showBestPossible = Cvar_VariableIntegerValue( "ls_imgui_show_best_possible" ) != 0;
 	showGoldRainbow = Cvar_VariableIntegerValue( "ls_imgui_gold_rainbow" ) != 0;
+	showPrevGoldRainbow = Cvar_VariableIntegerValue( "ls_imgui_prev_gold_rainbow" ) != 0;
 	titleBold = Cvar_VariableIntegerValue( "ls_imgui_bold_title" ) != 0;
 	attemptsBold = Cvar_VariableIntegerValue( "ls_imgui_bold_attempts" ) != 0;
 	statusBold = Cvar_VariableIntegerValue( "ls_imgui_bold_status" ) != 0;
@@ -1986,21 +3794,22 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	stageBold = Cvar_VariableIntegerValue( "ls_imgui_bold_stage" ) != 0;
 	infoBold = Cvar_VariableIntegerValue( "ls_imgui_bold_info" ) != 0;
 	splitBold = Cvar_VariableIntegerValue( "ls_imgui_bold_splits" ) != 0;
-	prevLabelBold = Cvar_VariableIntegerValue( "ls_imgui_bold_prev" ) != 0 || Cvar_VariableIntegerValue( "ls_imgui_bold_prev_label" ) != 0;
-	prevValueBold = Cvar_VariableIntegerValue( "ls_imgui_bold_prev" ) != 0 || Cvar_VariableIntegerValue( "ls_imgui_bold_prev_value" ) != 0;
 	ghostBold = Cvar_VariableIntegerValue( "ls_imgui_bold_ghost" ) != 0;
 	statsBold = Cvar_VariableIntegerValue( "ls_imgui_bold_stats" ) != 0;
+	statsValueBold = statsBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stats_values" ) != 0;
+	prevLabelBold = statsBold || Cvar_VariableIntegerValue( "ls_imgui_bold_prev" ) != 0 || Cvar_VariableIntegerValue( "ls_imgui_bold_prev_label" ) != 0;
+	prevValueBold = statsValueBold || Cvar_VariableIntegerValue( "ls_imgui_bold_prev" ) != 0 || Cvar_VariableIntegerValue( "ls_imgui_bold_prev_value" ) != 0;
 	rgtBold = Cvar_VariableIntegerValue( "ls_imgui_bold_rgt" ) != 0;
 	splitNameBold = splitBold || Cvar_VariableIntegerValue( "ls_imgui_bold_split_name" ) != 0;
 	splitBestBold = splitBold || Cvar_VariableIntegerValue( "ls_imgui_bold_split_best" ) != 0;
 	splitDeltaBold = splitBold || Cvar_VariableIntegerValue( "ls_imgui_bold_split_delta" ) != 0;
 	splitTimeBold = splitBold || Cvar_VariableIntegerValue( "ls_imgui_bold_split_time" ) != 0;
 	statSobLabelBold = statsBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_sob_label" ) != 0;
-	statSobValueBold = statsBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_sob_value" ) != 0;
+	statSobValueBold = statsValueBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_sob_value" ) != 0;
 	statPossibleLabelBold = statsBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_possible_label" ) != 0;
-	statPossibleValueBold = statsBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_possible_value" ) != 0;
+	statPossibleValueBold = statsValueBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_possible_value" ) != 0;
 	statBestLabelBold = statsBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_best_label" ) != 0;
-	statBestValueBold = statsBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_best_value" ) != 0;
+	statBestValueBold = statsValueBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stat_best_value" ) != 0;
 	shadow = Cvar_VariableIntegerValue( "ls_text_shadow" ) != 0;
 	editMode = s_imguiOpen && Cvar_VariableIntegerValue( "ui_speedrun_layout_edit" ) != 0;
 	rightAligned = Cvar_VariableIntegerValue( "ls_align" ) == 1;
@@ -2059,6 +3868,8 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	timerBottomPad = 5.0f * uiScale;
 	rounding = 0.0f;
 	pad = Com_Clamp( 3.0f, 14.0f, Cvar_VariableValue( "ls_imgui_padding" ) ) * uiScale;
+	componentGap = Com_Clamp( 0.0f, 12.0f, Cvar_VariableValue( "ls_imgui_component_gap" ) ) * uiScale;
+	sepGap = componentGap;
 	cap = Cvar_VariableIntegerValue( "ls_maxrows" );
 	if ( cap < 2 ) cap = 6;
 	if ( cap > 16 ) cap = 16;
@@ -2084,21 +3895,26 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	visibleRows = scrollEnd >= scrollStart ? scrollEnd - scrollStart + 1 : 0;
 	totalRows = visibleRows + ( pinLast ? 1 : 0 );
 
-	panelH = pad * 2.0f + 4.0f * uiScale;
+	panelH = pad * 2.0f;
 	if ( showTitle ) panelH += ( style == 2 ? 26.0f : 34.0f ) * uiScale;
 	else panelH += 16.0f * uiScale;
-	if ( showHeader ) panelH += 15.0f * uiScale;
+	panelH += sepGap;
+	if ( showHeader ) panelH += 13.0f * uiScale + sepGap;
 	panelH += totalRows * rowH;
 	timerCardH = timerTopPad + timerMainLineH + ( showTimer && showSeg ? timerLineGap : 0.0f ) + timerLowerH + timerBottomPad;
+	hasPostSplits = showTimer || showSeg || ( showPrev && st.prevSegValue[0] ) || ( showStats && showPossibleSave ) || ( showGhostSeg && st.ghostSegText[0] ) || statRows > 0 || ( showBestSegments && st.numBestSegs > 0 ) || showRgt || show100;
+	afterSplitsGap = hasPostSplits ? sepGap : 0.0f;
 	if ( showTimer || showSeg ) panelH += timerCardH;
+	panelH += afterSplitsGap;
 	if ( showPrev && st.prevSegValue[0] ) panelH += 15.0f * uiScale;
 	if ( showStats && showPossibleSave ) panelH += 14.0f * uiScale;
 	if ( showGhostSeg && st.ghostSegText[0] ) panelH += 16.0f * uiScale;
-	if ( statRows > 0 ) panelH += ( 4.0f + statRows * 14.0f ) * uiScale;
-	if ( showBestSegments && st.numBestSegs > 0 ) panelH += 18.0f * uiScale + ( st.numBestSegs < 4 ? st.numBestSegs : 4 ) * rowH;
+	if ( statRows > 0 ) panelH += statRows * 14.0f * uiScale;
+	if ( showBestSegments && st.numBestSegs > 0 ) panelH += ( 14.0f * uiScale + sepGap ) + ( st.numBestSegs < 4 ? st.numBestSegs : 4 ) * rowH;
 	rgtSize = Com_Clamp( 0.65f, 1.60f, Cvar_VariableValue( "ls_imgui_rgt_size" ) );
 	if ( showRgt ) panelH += 13.5f * uiScale * rgtSize;
-	if ( show100 ) panelH += 32.0f * uiScale;
+	if ( show100 ) panelH += 28.0f * uiScale + sepGap;
+	if ( pinLast ) panelH += sepGap;
 
 	alphaMul = Cvar_VariableValue( "ls_opacity" );
 	if ( s_imguiOpen ) alphaMul *= Cvar_VariableValue( "ls_opacity_ui" );
@@ -2138,14 +3954,19 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	colGhostLabel = CL_ImGuiColorU32( "ls_clr_ghost_label", ImVec4( 0.42f, 0.48f, 0.38f, 0.62f ), alphaMul );
 	colGhostTime = CL_ImGuiColorU32( "ls_clr_ghost_time", ImVec4( 0.62f, 0.65f, 0.62f, 0.82f ), alphaMul );
 	colStatLabel = CL_ImGuiColorU32( "ls_clr_stat_label", ImVec4( 0.42f, 0.48f, 0.38f, 0.62f ), alphaMul );
+	colStatSobLabel = CL_ImGuiColorU32( "ls_clr_stat_sob_label", ImVec4( 0.42f, 0.48f, 0.38f, 0.62f ), alphaMul );
 	colStatSob = CL_ImGuiColorU32( "ls_clr_stat_sob", ImVec4( 1.00f, 0.85f, 0.20f, 1.00f ), alphaMul );
 	colStatPossibleLabel = CL_ImGuiColorU32( "ls_clr_stat_possible_label", ImVec4( 0.42f, 0.48f, 0.38f, 0.62f ), alphaMul );
 	colStatPossible = CL_ImGuiColorU32( "ls_clr_stat_possible_save", ImVec4( 0.25f, 0.85f, 0.25f, 1.00f ), alphaMul );
 	colStatPossibleZero = CL_ImGuiColorU32( "ls_clr_stat_possible_zero", ImVec4( 0.48f, 0.48f, 0.50f, 0.62f ), alphaMul );
 	colStatPossibleMissing = CL_ImGuiColorU32( "ls_clr_stat_possible_missing", ImVec4( 0.32f, 0.36f, 0.30f, 0.70f ), alphaMul );
+	colStatBestLabel = CL_ImGuiColorU32( "ls_clr_stat_best_possible_label", ImVec4( 0.42f, 0.48f, 0.38f, 0.62f ), alphaMul );
 	colStatBest = CL_ImGuiColorU32( "ls_clr_stat_best_possible", ImVec4( 0.85f, 0.88f, 0.85f, 0.90f ), alphaMul );
 	colRgt = CL_ImGuiColorU32( "ls_clr_rgt", ImVec4( 0.85f, 0.88f, 0.85f, 0.90f ), alphaMul );
 	colEmpty = CL_ImGuiColorU32( "ls_clr_empty", ImVec4( 0.48f, 0.48f, 0.50f, 0.52f ), alphaMul );
+	colSplitTime = CL_ImGuiColorU32( "ls_clr_split_time", ImVec4( 0.85f, 0.88f, 0.85f, 0.90f ), alphaMul );
+	colSplitTimeCurrent = CL_ImGuiColorU32( "ls_clr_split_time_current", ImVec4( 1.00f, 1.00f, 0.60f, 1.00f ), alphaMul );
+	colSplitTimeCompleted = CL_ImGuiColorU32( "ls_clr_split_time_completed", ImVec4( 0.72f, 0.72f, 0.72f, 0.80f ), alphaMul );
 	if ( style == 0 ) {
 		colBg = CL_ImGuiColorU32( "ls_clr_bg", ImVec4( 0.020f, 0.026f, 0.024f, Cvar_VariableValue( "ls_bgalpha" ) ), alphaMul );
 		colBg2 = CL_ImGuiColorU32( "ls_clr_bg2", ImVec4( 0.035f, 0.044f, 0.040f, Cvar_VariableValue( "ls_bgalpha" ) * 0.84f ), alphaMul );
@@ -2169,7 +3990,12 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	ImGui::PushStyleVar( ImGuiStyleVar_WindowBorderSize, 0.0f );
 	ImGui::Begin( "LiveSplit ImGui Overlay", NULL, flags );
 	selectedFont = (int)Com_Clamp( 0.0f, (float)( SRGUI_LIVESPLIT_FONT_COUNT - 1 ), (float)Cvar_VariableIntegerValue( "ls_imgui_font" ) );
-	fontTier = CL_ImGuiLiveSplitFontTierForScale( uiScale );
+	maxFontScale = splitMaxSize;
+	if ( timerMainScale > maxFontScale ) maxFontScale = timerMainScale;
+	if ( stageSize > maxFontScale ) maxFontScale = stageSize;
+	if ( infoSize > maxFontScale ) maxFontScale = infoSize;
+	if ( rgtSize > maxFontScale ) maxFontScale = rgtSize;
+	fontTier = CL_ImGuiLiveSplitFontTierForScale( uiScale * maxFontScale );
 	while ( fontTier > 0 && !s_imguiLiveSplitFontTiers[selectedFont][fontTier] ) {
 		fontTier--;
 	}
@@ -2273,7 +4099,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	}
 	headerY1 = textY;
 	if ( showSeps ) draw->AddLine( ImVec2( contentX, textY ), ImVec2( contentR, textY ), colSep );
-	textY += 4.0f * uiScale;
+	textY += sepGap;
 	splitsY0 = textY;
 
 	if ( showHeader ) {
@@ -2284,11 +4110,12 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 		if ( headerBold && boldFont ) ImGui::PopFont();
 		textY += 13.0f * uiScale;
 		if ( showSeps ) draw->AddLine( ImVec2( contentX, textY ), ImVec2( contentR, textY ), colSep );
-		textY += 3.0f * uiScale;
+		textY += sepGap;
 	}
 
 	for ( i = scrollStart; i <= scrollEnd && i < st.numRows; ++i ) {
 		ImU32 rowCol = st.rows[i].state == 1 ? colCurrent : ( st.rows[i].state == 2 ? colCompleted : colFuture );
+		ImU32 rowTimeCol = st.rows[i].state == 1 ? colSplitTimeCurrent : ( st.rows[i].state == 2 ? colSplitTimeCompleted : colSplitTime );
 		const char *name = ( w < 190.0f && st.rows[i].shortName[0] ) ? st.rows[i].shortName : st.rows[i].name;
 		if ( showCurrentBg && st.rows[i].state == 1 ) {
 			draw->AddRectFilled( ImVec2( x + 4.0f, textY - 1.0f ), ImVec2( x + w - 4.0f, textY + rowH - 2.0f ), colHl );
@@ -2314,12 +4141,12 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 		if ( st.rows[i].splitTime[0] ) {
 			ImGui::SetWindowFontScale( fontScale * splitTimeSize );
 			if ( splitTimeBold && boldFont ) ImGui::PushFont( boldFont );
-			CL_ImGuiAddTextRight( draw, timeR, textY, st.rows[i].state == 1 ? colCurrent : colText, st.rows[i].splitTime, shadow );
+			CL_ImGuiAddTextRight( draw, timeR, textY, rowTimeCol, st.rows[i].splitTime, shadow );
 			if ( splitTimeBold && boldFont ) ImGui::PopFont();
 		} else if ( st.rows[i].pbSplitTime[0] && st.rows[i].state != 2 ) {
 			ImGui::SetWindowFontScale( fontScale * splitTimeSize );
 			if ( splitTimeBold && boldFont ) ImGui::PushFont( boldFont );
-			CL_ImGuiAddTextRight( draw, timeR, textY, colDim, st.rows[i].pbSplitTime, shadow );
+			CL_ImGuiAddTextRight( draw, timeR, textY, rowTimeCol, st.rows[i].pbSplitTime, shadow );
 			if ( splitTimeBold && boldFont ) ImGui::PopFont();
 		}
 		ImGui::SetWindowFontScale( fontScale );
@@ -2327,7 +4154,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	}
 	if ( pinLast && lastRow >= 0 ) {
 		if ( showSeps ) draw->AddLine( ImVec2( contentX, textY ), ImVec2( contentR, textY ), colSep );
-		textY += 3.0f * uiScale;
+		textY += sepGap;
 		i = lastRow;
 		ImGui::SetWindowFontScale( fontScale * splitNameSize );
 		if ( splitNameBold && boldFont ) ImGui::PushFont( boldFont );
@@ -2335,7 +4162,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 		if ( splitNameBold && boldFont ) ImGui::PopFont();
 		ImGui::SetWindowFontScale( fontScale * splitTimeSize );
 		if ( splitTimeBold && boldFont ) ImGui::PushFont( boldFont );
-		CL_ImGuiAddTextRight( draw, timeR, textY, st.rows[i].splitTime[0] ? colText : colDim, st.rows[i].splitTime[0] ? st.rows[i].splitTime : st.rows[i].pbSplitTime, shadow );
+		CL_ImGuiAddTextRight( draw, timeR, textY, st.rows[i].state == 1 ? colSplitTimeCurrent : ( st.rows[i].state == 2 ? colSplitTimeCompleted : colSplitTime ), st.rows[i].splitTime[0] ? st.rows[i].splitTime : st.rows[i].pbSplitTime, shadow );
 		if ( splitTimeBold && boldFont ) ImGui::PopFont();
 		ImGui::SetWindowFontScale( fontScale );
 		textY += rowH;
@@ -2367,7 +4194,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	}
 
 	if ( showSeps && !( showTimer || showSeg ) ) draw->AddLine( ImVec2( contentX, textY ), ImVec2( contentR, textY ), colSep );
-	textY += 4.0f * uiScale;
+	textY += afterSplitsGap;
 	if ( showTimer || showSeg ) {
 		float cardY = textY;
 		float leftBlock = contentX;
@@ -2377,7 +4204,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 		float timerRight = rightAligned ? rightBlock : midX - sideGap;
 		float mainY = timerTopPad;
 		float lowerY = showTimer ? ( mainY + timerMainLineH + timerLineGap ) : timerTopPad;
-		draw->AddLine( ImVec2( contentX, cardY ), ImVec2( contentR, cardY ), colSep );
+		if ( showSeps ) draw->AddLine( ImVec2( contentX, cardY ), ImVec2( contentR, cardY ), colSep );
 		if ( showTimer ) {
 			if ( timerBold && boldFont ) ImGui::PushFont( boldFont );
 			ImGui::SetWindowFontScale( fontScale * timerMainScale );
@@ -2427,11 +4254,12 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 		textY += timerCardH;
 	}
 	if ( showPrev && st.prevSegValue[0] ) {
+		ImU32 prevValueCol = st.prevSegGold ? ( showPrevGoldRainbow ? CL_ImGuiRainbowColorU32( alphaMul ) : colPrevGold ) : ( st.prevSegBehind ? colPrevBehind : colPrevAhead );
 		if ( prevLabelBold && boldFont ) ImGui::PushFont( boldFont );
 		CL_ImGuiAddTextShadow( draw, ImVec2( contentX, textY ), colPrevLabel, st.prevSegLabel[0] ? st.prevSegLabel : "Previous", shadow );
 		if ( prevLabelBold && boldFont ) ImGui::PopFont();
 		if ( prevValueBold && boldFont ) ImGui::PushFont( boldFont );
-		CL_ImGuiAddTextRight( draw, timeR, textY, st.prevSegGold ? colPrevGold : ( st.prevSegBehind ? colPrevBehind : colPrevAhead ), st.prevSegValue, shadow );
+		CL_ImGuiAddTextRight( draw, timeR, textY, prevValueCol, st.prevSegValue, shadow );
 		if ( prevValueBold && boldFont ) ImGui::PopFont();
 		textY += 15.0f * uiScale;
 	}
@@ -2455,7 +4283,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	if ( statRows > 0 ) {
 		if ( showSob ) {
 			if ( statSobLabelBold && boldFont ) ImGui::PushFont( boldFont );
-			CL_ImGuiAddTextShadow( draw, ImVec2( contentX, textY ), colStatLabel, "Sum of best segment", shadow );
+			CL_ImGuiAddTextShadow( draw, ImVec2( contentX, textY ), colStatSobLabel, "Sum of best segment", shadow );
 			if ( statSobLabelBold && boldFont ) ImGui::PopFont();
 			if ( statSobValueBold && boldFont ) ImGui::PushFont( boldFont );
 			CL_ImGuiAddTextRight( draw, timeR, textY, colStatSob, st.sobText[0] ? st.sobText : "-----", shadow );
@@ -2464,7 +4292,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 		}
 		if ( showBestPossible ) {
 			if ( statBestLabelBold && boldFont ) ImGui::PushFont( boldFont );
-			CL_ImGuiAddTextShadow( draw, ImVec2( contentX, textY ), colStatLabel, "Best Possible", shadow );
+			CL_ImGuiAddTextShadow( draw, ImVec2( contentX, textY ), colStatBestLabel, "Best Possible", shadow );
 			if ( statBestLabelBold && boldFont ) ImGui::PopFont();
 			if ( statBestValueBold && boldFont ) ImGui::PushFont( boldFont );
 			CL_ImGuiAddTextRight( draw, timeR, textY, colStatBest, st.bptText[0] ? st.bptText : "-----", shadow );
@@ -2475,7 +4303,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	if ( showBestSegments && st.numBestSegs > 0 ) {
 		int rows = st.numBestSegs < 4 ? st.numBestSegs : 4;
 		if ( showSeps ) draw->AddLine( ImVec2( contentX, textY ), ImVec2( contentR, textY ), colSep );
-		textY += 4.0f * uiScale;
+		textY += sepGap;
 		CL_ImGuiAddTextShadow( draw, ImVec2( contentX, textY ), colLabel, "Best Segments", shadow );
 		textY += 14.0f * uiScale;
 		for ( i = 0; i < rows; ++i ) {
@@ -2492,7 +4320,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 			}
 			ImGui::SetWindowFontScale( fontScale * splitTimeSize );
 			if ( splitTimeBold && boldFont ) ImGui::PushFont( boldFont );
-			CL_ImGuiAddTextRight( draw, timeR, textY, st.bestSegs[i].time[0] ? bestCol : colDim, st.bestSegs[i].time[0] ? st.bestSegs[i].time : "-----", shadow );
+			CL_ImGuiAddTextRight( draw, timeR, textY, st.bestSegs[i].time[0] ? ( st.bestSegs[i].state == 1 ? colSplitTimeCurrent : ( st.bestSegs[i].state == 2 ? colSplitTimeCompleted : colSplitTime ) ) : colDim, st.bestSegs[i].time[0] ? st.bestSegs[i].time : "-----", shadow );
 			if ( splitTimeBold && boldFont ) ImGui::PopFont();
 			ImGui::SetWindowFontScale( fontScale );
 			textY += rowH;
@@ -2510,7 +4338,7 @@ static void CL_ImGuiDrawLiveSplitOverlay( void ) {
 	if ( show100 ) {
 		char secBuf[64], treBuf[64];
 		if ( showSeps ) draw->AddLine( ImVec2( contentX, textY ), ImVec2( contentR, textY ), colSep );
-		textY += 4.0f * uiScale;
+		textY += sepGap;
 		Com_sprintf( secBuf, sizeof( secBuf ), "Secrets %d/%d", st.pctSecretsFound, st.pctSecretsTotal );
 		Com_sprintf( treBuf, sizeof( treBuf ), "Treasure %d/%d", st.pctTreasureFound, st.pctTreasureTotal );
 		CL_ImGuiAddTextShadow( draw, ImVec2( contentX, textY ), colAhead, secBuf, shadow );
@@ -2639,6 +4467,8 @@ static void CL_ImGuiActionCard( const char *title, const char *desc, const char 
 		Cbuf_AddText( command );
 		Cbuf_AddText( "\n" );
 	}
+	CL_ImGuiOptionTooltip( button, command, desc );
+	CL_ImGuiDrawCommandBindTools( command, desc );
 	ImGui::Unindent( 10.0f );
 	ImGui::EndChild();
 }
@@ -2721,6 +4551,11 @@ static void CL_ImGuiPlaySelectedDemo( void ) {
 	}
 	Com_sprintf( cmd, sizeof( cmd ), "demo %s\n", s_demoList[s_demoSelected] );
 	Cbuf_AddText( cmd );
+	s_imguiOpen = false;
+	s_raceGuiOpen = false;
+	if ( s_imguiEnabled ) {
+		Cvar_Set( s_imguiEnabled->name, "0" );
+	}
 }
 
 static void CL_ImGuiDrawDemoStats( void ) {
@@ -2966,6 +4801,22 @@ static int CL_ImGuiWinKeyToQuake( unsigned int vk, long lParam ) {
 	case VK_NEXT: return extended ? K_PGDN : K_KP_PGDN;
 	case VK_INSERT: return extended ? K_INS : K_KP_INS;
 	case VK_DELETE: return extended ? K_DEL : K_KP_DEL;
+	case VK_NUMPAD0: return K_KP_INS;
+	case VK_NUMPAD1: return K_KP_END;
+	case VK_NUMPAD2: return K_KP_DOWNARROW;
+	case VK_NUMPAD3: return K_KP_PGDN;
+	case VK_NUMPAD4: return K_KP_LEFTARROW;
+	case VK_NUMPAD5: return K_KP_5;
+	case VK_NUMPAD6: return K_KP_RIGHTARROW;
+	case VK_NUMPAD7: return K_KP_HOME;
+	case VK_NUMPAD8: return K_KP_UPARROW;
+	case VK_NUMPAD9: return K_KP_PGUP;
+	case VK_DECIMAL: return K_KP_DEL;
+	case VK_DIVIDE: return K_KP_SLASH;
+	case VK_MULTIPLY: return K_KP_STAR;
+	case VK_SUBTRACT: return K_KP_MINUS;
+	case VK_ADD: return K_KP_PLUS;
+	case VK_NUMLOCK: return K_KP_NUMLOCK;
 	case VK_SHIFT: return K_SHIFT;
 	case VK_CONTROL: return K_CTRL;
 	case VK_MENU: return K_ALT;
@@ -2984,14 +4835,31 @@ static int CL_ImGuiWinKeyToQuake( unsigned int vk, long lParam ) {
 	return 0;
 }
 
+static void CL_ImGuiClearBindingCommand( const char *command ) {
+	if ( !command || !command[0] ) {
+		return;
+	}
+	for ( int key = 0; key < 256; ++key ) {
+		const char *binding = Key_GetBinding( key );
+		if ( binding && binding[0] && Q_stricmp( binding, command ) == 0 ) {
+			Key_SetBinding( key, "" );
+		}
+	}
+	if ( s_pendingBindCommand == command ) {
+		s_pendingBindCommand = NULL;
+	}
+}
+
 static void CL_ImGuiAssignPendingBind( int keynum ) {
 	if ( !s_pendingBindCommand ) {
 		return;
 	}
-	if ( keynum > 0 && keynum != K_ESCAPE ) {
-		Key_SetBinding( keynum, s_pendingBindCommand );
-	}
+	const char *command = s_pendingBindCommand;
 	s_pendingBindCommand = NULL;
+	if ( keynum > 0 && keynum != K_ESCAPE ) {
+		CL_ImGuiClearBindingCommand( command );
+		Key_SetBinding( keynum, command );
+	}
 }
 
 static void CL_ImGuiBindingRow( const char *label, const char *command ) {
@@ -3023,8 +4891,8 @@ static void CL_ImGuiBindingRow( const char *label, const char *command ) {
 		s_pendingBindCommand = command;
 	}
 	ImGui::SameLine();
-	if ( ImGui::SmallButton( "Clear" ) && keynum > 0 ) {
-		Key_SetBinding( keynum, "" );
+	if ( ImGui::SmallButton( "Clear" ) ) {
+		CL_ImGuiClearBindingCommand( command );
 	}
 	ImGui::EndChild();
 	ImGui::PopID();
@@ -3051,6 +4919,7 @@ static void CL_ImGuiDrawBindConflicts( void ) {
 	ImGui::EndChild();
 }
 
+#if 0
 static void CL_ImGuiDrawTimerPage( void ) {
 	static const char *typeLabels[] = { "In-Game Only", "External LiveSplit" };
 	static const int typeValues[] = { 0, 1 };
@@ -3115,6 +4984,9 @@ static void CL_ImGuiDrawColorsPage( void ) {
 	CL_ImGuiColorCvarName( "Current Split", "ls_clr_current", current );
 	CL_ImGuiColorCvarName( "Completed", "ls_clr_completed", completed );
 	CL_ImGuiColorCvarName( "Future", "ls_clr_future", future );
+	CL_ImGuiColorCvarName( "Time Column - all", "ls_clr_split_time", text );
+	CL_ImGuiColorCvarName( "Time Column - current", "ls_clr_split_time_current", current );
+	CL_ImGuiColorCvarName( "Time Column - completed", "ls_clr_split_time_completed", completed );
 	CL_ImGuiColorCvarName( "Dim", "ls_clr_dim", dim );
 	CL_ImGuiColorCvarName( "Segment Timer", "ls_clr_segtimer", timer );
 	CL_ImGuiColorCvarName( "Separator", "ls_clr_sep", border );
@@ -3136,92 +5008,8 @@ static void CL_ImGuiResetLiveSplitStyleDefaults( void ) {
 	Cvar_Set( "ls_text_shadow", "1" );
 	Cvar_Set( "ls_draw", "1" );
 	Cvar_Set( "ls_showtimer", "1" );
-	Cvar_Set( "ls_showheader", "1" );
-	Cvar_Set( "ls_showstats", "1" );
-	Cvar_Set( "ls_showseg", "1" );
-	Cvar_Set( "ls_showrgt", "1" );
-	Cvar_Set( "ls_showpb", "1" );
-	Cvar_Set( "ls_showbest", "1" );
-	Cvar_Set( "ls_showseps", "1" );
-	Cvar_Set( "ls_showdeltas", "1" );
-	Cvar_Set( "ls_showbestdeltas", "1" );
-	Cvar_Set( "ls_showatt", "1" );
-	Cvar_Set( "ls_100pct", "0" );
-	Cvar_Set( "ls_imgui_rounding", "0" );
-	Cvar_Set( "ls_imgui_padding", "5" );
-	Cvar_Set( "ls_imgui_show_title", "0" );
-	Cvar_Set( "ls_imgui_show_border", "1" );
-	Cvar_Set( "ls_imgui_header_bg", "0" );
-	Cvar_Set( "ls_imgui_show_status", "0" );
-	Cvar_Set( "ls_imgui_gradient", "0" );
-	Cvar_Set( "ls_imgui_gradient_angle", "230" );
-	Cvar_Set( "ls_imgui_current_bg", "1" );
-	Cvar_Set( "ls_imgui_border_size", "0.500000" );
-	Cvar_Set( "ls_imgui_font", "1" );
-	Cvar_Set( "ls_imgui_show_prevseg", "1" );
-	Cvar_Set( "ls_imgui_show_ghostseg", "0" );
-	Cvar_Set( "ls_imgui_show_bestsegments", "0" );
-	Cvar_Set( "ls_imgui_row_size", "0.88" );
-	Cvar_Set( "ls_imgui_name_size", "0.92" );
-	Cvar_Set( "ls_imgui_bestdelta_size", "0.920000" );
-	Cvar_Set( "ls_imgui_delta_size", "0.88" );
-	Cvar_Set( "ls_imgui_time_size", "0.94" );
-	Cvar_Set( "ls_split_countdown_lead", "10" );
-	Cvar_Set( "ls_imgui_gold_rainbow", "1" );
-	Cvar_Set( "ls_imgui_col_name", "0.347525" );
-	Cvar_Set( "ls_imgui_col_best", "0.574001" );
-	Cvar_Set( "ls_imgui_col_delta", "0.763122" );
-	Cvar_Set( "ls_imgui_timer_size", "1.630000" );
-	Cvar_Set( "ls_imgui_stage_size", "1.450000" );
-	Cvar_Set( "ls_imgui_info_size", "0.650000" );
-	Cvar_Set( "ls_imgui_rgt_size", "1.250000" );
-	Cvar_Set( "ls_imgui_timer_gap", "2" );
-	Cvar_Set( "ls_imgui_info_gap", "24" );
-	Cvar_Set( "ls_imgui_timer_split", "0.400000" );
-	Cvar_Set( "ls_imgui_show_sob", "1" );
-	Cvar_Set( "ls_imgui_show_possible_save", "1" );
-	Cvar_Set( "ls_imgui_show_best_possible", "1" );
-	Cvar_Set( "ls_imgui_bold_title", "1" );
-	Cvar_Set( "ls_imgui_bold_attempts", "1" );
-	Cvar_Set( "ls_imgui_bold_status", "0" );
-	Cvar_Set( "ls_imgui_bold_header", "1" );
-	Cvar_Set( "ls_imgui_bold_timer", "1" );
-	Cvar_Set( "ls_imgui_bold_stage", "1" );
-	Cvar_Set( "ls_imgui_bold_info", "1" );
-	Cvar_Set( "ls_imgui_bold_splits", "0" );
-	Cvar_Set( "ls_imgui_bold_split_name", "0" );
-	Cvar_Set( "ls_imgui_bold_split_best", "1" );
-	Cvar_Set( "ls_imgui_bold_split_delta", "1" );
-	Cvar_Set( "ls_imgui_bold_split_time", "1" );
-	Cvar_Set( "ls_imgui_bold_prev", "0" );
-	Cvar_Set( "ls_imgui_bold_prev_label", "0" );
-	Cvar_Set( "ls_imgui_bold_prev_value", "1" );
-	Cvar_Set( "ls_imgui_bold_ghost", "0" );
-	Cvar_Set( "ls_imgui_bold_stats", "0" );
-	Cvar_Set( "ls_imgui_bold_stat_sob_label", "0" );
-	Cvar_Set( "ls_imgui_bold_stat_sob_value", "1" );
-	Cvar_Set( "ls_imgui_bold_stat_possible_label", "0" );
-	Cvar_Set( "ls_imgui_bold_stat_possible_value", "1" );
-	Cvar_Set( "ls_imgui_bold_stat_best_label", "0" );
-	Cvar_Set( "ls_imgui_bold_stat_best_value", "1" );
-	Cvar_Set( "ls_imgui_bold_rgt", "1" );
-	Cvar_Set( "ls_imgui_text_gradient", "0" );
-	Cvar_Set( "ls_imgui_text_gradient_angle", "0" );
-	Cvar_Set( "ls_clr_bg", "10 10 15 0.63" );
-	Cvar_Set( "ls_clr_bg2", "10 10 15 0.90" );
-	Cvar_Set( "ls_clr_border", "29 52 24 0.58" );
-	Cvar_Set( "ls_clr_sep", "22 36 18 0.34" );
-	Cvar_Set( "ls_clr_highlight", "13 28 12 0.27" );
-	Cvar_Set( "ls_clr_text", "214 224 210 0.92" );
-	Cvar_Set( "ls_clr_text_gradient2", "255 255 255 0.59" );
-	Cvar_Set( "ls_clr_timer", "224 246 214 1.00" );
-	Cvar_Set( "ls_clr_title", "90 210 58 1.00" );
-	Cvar_Set( "ls_clr_category", "132 158 120 0.88" );
-	Cvar_Set( "ls_clr_header_bg", "10 18 12 0.68" );
-	Cvar_Set( "ls_clr_column_label", "128 142 118 0.68" );
-	Cvar_Set( "ls_clr_current", "86 210 55 1.00" );
-	Cvar_Set( "ls_clr_completed", "120 130 118 0.62" );
-	Cvar_Set( "ls_clr_future", "124 124 124 1.00" );
+#include "speedrun_imgui/sr_imgui_livesplit_pages.inl"
+	Cvar_Set( "ls_clr_split_time_completed", "150 160 146 0.72" );
 	Cvar_Set( "ls_clr_ahead", "72 220 80 1.00" );
 	Cvar_Set( "ls_clr_behind", "220 72 72 1.00" );
 	Cvar_Set( "ls_clr_gold", "255 220 50 1.00" );
@@ -3242,11 +5030,13 @@ static void CL_ImGuiResetLiveSplitStyleDefaults( void ) {
 	Cvar_Set( "ls_clr_ghost_label", "128 142 118 0.68" );
 	Cvar_Set( "ls_clr_ghost_time", "178 190 172 0.84" );
 	Cvar_Set( "ls_clr_stat_label", "128 142 118 0.68" );
+	Cvar_Set( "ls_clr_stat_sob_label", "128 142 118 0.68" );
 	Cvar_Set( "ls_clr_stat_sob", "255 220 50 1.00" );
 	Cvar_Set( "ls_clr_stat_possible_label", "128 142 118 0.68" );
 	Cvar_Set( "ls_clr_stat_possible_save", "72 220 80 1.00" );
 	Cvar_Set( "ls_clr_stat_possible_zero", "112 118 112 0.62" );
 	Cvar_Set( "ls_clr_stat_possible_missing", "82 92 76 0.70" );
+	Cvar_Set( "ls_clr_stat_best_possible_label", "128 142 118 0.68" );
 	Cvar_Set( "ls_clr_stat_best_possible", "255 220 50 1.00" );
 	Cvar_Set( "ls_clr_rgt", "218 226 214 0.92" );
 	Cvar_Set( "ls_clr_empty", "112 118 112 0.48" );
@@ -3266,8 +5056,8 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	static const float completed[4] = { 0.45f, 0.75f, 0.32f, 1.00f };
 	static const float future[4] = { 0.45f, 0.50f, 0.43f, 0.82f };
 	static const float dim[4] = { 0.32f, 0.36f, 0.30f, 0.70f };
-	static const char *fontLabels[] = { "Segoe UI", "Consolas", "Arial", "Tahoma", "Verdana", "Trebuchet", "Calibri", "Courier", "Impact", "Times", "Georgia", "Lucida Console", "Segoe Bold", "Candara", "Corbel", "Calibri Bold", "Segoe Semibold", "Segoe Light", "Segoe Italic", "Arial Italic", "Arial Bold Italic", "Cambria", "Cambria Bold", "Constantia", "Constantia Bold", "Comic Sans", "Comic Sans Bold", "Gadugi", "Gadugi Bold", "Bahnschrift", "Palatino Italic", "Palatino Bold" };
-	static const int fontValues[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
+	static const char *fontLabels[] = { "Segoe UI", "Consolas", "Arial", "Tahoma", "Verdana", "Trebuchet", "Calibri", "Courier", "Impact", "Times", "Georgia", "Lucida Console", "Segoe Bold", "Candara", "Corbel", "Calibri Bold", "Segoe Semibold", "Segoe Light", "Segoe Italic", "Arial Italic", "Arial Bold Italic", "Cambria", "Cambria Bold", "Constantia", "Constantia Bold", "Comic Sans", "Comic Sans Bold", "Gadugi", "Gadugi Bold", "Bahnschrift", "Palatino Italic", "Palatino Bold", "Arial Black" };
+	static const int fontValues[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32 };
 	static const float statusLive[4] = { 0.35f, 0.75f, 0.20f, 1.00f };
 	static const float statusReady[4] = { 0.32f, 0.36f, 0.30f, 0.90f };
 	static const float statusPause[4] = { 1.00f, 0.75f, 0.25f, 1.00f };
@@ -3281,7 +5071,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	ImGui::TextDisabled( "small dark default preset" );
 	ImGui::Spacing();
 
-	ImGui::BeginChild( "ls_box_panel", ImVec2( 0, CL_ImGuiAutoBoxHeight( 17 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_panel", ImVec2( 0, CL_ImGuiAutoBoxHeight( 19 ) ), true, 0 );
 	ImGui::TextUnformatted( "Panel / background" );
 	CL_ImGuiBoolCvarName( "Show LiveSplit Panel", "ls_draw", "1" );
 	CL_ImGuiBoolCvarName( "Panel Border", "ls_imgui_show_border", "1" );
@@ -3291,6 +5081,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	CL_ImGuiSliderCvarName( "Width", "ls_w", "215", 80.0f, 400.0f, "%.0f" );
 	CL_ImGuiSliderCvarName( "Global Scale", "ls_scale", "0.550000", 0.5f, 2.5f, "%.2f" );
 	CL_ImGuiSliderCvarName( "Padding", "ls_imgui_padding", "5", 3.0f, 14.0f, "%.0f" );
+	CL_ImGuiSliderCvarName( "Component Gap", "ls_imgui_component_gap", "4", 0.0f, 12.0f, "%.0f" );
 	CL_ImGuiSliderCvarName( "Border Thickness", "ls_imgui_border_size", "0.500000", 0.5f, 4.0f, "%.1f" );
 	CL_ImGuiSliderCvarName( "Gradient Angle DEG", "ls_imgui_gradient_angle", "230", 0.0f, 360.0f, "%.0f" );
 	if ( ImGui::TreeNodeEx( "Colors##ls_panel", ImGuiTreeNodeFlags_DefaultOpen ) ) {
@@ -3301,7 +5092,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_text_gradient", ImVec2( 0, CL_ImGuiAutoBoxHeight( 6 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_text_gradient", ImVec2( 0, CL_ImGuiAutoBoxHeight( 6 ) ), true, 0 );
 	ImGui::TextUnformatted( "Text gradient" );
 	CL_ImGuiBoolCvarName( "Gradient on text", "ls_imgui_text_gradient", "0" );
 	CL_ImGuiSliderCvarName( "Text Gradient Angle DEG", "ls_imgui_text_gradient_angle", "0", 0.0f, 360.0f, "%.0f" );
@@ -3312,7 +5103,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	ImGui::TextDisabled( "Uses each component color as start and this color as end." );
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_title", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_title", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, 0 );
 	ImGui::TextUnformatted( "Title / category" );
 	CL_ImGuiBoolCvarName( "Title", "ls_imgui_show_title", "0" );
 	CL_ImGuiBoolCvarName( "Attempt Counter", "ls_showatt", "1" );
@@ -3326,7 +5117,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_status", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_status", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, 0 );
 	ImGui::TextUnformatted( "Status chip" );
 	CL_ImGuiBoolCvarName( "LIVE / READY / DONE", "ls_imgui_show_status", "0" );
 	CL_ImGuiBoolCvarName( "Bold status text", "ls_imgui_bold_status", "0" );
@@ -3340,7 +5131,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_columns", ImVec2( 0, CL_ImGuiAutoBoxHeight( 7 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_columns", ImVec2( 0, CL_ImGuiAutoBoxHeight( 7 ) ), true, 0 );
 	ImGui::TextUnformatted( "Column header row" );
 	CL_ImGuiBoolCvar( "Header columns", s_ls_showheaders );
 	CL_ImGuiBoolCvarName( "Separators", "ls_showseps", "1" );
@@ -3352,7 +5143,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_timer", ImVec2( 0, CL_ImGuiAutoBoxHeight( 27 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_timer", ImVec2( 0, CL_ImGuiAutoBoxHeight( 27 ) ), true, 0 );
 	ImGui::TextUnformatted( "Timer component: IGT + Stage + PB/BEST" );
 	CL_ImGuiBoolCvar( "IGT Main Timer", s_ls_showtimer );
 	CL_ImGuiBoolCvar( "Stage Timer", s_ls_showsegtimer );
@@ -3382,7 +5173,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_splits", ImVec2( 0, CL_ImGuiAutoBoxHeight( 28 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_splits", ImVec2( 0, CL_ImGuiAutoBoxHeight( 30 ) ), true, 0 );
 	ImGui::TextUnformatted( "Split rows" );
 	CL_ImGuiBoolCvarName( "PB Delta (+/-)", "ls_showdeltas", "1" );
 	CL_ImGuiBoolCvarName( "Best Delta (+/-)", "ls_showbestdeltas", "1" );
@@ -3406,6 +5197,9 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 		CL_ImGuiColorCvarName( "Completed split name", "ls_clr_completed", completed );
 		CL_ImGuiColorCvarName( "Current split name", "ls_clr_current", current );
 		CL_ImGuiColorCvarName( "Current row background", "ls_clr_highlight", current );
+		CL_ImGuiColorCvarName( "Time column - all", "ls_clr_split_time", text );
+		CL_ImGuiColorCvarName( "Time column - current", "ls_clr_split_time_current", current );
+		CL_ImGuiColorCvarName( "Time column - completed", "ls_clr_split_time_completed", completed );
 		CL_ImGuiColorCvarName( "Gold / best delta", "ls_clr_gold", gold );
 		CL_ImGuiColorCvarName( "Ahead delta", "ls_clr_ahead", ahead );
 		CL_ImGuiColorCvarName( "Behind delta", "ls_clr_behind", behind );
@@ -3413,21 +5207,7 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_prev", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
-	ImGui::TextUnformatted( "Previous segment" );
-	CL_ImGuiBoolCvarName( "Previous Segment", "ls_imgui_show_prevseg", "1" );
-	CL_ImGuiBoolCvarName( "Bold previous label", "ls_imgui_bold_prev_label", "0" );
-	CL_ImGuiBoolCvarName( "Bold previous value", "ls_imgui_bold_prev_value", "1" );
-	if ( ImGui::TreeNodeEx( "Colors##ls_prev", ImGuiTreeNodeFlags_DefaultOpen ) ) {
-		CL_ImGuiColorCvarName( "Previous label", "ls_clr_prev_label", mapname );
-		CL_ImGuiColorCvarName( "Previous ahead", "ls_clr_prev_ahead", ahead );
-		CL_ImGuiColorCvarName( "Previous behind", "ls_clr_prev_behind", behind );
-		CL_ImGuiColorCvarName( "Previous gold", "ls_clr_prev_gold", gold );
-		ImGui::TreePop();
-	}
-	ImGui::EndChild();
-
-	ImGui::BeginChild( "ls_box_ghost", ImVec2( 0, CL_ImGuiAutoBoxHeight( 6 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_ghost", ImVec2( 0, CL_ImGuiAutoBoxHeight( 6 ) ), true, 0 );
 	ImGui::TextUnformatted( "Ghost segment" );
 	CL_ImGuiBoolCvarName( "Ghost Segment", "ls_imgui_show_ghostseg", "0" );
 	CL_ImGuiBoolCvarName( "Bold ghost", "ls_imgui_bold_ghost", "0" );
@@ -3438,32 +5218,45 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_stats", ImVec2( 0, CL_ImGuiAutoBoxHeight( 5 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_stats", ImVec2( 0, CL_ImGuiAutoBoxHeight( 8 ) ), true, 0 );
 	ImGui::TextUnformatted( "Statistics: master" );
 	CL_ImGuiBoolCvar( "Statistics", s_ls_showstats );
+	CL_ImGuiBoolCvarName( "Previous Segment", "ls_imgui_show_prevseg", "1" );
 	CL_ImGuiBoolCvarName( "Bold all statistics", "ls_imgui_bold_stats", "0" );
+	CL_ImGuiBoolCvarName( "Bold all statistic values", "ls_imgui_bold_stats_values", "0" );
 	if ( ImGui::TreeNodeEx( "Colors##ls_stats", ImGuiTreeNodeFlags_DefaultOpen ) ) {
 		CL_ImGuiColorCvarName( "Statistics labels", "ls_clr_stat_label", mapname );
 		ImGui::TreePop();
 	}
 	ImGui::EndChild();
+	const bool statAllBold = Cvar_VariableIntegerValue( "ls_imgui_bold_stats" ) != 0;
+	const bool statValueAllBold = statAllBold || Cvar_VariableIntegerValue( "ls_imgui_bold_stats_values" ) != 0;
 
-	ImGui::BeginChild( "ls_box_stat_sob", ImVec2( 0, CL_ImGuiAutoBoxHeight( 7 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_stat_sob", ImVec2( 0, CL_ImGuiAutoBoxHeight( 8 ) ), true, 0 );
 	ImGui::TextUnformatted( "Statistic: Sum of best" );
 	CL_ImGuiBoolCvarName( "Show row", "ls_imgui_show_sob", "1" );
+	ImGui::BeginDisabled( statAllBold );
 	CL_ImGuiBoolCvarName( "Bold label", "ls_imgui_bold_stat_sob_label", "0" );
+	ImGui::EndDisabled();
+	ImGui::BeginDisabled( statValueAllBold );
 	CL_ImGuiBoolCvarName( "Bold value", "ls_imgui_bold_stat_sob_value", "1" );
+	ImGui::EndDisabled();
 	if ( ImGui::TreeNodeEx( "Colors##ls_stat_sob", ImGuiTreeNodeFlags_DefaultOpen ) ) {
+		CL_ImGuiColorCvarName( "Sum of best label", "ls_clr_stat_sob_label", mapname );
 		CL_ImGuiColorCvarName( "Sum of best value", "ls_clr_stat_sob", gold );
 		ImGui::TreePop();
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_stat_possible", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_stat_possible", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, 0 );
 	ImGui::TextUnformatted( "Statistic: Possible save" );
 	CL_ImGuiBoolCvarName( "Show row", "ls_imgui_show_possible_save", "1" );
+	ImGui::BeginDisabled( statAllBold );
 	CL_ImGuiBoolCvarName( "Bold label", "ls_imgui_bold_stat_possible_label", "0" );
+	ImGui::EndDisabled();
+	ImGui::BeginDisabled( statValueAllBold );
 	CL_ImGuiBoolCvarName( "Bold value", "ls_imgui_bold_stat_possible_value", "1" );
+	ImGui::EndDisabled();
 	if ( ImGui::TreeNodeEx( "Colors##ls_stat_possible", ImGuiTreeNodeFlags_DefaultOpen ) ) {
 		CL_ImGuiColorCvarName( "Possible save label", "ls_clr_stat_possible_label", mapname );
 		CL_ImGuiColorCvarName( "Possible save value", "ls_clr_stat_possible_save", ahead );
@@ -3473,18 +5266,42 @@ static void CL_ImGuiDrawLiveSplitElementStylesPage( void ) {
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_stat_best", ImVec2( 0, CL_ImGuiAutoBoxHeight( 7 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_stat_best", ImVec2( 0, CL_ImGuiAutoBoxHeight( 8 ) ), true, 0 );
 	ImGui::TextUnformatted( "Statistic: Best possible" );
 	CL_ImGuiBoolCvarName( "Show row", "ls_imgui_show_best_possible", "1" );
+	ImGui::BeginDisabled( statAllBold );
 	CL_ImGuiBoolCvarName( "Bold label", "ls_imgui_bold_stat_best_label", "0" );
+	ImGui::EndDisabled();
+	ImGui::BeginDisabled( statValueAllBold );
 	CL_ImGuiBoolCvarName( "Bold value", "ls_imgui_bold_stat_best_value", "1" );
+	ImGui::EndDisabled();
 	if ( ImGui::TreeNodeEx( "Colors##ls_stat_best", ImGuiTreeNodeFlags_DefaultOpen ) ) {
+		CL_ImGuiColorCvarName( "Best possible label", "ls_clr_stat_best_possible_label", mapname );
 		CL_ImGuiColorCvarName( "Best possible value", "ls_clr_stat_best_possible", text );
 		ImGui::TreePop();
 	}
 	ImGui::EndChild();
 
-	ImGui::BeginChild( "ls_box_extra", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "ls_box_prev", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, 0 );
+	ImGui::TextUnformatted( "Statistic: Previous segment" );
+	ImGui::TextDisabled( "Shown with Statistics; this box keeps separate styling." );
+	CL_ImGuiBoolCvarName( "Rainbow when gold", "ls_imgui_prev_gold_rainbow", "0" );
+	ImGui::BeginDisabled( statAllBold );
+	CL_ImGuiBoolCvarName( "Bold previous label", "ls_imgui_bold_prev_label", "0" );
+	ImGui::EndDisabled();
+	ImGui::BeginDisabled( statValueAllBold );
+	CL_ImGuiBoolCvarName( "Bold previous value", "ls_imgui_bold_prev_value", "1" );
+	ImGui::EndDisabled();
+	if ( ImGui::TreeNodeEx( "Colors##ls_prev", ImGuiTreeNodeFlags_DefaultOpen ) ) {
+		CL_ImGuiColorCvarName( "Previous label", "ls_clr_prev_label", mapname );
+		CL_ImGuiColorCvarName( "Previous ahead", "ls_clr_prev_ahead", ahead );
+		CL_ImGuiColorCvarName( "Previous behind", "ls_clr_prev_behind", behind );
+		CL_ImGuiColorCvarName( "Previous gold", "ls_clr_prev_gold", gold );
+		ImGui::TreePop();
+	}
+	ImGui::EndChild();
+
+	ImGui::BeginChild( "ls_box_extra", ImVec2( 0, CL_ImGuiAutoBoxHeight( 10 ) ), true, 0 );
 	ImGui::TextUnformatted( "RGT / best segments" );
 	CL_ImGuiBoolCvarName( "RGT", "ls_showrgt", "1" );
 	CL_ImGuiBoolCvarName( "Best Segments", "ls_imgui_show_bestsegments", "0" );
@@ -3525,6 +5342,14 @@ static void CL_ImGuiDrawDisplayPage( void ) {
 	ImGui::EndChild();
 }
 
+#endif
+
+static bool CL_ImGuiRaceSettingsLocked( void ) {
+	return Cvar_VariableIntegerValue( "ls_race_active" ) != 0;
+}
+
+#include "speedrun_imgui/sr_imgui_livesplit_pages.inl"
+
 static void CL_ImGuiDrawHudPage( void ) {
 	static const char *mouseLabels[] = { "Off", "Clicks Only", "Clicks + Direction" };
 	static const int mouseValues[] = { 0, 1, 2 };
@@ -3552,13 +5377,19 @@ static void CL_ImGuiDrawHudPage( void ) {
 	bool usesExtraKeys = currentLayout != 2 && currentLayout != 3 && currentLayout != 7;
 	bool usesMouseDisplay = currentLayout != 3 && currentLayout != 7;
 
-	CL_ImGuiSectionHeader( "Keystrokes", "Defaults use a fixed HUD position instead of auto-centering." );
-	ImGui::BeginChild( "hud_keys_card", ImVec2( 0, 452 ), true );
+	CL_ImGuiSectionHeader( "Keystrokes", "Position, shape and motion feedback for the keyboard/mouse overlay." );
+	CL_ImGuiBeginAutoBox( "hud_keys_behavior" );
+	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Behavior" );
 	CL_ImGuiBoolCvarName( "Show Keystrokes", "cg_drawKeys", "1" );
 	CL_ImGuiBoolCvarName( "Only During Gameplay", "ks_ingame_only", "1" );
 	Cvar_Set( "ks_imgui", "1" );
 	CL_ImGuiComboCvarName( "Keys Layout", "ks_layout", "0", keysLayoutLabels, keysLayoutValues, IM_ARRAYSIZE( keysLayoutValues ) );
 	CL_ImGuiComboCvarName( "Press Effect", "ks_effect", "1", keysEffectLabels, keysEffectValues, IM_ARRAYSIZE( keysEffectValues ) );
+	CL_ImGuiSliderCvarName( "Keys Opacity", "ks_opacity", "1.0", 0.0f, 1.0f, "%.2f" );
+	ImGui::EndChild();
+
+	CL_ImGuiBeginAutoBox( "hud_keys_geometry" );
+	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Layout and sizing" );
 	CL_ImGuiSliderCvarName( "Keys X Position", "ks_x", "297", 0.0f, 600.0f, "%.0f" );
 	CL_ImGuiSliderCvarName( "Keys Y Position", "ks_y", "375", 0.0f, 460.0f, "%.0f" );
 	CL_ImGuiSliderCvarName( "Keys Scale", "ks_scale", "0.750000", 0.3f, 4.0f, "%.2f" );
@@ -3572,9 +5403,10 @@ static void CL_ImGuiDrawHudPage( void ) {
 	CL_ImGuiIntSliderCvarName( "Mouse Grid Squares", "ks_mouse_grid_cells", "5", 3, 12 );
 	CL_ImGuiBoolCvarName( "Mouse Total CM Counter", "ks_mouse_grid_cm", "1" );
 	CL_ImGuiBoolCvarName( "Mouse Run CM Counter", "ks_mouse_grid_run_cm", "1" );
-	CL_ImGuiSliderCvarName( "Keys Opacity", "ks_opacity", "1.0", 0.0f, 1.0f, "%.2f" );
 	if ( usesMouseDisplay ) {
 		CL_ImGuiComboCvarName( "Mouse Display", "ks_mouse", "2", mouseLabels, mouseValues, IM_ARRAYSIZE( mouseValues ) );
+	} else {
+		ImGui::TextDisabled( "Mouse display is built into the selected grid layout." );
 	}
 	if ( currentLayout == 5 || currentLayout == 6 || currentLayout == 7 ) {
 		CL_ImGuiComboCvarName( "Active Snap Side", "ks_active_anchor", "0", activeAnchorLabels, activeAnchorValues, IM_ARRAYSIZE( activeAnchorValues ) );
@@ -3587,14 +5419,16 @@ static void CL_ImGuiDrawHudPage( void ) {
 		CL_ImGuiSliderCvarName( "Grid Buttons Y", "ks_grid_keys_y", "-15", -110.0f, 110.0f, "%.0f" );
 		CL_ImGuiSliderCvarName( "Grid Buttons Font", "ks_grid_keys_font_scale", "0.72", 0.30f, 1.20f, "%.2f" );
 	}
+	ImGui::EndChild();
+
 	if ( usesExtraKeys ) {
-		ImGui::Columns( 2, NULL, false );
+		CL_ImGuiBeginAutoBox( "hud_keys_extra" );
+		ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Optional keys" );
 		CL_ImGuiBoolCvarName( "Show Use", "ks_show_use", "0" );
-		ImGui::NextColumn();
 		CL_ImGuiBoolCvarName( "Show Reload", "ks_show_reload", "0" );
-		ImGui::Columns( 1 );
+		ImGui::EndChild();
 	}
-	if ( ImGui::TreeNodeEx( "Keystroke Colors", ImGuiTreeNodeFlags_DefaultOpen ) ) {
+	if ( ImGui::CollapsingHeader( "Keystroke Colors" ) ) {
 		CL_ImGuiColorCvarName( "Idle Background", "ks_clr_bg", ksBg );
 		CL_ImGuiColorCvarName( "Active Background", "ks_clr_active", ksActive );
 		CL_ImGuiColorCvarName( "Idle Border", "ks_clr_border", ksBorder );
@@ -3605,26 +5439,21 @@ static void CL_ImGuiDrawHudPage( void ) {
 		CL_ImGuiColorCvarName( "Mouse center cross", "ks_clr_grid_cross", ksGridCross );
 		CL_ImGuiColorCvarName( "Mouse trail", "ks_clr_grid_trail", ksGridTrail );
 		CL_ImGuiColorCvarName( "Mouse CM counter", "ks_clr_grid_cm", ksGridCm );
-		ImGui::TreePop();
 	}
-	ImGui::EndChild();
 
 	CL_ImGuiSectionHeader( "HUD Elements", NULL );
-	ImGui::BeginChild( "hud_elements_card", ImVec2( 0, 165 ), true );
-	ImGui::Columns( 2, NULL, false );
+	CL_ImGuiBeginAutoBox( "hud_elements_card" );
 	CL_ImGuiBoolCvarName( "Show LiveSplit", "ls_draw", "1" );
 	CL_ImGuiBoolCvarName( "Speedometer", "cg_drawVelocity", "1" );
 	CL_ImGuiBoolCvarName( "Position HUD", "cg_drawPos", "0" );
-	ImGui::NextColumn();
 	CL_ImGuiBoolCvarName( "Jump Statistics", "cg_drawJumpStats", "0" );
 	CL_ImGuiBoolCvarName( "Strafe Guide", "cg_strafeGuide", "0" );
 	CL_ImGuiBoolCvarName( "Show FPS", "cg_drawfps", "0" );
 	CL_ImGuiBoolCvarName( "Show Timer", "cg_drawTimer", "0" );
-	ImGui::Columns( 1 );
 	ImGui::EndChild();
 
 	CL_ImGuiSectionHeader( "Standalone IGT Timer", NULL );
-	ImGui::BeginChild( "hud_igt_card", ImVec2( 0, 190 ), true );
+	CL_ImGuiBeginAutoBox( "hud_igt_card" );
 	CL_ImGuiBoolCvarName( "Show IGT Timer", "ls_igttimer", "0" );
 	CL_ImGuiComboCvarName( "IGT Align", "ls_igttimer_align", "2", alignLabels, alignValues, IM_ARRAYSIZE( alignValues ) );
 	CL_ImGuiSliderCvarName( "IGT X Position", "ls_igttimer_x", "638", 0.0f, 640.0f, "%.0f" );
@@ -3634,10 +5463,12 @@ static void CL_ImGuiDrawHudPage( void ) {
 	ImGui::EndChild();
 }
 
+#if 0
 static void CL_ImGuiDrawStylePage( void ) {
 	CL_ImGuiDrawLiveSplitElementStylesPage();
 	CL_ImGuiDrawDisplayPage();
 }
+#endif
 
 static void CL_ImGuiDrawSpeedoPage( void ) {
 	static const char *modeLabels[] = { "3D (Full)", "Horizontal (XY)", "Vertical (Z)" };
@@ -3650,7 +5481,7 @@ static void CL_ImGuiDrawSpeedoPage( void ) {
 	static const int alignValues[] = { 0, 1, 2 };
 
 	CL_ImGuiSectionHeader( "Speedometer", "Text align decides whether X is the left, center or right anchor." );
-	ImGui::BeginChild( "speedo_card", ImVec2( 0, 322 ), true );
+	CL_ImGuiBeginAutoBox( "speedo_card" );
 	CL_ImGuiComboCvarName( "Mode", "cg_velocity_mode", "0", modeLabels, modeValues, IM_ARRAYSIZE( modeValues ) );
 	CL_ImGuiComboCvarName( "Text Size", "cg_velocity_size", "2", sizeLabels, sizeValues, IM_ARRAYSIZE( sizeValues ) );
 	CL_ImGuiComboCvarName( "Position", "cg_velocity_type", "0", posLabels, posValues, IM_ARRAYSIZE( posValues ) );
@@ -3664,7 +5495,7 @@ static void CL_ImGuiDrawSpeedoPage( void ) {
 	ImGui::EndChild();
 
 	CL_ImGuiSectionHeader( "FPS / Timer Placement", NULL );
-	ImGui::BeginChild( "fps_card", ImVec2( 0, 132 ), true );
+	CL_ImGuiBeginAutoBox( "fps_card" );
 	CL_ImGuiSliderCvarName( "Scale", "cg_fpsScale", "1.0", 0.25f, 4.0f, "%.2f" );
 	CL_ImGuiSliderCvarName( "X Position", "cg_fpsX", "500", 0.0f, 640.0f, "%.0f" );
 	CL_ImGuiSliderCvarName( "Y Position", "cg_fpsY", "0", 0.0f, 440.0f, "%.0f" );
@@ -3679,11 +5510,17 @@ static void CL_ImGuiDrawOverlayPage( void ) {
 static void CL_ImGuiDrawMovementPage( void ) {
 	cvar_t *bhMovement = CL_ImGuiCvar( "bh_movement", "0" );
 	bool hlBhopEnabled = bhMovement && bhMovement->integer != 0;
+	bool raceLocked = CL_ImGuiRaceSettingsLocked();
 	CL_ImGuiSectionHeader( "Bunny Hop / Physics", NULL );
-	ImGui::BeginChild( "movement_card", ImVec2( 0, 130 ), true );
+	CL_ImGuiBeginAutoBox( "movement_card" );
+	if ( raceLocked ) {
+		ImGui::TextDisabled( "Race host settings control movement until you leave the lobby." );
+	}
+	ImGui::BeginDisabled( raceLocked );
 	CL_ImGuiBoolCvar( "HL1 Bhop Physics", bhMovement, "No air speed cap + bunny hop acceleration." );
 	ImGui::BeginDisabled( !hlBhopEnabled );
 	CL_ImGuiBoolCvarName( "Auto Jump (hold space)", "bh_autojump", "0", "Only intended for HL movement categories." );
+	ImGui::EndDisabled();
 	ImGui::EndDisabled();
 	if ( !hlBhopEnabled ) {
 		ImGui::TextDisabled( "Auto Jump is locked until HL1 Bhop Physics is enabled." );
@@ -3701,25 +5538,46 @@ static void CL_ImGuiDrawViewPage( void ) {
 	static const char *weaponColorLabels[] = { "Off", "Tint", "Rainbow", "Flat Color", "Flat Rainbow", "X-Ray", "X-Ray Rainbow", "Pulse" };
 	static const int weaponColorValues[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
 	static const float weaponColorFallback[4] = { 0.10f, 0.75f, 1.00f, 1.00f };
+	int weaponMode = Cvar_VariableIntegerValue( "cg_weapon_color_mode" );
 
 	CL_ImGuiSectionHeader( "Field of View", NULL );
-	ImGui::BeginChild( "view_fov_card", ImVec2( 0, 138 ), true );
+	CL_ImGuiBeginAutoBox( "view_fov_card" );
 	CL_ImGuiSliderCvarName( "FOV Front-Back", "cg_fov", "90", 60.0f, 160.0f, "%.0f" );
 	CL_ImGuiSliderCvarName( "FOV Down-Up", "cg_fov_down", "90", 60.0f, 160.0f, "%.0f" );
 	CL_ImGuiSliderCvarName( "FOV Left-Right", "cg_fov_lr", "90", 0.0f, 160.0f, "%.0f" );
 	ImGui::EndChild();
 
+	CL_ImGuiSectionHeader( "Viewport Safe Area", NULL );
+	CL_ImGuiBeginAutoBox( "view_safe_area_card" );
+	CL_ImGuiBoolCvarName( "Black Sidebars", "cg_blackbars", "0" );
+	CL_ImGuiIntInputCvarName( "Left Bar px", "cg_blackbarLeft", "0", 0, 4096 );
+	CL_ImGuiIntInputCvarName( "Right Bar px", "cg_blackbarRight", "0", 0, 4096 );
+	{
+		static const float sidebarColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+		CL_ImGuiColorCvarName( "Sidebar Color", "cg_blackbarColor", sidebarColor );
+	}
+	ImGui::TextDisabled( "Example: 1400 window, 1000 game -> 100 left / 300 right." );
+	ImGui::EndChild();
+
 	CL_ImGuiSectionHeader( "Framerate / Weapon", NULL );
-	ImGui::BeginChild( "view_misc_card", ImVec2( 0, 280 ), true );
+	CL_ImGuiBeginAutoBox( "view_misc_card" );
 	CL_ImGuiComboCvarName( "Max FPS", "com_maxfps", "125", fpsLabels, fpsValues, IM_ARRAYSIZE( fpsValues ) );
 	CL_ImGuiComboCvarName( "Weapon Hand", "cg_drawGun", "1", gunLabels, gunValues, IM_ARRAYSIZE( gunValues ) );
 	ImGui::Separator();
 	CL_ImGuiComboCvarName( "Weapon Render", "cg_weapon_color_mode", "0", weaponColorLabels, weaponColorValues, IM_ARRAYSIZE( weaponColorValues ) );
-	CL_ImGuiColorCvarName( "Tint Color", "cg_weapon_color", weaponColorFallback );
-	CL_ImGuiSliderCvarName( "Tint Opacity", "cg_weapon_color_opacity", "0.35", 0.0f, 1.0f, "%.2f" );
-	CL_ImGuiSliderCvarName( "X-Ray Strength", "cg_weapon_xray_strength", "0.65", 0.0f, 1.0f, "%.2f" );
-	CL_ImGuiSliderCvarName( "Rainbow Speed", "cg_weapon_rainbow_speed", "1.0", 0.1f, 5.0f, "%.1f" );
-	ImGui::TextDisabled( "Tint keeps textures, Flat removes textures, X-Ray adds a stronger colored shell." );
+	if ( weaponMode != 0 ) {
+		CL_ImGuiColorCvarName( "Tint Color", "cg_weapon_color", weaponColorFallback );
+	}
+	if ( weaponMode == 1 || weaponMode == 3 || weaponMode == 5 || weaponMode == 7 ) {
+		CL_ImGuiSliderCvarName( "Tint Opacity", "cg_weapon_color_opacity", "0.35", 0.0f, 1.0f, "%.2f" );
+	}
+	if ( weaponMode == 5 || weaponMode == 6 ) {
+		CL_ImGuiSliderCvarName( "X-Ray Strength", "cg_weapon_xray_strength", "0.65", 0.0f, 1.0f, "%.2f" );
+	}
+	if ( weaponMode == 2 || weaponMode == 4 || weaponMode == 6 || weaponMode == 7 ) {
+		CL_ImGuiSliderCvarName( "Rainbow Speed", "cg_weapon_rainbow_speed", "1.0", 0.1f, 5.0f, "%.1f" );
+	}
+	ImGui::TextDisabled( weaponMode == 0 ? "Weapon recolor is off." : "Only controls used by the selected render mode are shown." );
 	ImGui::EndChild();
 }
 
@@ -3733,11 +5591,7 @@ static void CL_ImGuiDrawGamePage( void ) {
 
 static void CL_ImGuiDrawBindsPage( void ) {
 	CL_ImGuiSectionHeader( "Bind Editor", "Click Bind, press a key or mouse button, Escape cancels. Existing bindings are preserved until replaced." );
-	ImGui::BeginChild( "binds_card", ImVec2( 0, 0 ), true );
-	ImGui::BeginChild( "binds_intro", ImVec2( 0, 74 ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
-	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Controls" );
 	ImGui::TextWrapped( "Bind the commands you use during runs, routing and demo review. The current key is shown on the right." );
-	ImGui::EndChild();
 	ImGui::Spacing();
 	CL_ImGuiDrawBindConflicts();
 	ImGui::Spacing();
@@ -3747,17 +5601,13 @@ static void CL_ImGuiDrawBindsPage( void ) {
 		if ( i == 20 ) { ImGui::Separator(); ImGui::TextDisabled( "Practice controls" ); }
 		CL_ImGuiBindingRow( s_bindEntries[i].label, s_bindEntries[i].command );
 	}
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawHelpPage( void ) {
 	CL_ImGuiSectionHeader( "Speedrun Help", "Short operational reference." );
-	ImGui::BeginChild( "help_card", ImVec2( 0, 0 ), true );
-	ImGui::BeginChild( "help_intro", ImVec2( 0, 86 ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
 	ImGui::TextColored( ImVec4( 0.70f, 0.95f, 0.45f, 1.0f ), "Quick reference" );
 	ImGui::TextWrapped( "This page collects the commands that matter while routing, practicing, recording and reviewing speedruns." );
 	ImGui::TextDisabled( "Use Controls to bind the most common actions." );
-	ImGui::EndChild();
 	ImGui::Spacing();
 	if ( ImGui::CollapsingHeader( "Getting started", ImGuiTreeNodeFlags_DefaultOpen ) ) {
 		ImGui::BulletText( "Open or close the panel with speedrun_gui." );
@@ -3804,7 +5654,6 @@ static void CL_ImGuiDrawHelpPage( void ) {
 		ImGui::BulletText( "vid_restart - apply font/renderer changes when required" );
 		ImGui::BulletText( "record <name> / stoprecord - manual demo recording" );
 	}
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawDemosPage( void ) {
@@ -3814,15 +5663,14 @@ static void CL_ImGuiDrawDemosPage( void ) {
 	static const int filterValues[] = { -1, SRGUI_DEMOCAT_FULLGAME, SRGUI_DEMOCAT_MISSION, SRGUI_DEMOCAT_IL, SRGUI_DEMOCAT_OTHER };
 
 	CL_ImGuiSectionHeader( "Demo Browser", "Lists demos from demos/*.dm_49 and uses the normal demo command to play them." );
-	ImGui::BeginChild( "demos_card", ImVec2( 0, 0 ), true );
 	if ( ImGui::Button( "Refresh Demos", ImVec2( 130, 0 ) ) || s_demoCount == 0 ) {
 		CL_ImGuiLoadDemos();
 	}
-	ImGui::SameLine();
+	CL_ImGuiSameLineIfFits( 138.0f );
 	if ( ImGui::Button( "Play Selected", ImVec2( 130, 0 ) ) ) {
 		CL_ImGuiPlaySelectedDemo();
 	}
-	ImGui::SameLine();
+	CL_ImGuiSameLineIfFits( 158.0f );
 	if ( ImGui::Button( "Open demos folder", ImVec2( 150, 0 ) ) ) {
 		Cbuf_AddText( "dir demos\n" );
 	}
@@ -3837,7 +5685,7 @@ static void CL_ImGuiDrawDemosPage( void ) {
 		}
 		ImGui::EndCombo();
 	}
-	ImGui::SameLine();
+	CL_ImGuiSameLineIfFits( 218.0f );
 	ImGui::SetNextItemWidth( 210.0f );
 	ImGui::InputTextWithHint( "Search", "demo name...", s_demoSearch, sizeof( s_demoSearch ) );
 	ImGui::BeginChild( "demo_list", ImVec2( 0, 178 ), true );
@@ -3880,12 +5728,11 @@ static void CL_ImGuiDrawDemosPage( void ) {
 	CL_ImGuiCommandButton( "Rewind", "demo_skipbackward", "jump backward" );
 	CL_ImGuiCommandButton( "Freecam", "demo_freecam", "toggle free camera" );
 	CL_ImGuiCommandButton( "Toggle HUD", "demo_togglehud", "hide/show HUD" );
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawGhostPage( void ) {
 	CL_ImGuiSectionHeader( "Ghost Replay", "In-game ghost preview for saved best split recordings." );
-	ImGui::BeginChild( "ghost_card", ImVec2( 0, 116 ), true );
+	CL_ImGuiBeginAutoBox( "ghost_card" );
 	CL_ImGuiBoolCvarName( "Show Ghost", "ls_ghost", "0" );
 	CL_ImGuiIntSliderCvarName( "Opacity", "ls_ghost_opacity", "60", 5, 255 );
 	ImGui::TextWrapped( "Ghost displays your best split as a translucent model and requires a saved ghost recording for the current map." );
@@ -3894,7 +5741,7 @@ static void CL_ImGuiDrawGhostPage( void ) {
 
 static void CL_ImGuiDrawLayoutToolsPage( void ) {
 	CL_ImGuiSectionHeader( "Layout Grid", "Enable while the game is paused behind this panel to align HUD elements." );
-	ImGui::BeginChild( "grid_card", ImVec2( 0, 286 ), true );
+	CL_ImGuiBeginAutoBox( "grid_card" );
 	CL_ImGuiBoolCvarName( "Show Grid", "ui_speedrun_grid", "0" );
 	CL_ImGuiBoolCvarName( "HUD Edit Mode", "ui_speedrun_layout_edit", "0", "hover boxes and drag HUD elements" );
 	CL_ImGuiBoolCvarName( "Show Labels", "ui_speedrun_grid_labels", "1" );
@@ -3916,13 +5763,12 @@ static void CL_ImGuiDrawSplitNamesPage( void ) {
 	int i;
 
 	CL_ImGuiSectionHeader( "Custom Split Names", "Edit all map names in one table. Empty field = default name." );
-	ImGui::BeginChild( "split_names_card", ImVec2( 0, 316 ), true );
 	ImGui::PushStyleColor( ImGuiCol_TableHeaderBg, ImVec4( 0.16f, 0.27f, 0.12f, 0.95f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableRowBg, ImVec4( 0.03f, 0.05f, 0.035f, 0.55f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableRowBgAlt, ImVec4( 0.07f, 0.11f, 0.06f, 0.68f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableBorderStrong, ImVec4( 0.22f, 0.38f, 0.16f, 0.90f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableBorderLight, ImVec4( 0.14f, 0.24f, 0.11f, 0.72f ) );
-	if ( ImGui::BeginTable( "split_names_table", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2( 0, 260 ) ) ) {
+	if ( ImGui::BeginTable( "split_names_table", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2( 0, 300 ) ) ) {
 		ImGui::TableSetupColumn( "Map", ImGuiTableColumnFlags_WidthFixed, 78.0f );
 		ImGui::TableSetupColumn( "Default", ImGuiTableColumnFlags_WidthFixed, 160.0f );
 		ImGui::TableSetupColumn( "Custom", ImGuiTableColumnFlags_WidthStretch );
@@ -3956,12 +5802,481 @@ static void CL_ImGuiDrawSplitNamesPage( void ) {
 	}
 	ImGui::PopStyleColor( 5 );
 	ImGui::TextWrapped( "Names are archived cvars, so they stay in your config and do not modify .lss files." );
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawToolsPage( void ) {
 	CL_ImGuiDrawLayoutToolsPage();
 	CL_ImGuiDrawSplitNamesPage();
+}
+typedef struct zoneGuiRow_s {
+	int index;
+	int route;
+	int order;
+	int bestMsec;
+	int bestTotalMsec;
+	int builtin;
+	char type[32];
+	char name[64];
+} zoneGuiRow_t;
+static bool CL_ImGuiParseZoneRow( const char *text, zoneGuiRow_t *row ) {
+	if ( !text || !text[0] || !row ) {
+		return false;
+	}
+	row->index = -1;
+	row->route = 0;
+	row->order = 0;
+	row->bestMsec = 0;
+	row->bestTotalMsec = 0;
+	row->builtin = 0;
+	row->type[0] = '\0';
+	row->name[0] = '\0';
+	return sscanf( text, "%d|%d|%d|%31[^|]|%63[^|]|%d|%d|%d", &row->index, &row->route, &row->order, row->type, row->name, &row->bestMsec, &row->bestTotalMsec, &row->builtin ) >= 7;
+}
+static void CL_ImGuiFormatZoneMsec( int msec, char *out, size_t outSize ) {
+	int minutes;
+	int seconds;
+	int millis;
+	if ( !out || outSize <= 0 ) {
+		return;
+	}
+	if ( msec <= 0 ) {
+		Q_strncpyz( out, "-", (int)outSize );
+		return;
+	}
+	minutes = msec / 60000;
+	seconds = ( msec / 1000 ) % 60;
+	millis = msec % 1000;
+	if ( !Cvar_VariableIntegerValue( "sp_timer_decimals" ) ) {
+		if ( minutes > 0 ) {
+			Com_sprintf( out, (int)outSize, "%d:%02d", minutes, seconds );
+		} else {
+			Com_sprintf( out, (int)outSize, "%d", seconds );
+		}
+		return;
+	}
+	if ( minutes > 0 ) {
+		Com_sprintf( out, (int)outSize, "%d:%02d.%03d", minutes, seconds, millis );
+	} else {
+		Com_sprintf( out, (int)outSize, "%d.%03d", seconds, millis );
+	}
+}
+static void CL_ImGuiSanitizeZoneToken( char *text ) {
+	int i;
+
+	if ( !text ) {
+		return;
+	}
+	for ( i = 0; text[i]; i++ ) {
+		char c = text[i];
+		if ( ( c >= 'a' && c <= 'z' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || c == '_' || c == '-' ) {
+			continue;
+		}
+		text[i] = '_';
+	}
+}
+static void CL_ImGuiDrawZoneTableRow( const zoneGuiRow_t *row, int selected, bool routeButton ) {
+	char label[96];
+	char cmd[96];
+	char best[32];
+	char bestTotal[32];
+	ImVec4 typeColor;
+	if ( !row ) {
+		return;
+	}
+	typeColor = ImVec4( 0.58f, 0.92f, 0.34f, 1.0f );
+	if ( !Q_stricmp( row->type, "checkpoint" ) ) {
+		typeColor = ImVec4( 0.55f, 0.78f, 0.96f, 1.0f );
+	} else if ( !Q_stricmp( row->type, "finish" ) ) {
+		typeColor = ImVec4( 0.95f, 0.74f, 0.28f, 1.0f );
+	} else if ( !Q_stricmp( row->type, "race" ) ) {
+		typeColor = ImVec4( 1.0f, 0.84f, 0.25f, 1.0f );
+	}
+	CL_ImGuiFormatZoneMsec( row->bestMsec, best, sizeof( best ) );
+	CL_ImGuiFormatZoneMsec( row->bestTotalMsec, bestTotal, sizeof( bestTotal ) );
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex( 0 );
+	Com_sprintf( label, sizeof( label ), "%d##zone_select_%d", row->index, row->index );
+	if ( ImGui::Selectable( label, selected == row->index, ImGuiSelectableFlags_SpanAllColumns ) ) {
+		Com_sprintf( cmd, sizeof( cmd ), "sp_zone_select %d\n", row->index );
+		Cbuf_AddText( cmd );
+	}
+	ImGui::TableSetColumnIndex( 1 ); ImGui::Text( "%d", row->route );
+	ImGui::TableSetColumnIndex( 2 ); ImGui::Text( "%d", row->order );
+	ImGui::TableSetColumnIndex( 3 ); ImGui::TextColored( typeColor, "%s", row->type );
+	ImGui::TableSetColumnIndex( 4 );
+	if ( row->builtin ) {
+		ImGui::Text( "%s *", row->name[0] ? row->name : "-" );
+	} else {
+		ImGui::TextUnformatted( row->name[0] ? row->name : "-" );
+	}
+	ImGui::TableSetColumnIndex( 5 ); ImGui::TextUnformatted( best );
+	ImGui::TableSetColumnIndex( 6 ); ImGui::TextUnformatted( bestTotal );
+	ImGui::TableSetColumnIndex( 7 );
+	if ( routeButton && row->route > 0 && ImGui::SmallButton( va( "Route##zone_route_%d", row->index ) ) ) {
+		Com_sprintf( cmd, sizeof( cmd ), "sp_zone_select %d\nsp_zone_route\n", row->index );
+		Cbuf_AddText( cmd );
+	}
+}
+
+static bool CL_ImGuiZoneRaceDebugEnabled( void ) {
+	return Cvar_VariableIntegerValue( "sp_zone_race_debug" ) != 0;
+}
+
+static void CL_ImGuiPushZoneTableStyle( void ) {
+	ImGui::PushStyleVar( ImGuiStyleVar_CellPadding, ImVec2( 7.0f, 5.0f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableHeaderBg, ImVec4( 0.16f, 0.27f, 0.12f, 0.95f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableRowBg, ImVec4( 0.03f, 0.05f, 0.035f, 0.55f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableRowBgAlt, ImVec4( 0.07f, 0.11f, 0.06f, 0.68f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableBorderStrong, ImVec4( 0.22f, 0.38f, 0.16f, 0.90f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableBorderLight, ImVec4( 0.14f, 0.24f, 0.11f, 0.72f ) );
+}
+
+static void CL_ImGuiPopZoneTableStyle( void ) {
+	ImGui::PopStyleColor( 5 );
+	ImGui::PopStyleVar();
+}
+
+static void CL_ImGuiDrawZonesPage( void ) {
+	static const float zoneStartColor[4] = { 82.0f / 255.0f, 1.0f, 112.0f / 255.0f, 1.0f };
+	static const float zoneColor[4] = { 82.0f / 255.0f, 184.0f / 255.0f, 1.0f, 1.0f };
+	static const float zoneFinishColor[4] = { 1.0f, 108.0f / 255.0f, 86.0f / 255.0f, 1.0f };
+	static const float zoneRaceColor[4] = { 1.0f, 210.0f / 255.0f, 64.0f / 255.0f, 1.0f };
+	char status[256];
+	char selectedName[64];
+	char selectedType[32];
+	char selectedMins[96];
+	char selectedMaxs[96];
+	char selectedAngles[96];
+	char filePath[128];
+	char runTime[64];
+	char recordTime[64];
+	char lastDelta[32];
+	char lastTotalDelta[32];
+	char progressText[32];
+	char activeStartName[64];
+	char routeName[64];
+	char selectedBest[32];
+	char selectedBestTotal[32];
+	char routeNameCmd[128];
+	char rowCvar[32];
+	char rowText[160];
+	int zoneCount;
+	int selected;
+	int activeRoute;
+	int activeStart;
+	int selectedBuiltin;
+	int selectedRoute;
+	int selectedOrder;
+	int viewRoute;
+	int rowCount;
+	int routeRowCount;
+	bool raceDebug;
+	bool lastDeltaPb;
+	bool lastTotalDeltaPb;
+	int i;
+	zoneGuiRow_t row;
+	static char routeNameEdit[64] = "";
+	static int routeNameEditRoute = -1;
+	static const float ztBg[4] = { 0.02f, 0.03f, 0.03f, 0.86f };
+	static const float ztBg2[4] = { 0.06f, 0.10f, 0.07f, 0.78f };
+	static const float ztBorder[4] = { 0.41f, 0.67f, 0.28f, 0.46f };
+	static const float ztTime[4] = { 0.73f, 0.97f, 0.56f, 1.00f };
+	static const float ztMuted[4] = { 0.57f, 0.64f, 0.53f, 0.92f };
+	static const float ztAhead[4] = { 0.42f, 1.00f, 0.42f, 1.00f };
+	static const float ztBehind[4] = { 1.00f, 0.36f, 0.28f, 1.00f };
+	static const float ztGold[4] = { 1.00f, 0.86f, 0.18f, 1.00f };
+	static const float ztNeutral[4] = { 0.92f, 0.74f, 0.24f, 1.00f };
+
+	Cvar_VariableStringBuffer( "sp_zone_status_text", status, sizeof( status ) );
+	Cvar_VariableStringBuffer( "sp_zone_selected_name", selectedName, sizeof( selectedName ) );
+	Cvar_VariableStringBuffer( "sp_zone_selected_type", selectedType, sizeof( selectedType ) );
+	Cvar_VariableStringBuffer( "sp_zone_selected_mins", selectedMins, sizeof( selectedMins ) );
+	Cvar_VariableStringBuffer( "sp_zone_selected_maxs", selectedMaxs, sizeof( selectedMaxs ) );
+	Cvar_VariableStringBuffer( "sp_zone_selected_angles", selectedAngles, sizeof( selectedAngles ) );
+	Cvar_VariableStringBuffer( "sp_zone_file", filePath, sizeof( filePath ) );
+	Cvar_VariableStringBuffer( "sp_zone_run_time", runTime, sizeof( runTime ) );
+	Cvar_VariableStringBuffer( "sp_zone_record_time", recordTime, sizeof( recordTime ) );
+	Cvar_VariableStringBuffer( "sp_zone_last_delta", lastDelta, sizeof( lastDelta ) );
+	Cvar_VariableStringBuffer( "sp_zone_last_total_delta", lastTotalDelta, sizeof( lastTotalDelta ) );
+	Cvar_VariableStringBuffer( "sp_zone_progress_text", progressText, sizeof( progressText ) );
+	Cvar_VariableStringBuffer( "sp_zone_active_start_name", activeStartName, sizeof( activeStartName ) );
+	Cvar_VariableStringBuffer( "sp_zone_route_name", routeName, sizeof( routeName ) );
+	CL_ImGuiFormatZoneMsec( Cvar_VariableIntegerValue( "sp_zone_selected_best" ), selectedBest, sizeof( selectedBest ) );
+	CL_ImGuiFormatZoneMsec( Cvar_VariableIntegerValue( "sp_zone_selected_best_total" ), selectedBestTotal, sizeof( selectedBestTotal ) );
+	zoneCount = Cvar_VariableIntegerValue( "sp_zone_count" );
+	selected = Cvar_VariableIntegerValue( "sp_zone_selected" );
+	activeRoute = Cvar_VariableIntegerValue( "sp_zone_active_route" );
+	activeStart = Cvar_VariableIntegerValue( "sp_zone_active_start" );
+	selectedBuiltin = Cvar_VariableIntegerValue( "sp_zone_selected_builtin" );
+	selectedRoute = Cvar_VariableIntegerValue( "sp_zone_selected_route" );
+	selectedOrder = Cvar_VariableIntegerValue( "sp_zone_selected_order" );
+	viewRoute = Cvar_VariableIntegerValue( "sp_zone_view_route" );
+	rowCount = Cvar_VariableIntegerValue( "sp_zone_row_count" );
+	routeRowCount = Cvar_VariableIntegerValue( "sp_zone_route_row_count" );
+	raceDebug = CL_ImGuiZoneRaceDebugEnabled();
+	lastDeltaPb = Cvar_VariableIntegerValue( "sp_zone_last_delta_pb" ) != 0;
+	lastTotalDeltaPb = Cvar_VariableIntegerValue( "sp_zone_last_total_delta_pb" ) != 0;
+	if ( routeNameEditRoute != ( viewRoute > 0 ? viewRoute : activeRoute ) ) {
+		Q_strncpyz( routeNameEdit, routeName[0] ? routeName : "route", sizeof( routeNameEdit ) );
+		routeNameEditRoute = viewRoute > 0 ? viewRoute : activeRoute;
+	}
+
+	CL_ImGuiSectionHeader( "Zones", "Route timer, checkpoint editor and zone display tuning." );
+	CL_ImGuiBeginAutoBox( "zones_status" );
+	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Timer HUD" );
+	CL_ImGuiBoolCvarName( "Zone Timer", "sp_zone_timer", "0" );
+	CL_ImGuiSameLineIfFits( 136.0f );
+	CL_ImGuiBoolCvarName( "Progress X/X", "sp_zone_hud_progress", "1" );
+	ImGui::Separator();
+	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Editor Draw" );
+	{
+		bool cheatsEnabled = Cvar_VariableIntegerValue( "sv_cheats" ) != 0;
+		if ( !cheatsEnabled ) {
+			if ( Cvar_VariableIntegerValue( "sp_zone_draw" ) ) Cvar_Set( "sp_zone_draw", "0" );
+			if ( Cvar_VariableIntegerValue( "sp_zone_edit" ) ) Cvar_Set( "sp_zone_edit", "0" );
+			ImGui::BeginDisabled();
+		}
+		CL_ImGuiBoolCvarName( "Draw Zones", "sp_zone_draw", "0" );
+		CL_ImGuiSameLineIfFits( 132.0f );
+		CL_ImGuiBoolCvarName( "Edit Mode", "sp_zone_edit", "0" );
+		if ( !cheatsEnabled ) {
+			ImGui::EndDisabled();
+			ImGui::TextDisabled( "sv_cheats 1 required" );
+		}
+	}
+	ImGui::Separator();
+	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%s", runTime[0] ? runTime : "0.000" );
+	CL_ImGuiSameLineIfFits( 100.0f );
+	ImGui::TextDisabled( "PB %s", recordTime[0] ? recordTime : "-" );
+	CL_ImGuiSameLineIfFits( 92.0f );
+	if ( lastDelta[0] ) {
+		ImGui::TextColored( lastDeltaPb ? ImVec4( 1.0f, 0.86f, 0.18f, 1.0f ) : ( lastDelta[0] == '-' ? ImVec4( 0.42f, 1.0f, 0.42f, 1.0f ) : ( lastDelta[0] == '+' ? ImVec4( 1.0f, 0.36f, 0.28f, 1.0f ) : ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ) ) ), "Seg %s", lastDelta );
+	} else {
+		ImGui::TextDisabled( "Seg -" );
+	}
+	CL_ImGuiSameLineIfFits( 92.0f );
+	if ( lastTotalDelta[0] ) {
+		ImGui::TextColored( lastTotalDeltaPb ? ImVec4( 1.0f, 0.86f, 0.18f, 1.0f ) : ( lastTotalDelta[0] == '-' ? ImVec4( 0.42f, 1.0f, 0.42f, 1.0f ) : ( lastTotalDelta[0] == '+' ? ImVec4( 1.0f, 0.36f, 0.28f, 1.0f ) : ImVec4( 0.66f, 0.86f, 1.0f, 1.0f ) ) ), "Full %s", lastTotalDelta );
+	} else {
+		ImGui::TextDisabled( "Full -" );
+	}
+	if ( Cvar_VariableIntegerValue( "sp_zone_hud_progress" ) && progressText[0] ) {
+		CL_ImGuiSameLineIfFits( 72.0f );
+		ImGui::TextDisabled( "CP %s", progressText );
+	}
+	if ( status[0] ) ImGui::TextWrapped( "%s", status );
+	ImGui::TextDisabled( "%d zones   selected %d   route %d   %s", zoneCount, selected, viewRoute > 0 ? viewRoute : activeRoute, routeName[0] ? routeName : "-" );
+	ImGui::TextDisabled( "start %d %s", activeStart, activeStartName[0] ? activeStartName : "" );
+	ImGui::TextWrapped( "%s", filePath[0] ? filePath : "-" );
+	ImGui::TextDisabled( "Route Name" );
+	ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x > 270.0f ? ImGui::GetContentRegionAvail().x - 86.0f : ImGui::GetContentRegionAvail().x );
+	ImGui::InputTextWithHint( "##route_name", "route", routeNameEdit, sizeof( routeNameEdit ) );
+	CL_ImGuiSameLineIfFits( 82.0f );
+	if ( ImGui::Button( "Apply##route_name", ImVec2( 74, 0 ) ) ) {
+		CL_ImGuiSanitizeZoneToken( routeNameEdit );
+		Com_sprintf( routeNameCmd, sizeof( routeNameCmd ), "sp_zone_route_name %s\n", routeNameEdit[0] ? routeNameEdit : "route" );
+		Cbuf_AddText( routeNameCmd );
+	}
+	ImGui::EndChild();
+
+	CL_ImGuiSectionHeader( "Create", NULL );
+	CL_ImGuiBeginAutoBox( "zones_create" );
+	if ( ImGui::Button( "Start Look", ImVec2( 118, 0 ) ) ) Cbuf_AddText( "sp_zone_add_start\n" );
+	CL_ImGuiSameLineIfFits( 126.0f );
+	if ( ImGui::Button( "Start Here", ImVec2( 118, 0 ) ) ) Cbuf_AddText( "sp_zone_add_start here\n" );
+	if ( ImGui::Button( "CP Append Look", ImVec2( 138, 0 ) ) ) Cbuf_AddText( "sp_zone_add_checkpoint\n" );
+	CL_ImGuiSameLineIfFits( 146.0f );
+	if ( ImGui::Button( "CP Append Here", ImVec2( 138, 0 ) ) ) Cbuf_AddText( "sp_zone_add_checkpoint here\n" );
+	if ( ImGui::Button( "CP Insert Look", ImVec2( 138, 0 ) ) ) Cbuf_AddText( "sp_zone_insert_checkpoint\n" );
+	CL_ImGuiSameLineIfFits( 146.0f );
+	if ( ImGui::Button( "CP Insert Here", ImVec2( 138, 0 ) ) ) Cbuf_AddText( "sp_zone_insert_checkpoint here\n" );
+	if ( ImGui::Button( "Finish Look", ImVec2( 118, 0 ) ) ) Cbuf_AddText( "sp_zone_add_finish\n" );
+	CL_ImGuiSameLineIfFits( 126.0f );
+	if ( ImGui::Button( "Finish Here", ImVec2( 118, 0 ) ) ) Cbuf_AddText( "sp_zone_add_finish here\n" );
+	if ( raceDebug ) {
+		if ( ImGui::Button( "Race Look", ImVec2( 118, 0 ) ) ) Cbuf_AddText( "sp_zone_add_race\n" );
+		CL_ImGuiSameLineIfFits( 126.0f );
+		if ( ImGui::Button( "Race Here", ImVec2( 118, 0 ) ) ) Cbuf_AddText( "sp_zone_add_race here\n" );
+	}
+	if ( ImGui::Button( "Save", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_save\n" );
+	CL_ImGuiSameLineIfFits( 100.0f );
+	if ( ImGui::Button( "Load", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_load\n" );
+	CL_ImGuiSameLineIfFits( 100.0f );
+	if ( ImGui::Button( "Status", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_status\n" );
+	CL_ImGuiSameLineIfFits( 116.0f );
+	if ( ImGui::Button( "Reset Run", ImVec2( 108, 0 ) ) ) Cbuf_AddText( "sp_zone_reset\n" );
+	CL_ImGuiSameLineIfFits( 132.0f );
+	if ( raceDebug ) {
+		if ( ImGui::Button( "Export C", ImVec2( 116, 0 ) ) ) Cbuf_AddText( "sp_zone_export_builtins\n" );
+	}
+	ImGui::EndChild();
+
+	CL_ImGuiSectionHeader( "All Zones", NULL );
+	CL_ImGuiPushZoneTableStyle();
+	if ( ImGui::BeginTable( "zones_table", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_PadOuterX, ImVec2( 0, 220 ) ) ) {
+		ImGui::TableSetupColumn( "#", ImGuiTableColumnFlags_WidthFixed, 44.0f );
+		ImGui::TableSetupColumn( "R", ImGuiTableColumnFlags_WidthFixed, 36.0f );
+		ImGui::TableSetupColumn( "Ord", ImGuiTableColumnFlags_WidthFixed, 42.0f );
+		ImGui::TableSetupColumn( "Type", ImGuiTableColumnFlags_WidthFixed, 90.0f );
+		ImGui::TableSetupColumn( "Name", ImGuiTableColumnFlags_WidthStretch );
+		ImGui::TableSetupColumn( "Seg", ImGuiTableColumnFlags_WidthFixed, 74.0f );
+		ImGui::TableSetupColumn( "Full", ImGuiTableColumnFlags_WidthFixed, 74.0f );
+		ImGui::TableSetupColumn( "", ImGuiTableColumnFlags_WidthFixed, 62.0f );
+		ImGui::TableSetupScrollFreeze( 0, 1 );
+		ImGui::TableHeadersRow();
+		for ( i = 0; i < rowCount && i < 64; i++ ) {
+			Com_sprintf( rowCvar, sizeof( rowCvar ), "sp_zone_row_%02d", i );
+			Cvar_VariableStringBuffer( rowCvar, rowText, sizeof( rowText ) );
+			if ( CL_ImGuiParseZoneRow( rowText, &row ) && ( raceDebug || Q_stricmp( row.type, "race" ) ) ) {
+				CL_ImGuiDrawZoneTableRow( &row, selected, true );
+			}
+		}
+		ImGui::EndTable();
+	}
+	CL_ImGuiPopZoneTableStyle();
+
+	CL_ImGuiSectionHeader( "Route", NULL );
+	CL_ImGuiPushZoneTableStyle();
+	if ( ImGui::BeginTable( "zones_route_table", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_PadOuterX, ImVec2( 0, 156 ) ) ) {
+		ImGui::TableSetupColumn( "#", ImGuiTableColumnFlags_WidthFixed, 44.0f );
+		ImGui::TableSetupColumn( "R", ImGuiTableColumnFlags_WidthFixed, 36.0f );
+		ImGui::TableSetupColumn( "Ord", ImGuiTableColumnFlags_WidthFixed, 42.0f );
+		ImGui::TableSetupColumn( "Type", ImGuiTableColumnFlags_WidthFixed, 90.0f );
+		ImGui::TableSetupColumn( "Name", ImGuiTableColumnFlags_WidthStretch );
+		ImGui::TableSetupColumn( "Seg", ImGuiTableColumnFlags_WidthFixed, 74.0f );
+		ImGui::TableSetupColumn( "Full", ImGuiTableColumnFlags_WidthFixed, 74.0f );
+		ImGui::TableSetupColumn( "", ImGuiTableColumnFlags_WidthFixed, 62.0f );
+		ImGui::TableSetupScrollFreeze( 0, 1 );
+		ImGui::TableHeadersRow();
+		for ( i = 0; i < routeRowCount && i < 64; i++ ) {
+			Com_sprintf( rowCvar, sizeof( rowCvar ), "sp_zone_route_row_%02d", i );
+			Cvar_VariableStringBuffer( rowCvar, rowText, sizeof( rowText ) );
+			if ( CL_ImGuiParseZoneRow( rowText, &row ) ) {
+				CL_ImGuiDrawZoneTableRow( &row, selected, false );
+			}
+		}
+		ImGui::EndTable();
+	}
+	CL_ImGuiPopZoneTableStyle();
+
+	CL_ImGuiSectionHeader( "Selected Zone", NULL );
+	CL_ImGuiBeginAutoBox( "zones_selected" );
+	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%s", selectedName[0] ? selectedName : "No selection" );
+	ImGui::TextDisabled( "Type: %s   Route: %d   Ord: %d%s", selectedType[0] ? selectedType : "-", selectedRoute, selectedOrder, selectedBuiltin ? "   built-in" : "" );
+	ImGui::TextDisabled( "Best: seg %s   full %s", selectedBest, selectedBestTotal );
+	ImGui::TextDisabled( "Mins: %s", selectedMins[0] ? selectedMins : "-" );
+	ImGui::TextDisabled( "Maxs: %s", selectedMaxs[0] ? selectedMaxs : "-" );
+	ImGui::TextDisabled( "Angles: %s", selectedAngles[0] ? selectedAngles : "-" );
+	ImGui::Separator();
+	if ( selected < 0 ) {
+		ImGui::TextDisabled( "Select a row in one of the zone tables to edit or reset it." );
+	} else {
+	if ( ImGui::Button( "Use Route", ImVec2( 102, 0 ) ) ) Cbuf_AddText( "sp_zone_route\n" );
+	CL_ImGuiSameLineIfFits( 90.0f );
+	if ( ImGui::Button( "Prev", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_prev\n" );
+	CL_ImGuiSameLineIfFits( 90.0f );
+	if ( ImGui::Button( "Next", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_next\n" );
+	CL_ImGuiSameLineIfFits( 90.0f );
+	if ( ImGui::Button( "Ord Up", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_order_up\n" );
+	CL_ImGuiSameLineIfFits( 100.0f );
+	if ( ImGui::Button( "Ord Down", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_order_down\n" );
+	if ( ImGui::Button( "Delete", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_delete\n" );
+	CL_ImGuiSameLineIfFits( 100.0f );
+	if ( ImGui::Button( "Clear All", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_clear\n" );
+	if ( ImGui::Button( "Reset Time", ImVec2( 102, 0 ) ) ) Cbuf_AddText( "sp_zone_reset_times selected\n" );
+	CL_ImGuiSameLineIfFits( 120.0f );
+	if ( ImGui::Button( "Reset From", ImVec2( 112, 0 ) ) ) Cbuf_AddText( "sp_zone_reset_times from\n" );
+	CL_ImGuiSameLineIfFits( 120.0f );
+	if ( ImGui::Button( "Reset Route", ImVec2( 112, 0 ) ) ) Cbuf_AddText( "sp_zone_reset_times route\n" );
+	if ( ImGui::Button( "Set Start", ImVec2( 102, 0 ) ) ) Cbuf_AddText( "sp_zone_type start\n" );
+	CL_ImGuiSameLineIfFits( 140.0f );
+	if ( ImGui::Button( "Set Checkpoint", ImVec2( 132, 0 ) ) ) Cbuf_AddText( "sp_zone_type checkpoint\n" );
+	CL_ImGuiSameLineIfFits( 110.0f );
+	if ( ImGui::Button( "Set Finish", ImVec2( 102, 0 ) ) ) Cbuf_AddText( "sp_zone_type finish\n" );
+	CL_ImGuiSameLineIfFits( 100.0f );
+	if ( raceDebug ) {
+		if ( ImGui::Button( "Set Race", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_type race\n" );
+	}
+	if ( ImGui::Button( "Grow", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_grow 8\n" );
+	CL_ImGuiSameLineIfFits( 90.0f );
+	if ( ImGui::Button( "Shrink", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_grow -8\n" );
+	CL_ImGuiSameLineIfFits( 80.0f );
+	if ( ImGui::Button( "Up", ImVec2( 72, 0 ) ) ) Cbuf_AddText( "sp_zone_move 0 0 8\n" );
+	CL_ImGuiSameLineIfFits( 80.0f );
+	if ( ImGui::Button( "Down", ImVec2( 72, 0 ) ) ) Cbuf_AddText( "sp_zone_move 0 0 -8\n" );
+	if ( ImGui::Button( "Yaw -15", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_rotate yaw -15\n" );
+	CL_ImGuiSameLineIfFits( 90.0f );
+	if ( ImGui::Button( "Yaw +15", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_rotate yaw 15\n" );
+	CL_ImGuiSameLineIfFits( 100.0f );
+	if ( ImGui::Button( "Pitch -15", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_rotate pitch -15\n" );
+	CL_ImGuiSameLineIfFits( 100.0f );
+	if ( ImGui::Button( "Pitch +15", ImVec2( 92, 0 ) ) ) Cbuf_AddText( "sp_zone_rotate pitch 15\n" );
+	if ( ImGui::Button( "Roll -15", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_rotate roll -15\n" );
+	CL_ImGuiSameLineIfFits( 90.0f );
+	if ( ImGui::Button( "Roll +15", ImVec2( 82, 0 ) ) ) Cbuf_AddText( "sp_zone_rotate roll 15\n" );
+	CL_ImGuiSameLineIfFits( 94.0f );
+	if ( ImGui::Button( "Face View", ImVec2( 86, 0 ) ) ) Cbuf_AddText( "sp_zone_rotate view\n" );
+	CL_ImGuiSameLineIfFits( 98.0f );
+	if ( ImGui::Button( "Reset Rot", ImVec2( 90, 0 ) ) ) Cbuf_AddText( "sp_zone_rotate reset\n" );
+	}
+	ImGui::EndChild();
+
+	CL_ImGuiSectionHeader( "Editor Tuning", NULL );
+	CL_ImGuiBeginAutoBox( "zones_tuning" );
+	CL_ImGuiBoolCvarName( "Draw Start", "sp_zone_draw_start", "1" );
+	CL_ImGuiSameLineIfFits( 112.0f );
+	CL_ImGuiBoolCvarName( "Draw CP", "sp_zone_draw_checkpoints", "1" );
+	CL_ImGuiSameLineIfFits( 124.0f );
+	CL_ImGuiBoolCvarName( "Draw Finish", "sp_zone_draw_finish", "1" );
+	CL_ImGuiSameLineIfFits( 118.0f );
+	if ( raceDebug ) {
+		CL_ImGuiBoolCvarName( "Draw Race", "sp_zone_draw_race", "1" );
+	}
+	CL_ImGuiBoolCvarName( "3D Text", "sp_zone_draw_labels", "1" );
+	CL_ImGuiSameLineIfFits( 118.0f );
+	CL_ImGuiBoolCvarName( "Handles", "sp_zone_draw_handles", "1" );
+	CL_ImGuiSameLineIfFits( 132.0f );
+	CL_ImGuiBoolCvarName( "Rotation Gizmo", "sp_zone_rotation_gizmo", "1" );
+	CL_ImGuiBoolCvarName( "Active Route Only", "sp_zone_draw_active_route_only", "0" );
+	CL_ImGuiSameLineIfFits( 144.0f );
+	CL_ImGuiBoolCvarName( "Dim Other Routes", "sp_zone_dim_inactive", "1" );
+	CL_ImGuiBoolCvarName( "Route Focus", "sp_zone_draw_run_target_only", "1" );
+	CL_ImGuiSameLineIfFits( 118.0f );
+	CL_ImGuiBoolCvarName( "Auto Names", "sp_zone_auto_names", "1" );
+	ImGui::Separator();
+	CL_ImGuiColorCvarName( "Start Color", "sp_zone_start_color", zoneStartColor );
+	CL_ImGuiColorCvarName( "Checkpoint Color", "sp_zone_color", zoneColor );
+	CL_ImGuiColorCvarName( "Finish Color", "sp_zone_finish_color", zoneFinishColor );
+	if ( raceDebug ) {
+		CL_ImGuiColorCvarName( "Race Color", "sp_zone_race_color", zoneRaceColor );
+	}
+	CL_ImGuiIntSliderCvarName( "Zone Opacity", "sp_zone_opacity", "75", 5, 255 );
+	CL_ImGuiIntSliderCvarName( "Border Alpha", "sp_zone_border_alpha", "230", 20, 255 );
+	CL_ImGuiSliderCvarName( "Border Width", "sp_zone_border_width", "0.75", 0.25f, 6.0f, "%.2f" );
+	CL_ImGuiIntSliderCvarName( "Inactive Alpha", "sp_zone_inactive_alpha", "28", 0, 255 );
+	CL_ImGuiSliderCvarName( "Handle Size", "sp_zone_handle_size", "6", 2.0f, 24.0f, "%.0f" );
+	CL_ImGuiSliderCvarName( "Handle Distance", "sp_zone_handle_max_dist", "1200", 128.0f, 4096.0f, "%.0f" );
+	CL_ImGuiSliderCvarName( "Hover Pixels", "sp_zone_hover_pixels", "18", 4.0f, 96.0f, "%.0f" );
+	CL_ImGuiSliderCvarName( "Drag Speed", "sp_zone_drag_speed", "180", 8.0f, 1024.0f, "%.0f" );
+	CL_ImGuiIntSliderCvarName( "Start Stop MS", "sp_zone_start_stop_ms", "220", 0, 1500 );
+	ImGui::Separator();
+	CL_ImGuiSliderCvarName( "Timer X", "sp_zone_hud_x", "8", 0.0f, 640.0f, "%.0f" );
+	CL_ImGuiSliderCvarName( "Timer Y", "sp_zone_hud_y", "84", 0.0f, 480.0f, "%.0f" );
+	CL_ImGuiSliderCvarName( "Timer Scale", "sp_zone_hud_scale", "1.0", 0.55f, 2.5f, "%.2f" );
+	CL_ImGuiSliderCvarName( "Timer Alpha", "sp_zone_hud_alpha", "0.52", 0.0f, 1.0f, "%.2f" );
+	if ( ImGui::TreeNodeEx( "Timer Colors##zone_timer_colors", ImGuiTreeNodeFlags_DefaultOpen ) ) {
+		CL_ImGuiColorCvarName( "Background top", "sp_zone_timer_clr_bg2", ztBg2 );
+		CL_ImGuiColorCvarName( "Background bottom", "sp_zone_timer_clr_bg", ztBg );
+		CL_ImGuiColorCvarName( "Border", "sp_zone_timer_clr_border", ztBorder );
+		CL_ImGuiColorCvarName( "Timer", "sp_zone_timer_clr_time", ztTime );
+		CL_ImGuiColorCvarName( "PB / progress", "sp_zone_timer_clr_muted", ztMuted );
+		CL_ImGuiColorCvarName( "Ahead", "sp_zone_timer_clr_ahead", ztAhead );
+		CL_ImGuiColorCvarName( "Behind", "sp_zone_timer_clr_behind", ztBehind );
+		CL_ImGuiColorCvarName( "Gold", "sp_zone_timer_clr_gold", ztGold );
+		CL_ImGuiColorCvarName( "Neutral", "sp_zone_timer_clr_neutral", ztNeutral );
+		ImGui::TreePop();
+	}
+	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawRecordsPage( void ) {
@@ -3982,19 +6297,24 @@ static void CL_ImGuiDrawRecordsPage( void ) {
 	static const int diffValues[] = { 1, 2, 3 };
 	static const char *missionLabels[] = { "1: Ominous Rumors", "2: Vengeance", "3: Deadly Designs", "4: Deathshead", "5: Resurrection" };
 	static const int missionValues[] = { 1, 2, 3, 4, 5 };
+	bool raceLocked = CL_ImGuiRaceSettingsLocked();
 
 	CL_ImGuiSectionHeader( "Records / Splits Viewer", NULL );
-	ImGui::BeginChild( "records_card", ImVec2( 0, 0 ), true );
 	Cvar_VariableStringBuffer( "ls_sv_stats", statsText, sizeof( statsText ) );
 	CL_ImGuiParseRecordSummary( statsText, &summaryAtt, &summaryComp );
-	ImGui::BeginChild( "records_controls", ImVec2( 0, 166 ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	CL_ImGuiBeginAutoBox( "records_controls" );
+	if ( raceLocked ) {
+		ImGui::TextDisabled( "Race controls category and difficulty until you leave the lobby." );
+	}
+	ImGui::BeginDisabled( raceLocked );
 	CL_ImGuiCommandComboCvarName( "View Mode", "ls_mode", "0", modeLabels, modeValues, IM_ARRAYSIZE( modeValues ), "livesplit_sv_mode" );
 	CL_ImGuiCommandComboCvarName( "Difficulty", "g_gameskill", "2", diffLabels, diffValues, IM_ARRAYSIZE( diffValues ), "livesplit_sv_diff" );
 	CL_ImGuiCommandComboCvarName( "Chapter", "ls_mission", "1", missionLabels, missionValues, IM_ARRAYSIZE( missionValues ), "livesplit_sv_mission" );
+	ImGui::EndDisabled();
 	if ( ImGui::Button( "Refresh", ImVec2( 108, 0 ) ) ) Cbuf_AddText( "livesplit_sv_refresh\n" );
-	ImGui::SameLine();
+	CL_ImGuiSameLineIfFits( 116.0f );
 	if ( ImGui::Button( "Page Up", ImVec2( 108, 0 ) ) ) Cbuf_AddText( "livesplit_sv_pgup\n" );
-	ImGui::SameLine();
+	CL_ImGuiSameLineIfFits( 116.0f );
 	if ( ImGui::Button( "Page Down", ImVec2( 108, 0 ) ) ) Cbuf_AddText( "livesplit_sv_pgdn\n" );
 	ImGui::EndChild();
 	ImGui::Separator();
@@ -4006,13 +6326,12 @@ static void CL_ImGuiDrawRecordsPage( void ) {
 	}
 	ImGui::TextDisabled( "%s", Cvar_VariableString( "ls_sv_pages" ) );
 	ImGui::Separator();
-	ImGui::BeginChild( "records_rows", ImVec2( 0, 246 ), true, ImGuiWindowFlags_HorizontalScrollbar );
 	ImGui::PushStyleColor( ImGuiCol_TableHeaderBg, ImVec4( 0.16f, 0.27f, 0.12f, 0.95f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableRowBg, ImVec4( 0.03f, 0.05f, 0.035f, 0.55f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableRowBgAlt, ImVec4( 0.07f, 0.11f, 0.06f, 0.68f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableBorderStrong, ImVec4( 0.22f, 0.38f, 0.16f, 0.90f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableBorderLight, ImVec4( 0.14f, 0.24f, 0.11f, 0.72f ) );
-	if ( ImGui::BeginTable( "records_table", 5, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY, ImVec2( 0, 0 ) ) ) {
+	if ( ImGui::BeginTable( "records_table", 5, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY, ImVec2( 0, 246 ) ) ) {
 		ImGui::TableSetupColumn( "Map", ImGuiTableColumnFlags_WidthStretch, 1.35f );
 		ImGui::TableSetupColumn( "Gold", ImGuiTableColumnFlags_WidthFixed, 78.0f );
 		ImGui::TableSetupColumn( "PB Seg", ImGuiTableColumnFlags_WidthFixed, 78.0f );
@@ -4053,7 +6372,6 @@ static void CL_ImGuiDrawRecordsPage( void ) {
 	if ( recordCount == 0 ) {
 		ImGui::TextDisabled( "No visible record rows. Click Refresh or change mode/difficulty." );
 	}
-	ImGui::EndChild();
 	ImGui::Separator();
 	CL_ImGuiDrawRecordStats( attempts, completions, recordCount );
 	ImGui::Separator();
@@ -4067,12 +6385,14 @@ static void CL_ImGuiDrawRecordsPage( void ) {
 	CL_ImGuiCommandButton( "Reset Row All", cmd, "gold, PB segment, attempts, completions" );
 	ImGui::EndDisabled();
 	CL_ImGuiCommandButton( "Reset Category", "livesplit_sv_reset_cat", "clear current category records" );
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawActionsPage( void ) {
+	lsRaceUiSnapshot_t race;
+	bool raceActive;
+	LS_RaceBuildSnapshot( &race );
+	raceActive = race.active != 0;
 	CL_ImGuiSectionHeader( "Run Actions", "One-click controls for timer and category state." );
-	ImGui::BeginChild( "actions_card", ImVec2( 0, 0 ), true );
 	CL_ImGuiActionCard( "Start Run", "Starts the current run/category and auto-records if enabled.", "Start", "livesplit_start", ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ) );
 	CL_ImGuiActionCard( "Pause / Resume", "Toggles IGT pause for safe menu/setup moments.", "Pause / Resume", "livesplit_pause", ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ) );
 	CL_ImGuiActionCard( "Check Settings", "Validates speedrun settings and warning conditions.", "Check", "livesplit_check", ImVec4( 0.50f, 0.78f, 0.28f, 1.0f ) );
@@ -4082,20 +6402,30 @@ static void CL_ImGuiDrawActionsPage( void ) {
 	CL_ImGuiCommandButton( "Skip Split", "livesplit_skip", "skip current split" );
 	ImGui::Separator();
 	ImGui::TextDisabled( "Reset control" );
+	if ( raceActive ) {
+		ImGui::TextDisabled( "Locked while Race is active. Leave Race to reset." );
+	}
+	ImGui::BeginDisabled( raceActive );
 	CL_ImGuiCommandButton( "Reset Run", "livesplit_reset", "normal reset with save/confirmation logic" );
 	CL_ImGuiCommandButton( "Reset No Save", "livesplit_reset_nosave", "reset without saving current result" );
 	CL_ImGuiCommandButton( "Reset Category", "livesplit_reset_category", "clear category state" );
-	ImGui::EndChild();
+	ImGui::EndDisabled();
 }
+
+#include "speedrun_imgui/sr_imgui_race.inl"
 
 static void CL_ImGuiDrawDevPage( void ) {
 	static const char *clipLabels[] = { "Off", "X-Ray", "X-Ray Alt", "Depth", "Depth Alt" };
 	static const int clipValues[] = { 0, 1, 2, 3, 4 };
+	static char triggerName[96] = "";
 	bool cheats = Cvar_VariableIntegerValue( "sv_cheats" ) != 0;
+	char triggerCommand[160];
 
 	CL_ImGuiSectionHeader( "Developer Visualization", "Cheat/dev cvars are exposed here but not forced on." );
-	ImGui::BeginChild( "dev_card", ImVec2( 0, 0 ), true );
 	CL_ImGuiActionCard( cheats ? "sv_cheats Enabled" : "Enable sv_cheats", cheats ? "Cheats are currently active; dev visualization tools will respond." : "Runs sv_cheats 1 twice because the patch has a confirmation guard.", cheats ? "Run Again" : "Enable Cheats", "sv_cheats 1\nsv_cheats 1", cheats ? ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ) : ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ), cheats );
+	if ( cheats ) {
+		CL_ImGuiCommandButton( "Disable sv_cheats", "sv_cheats 0", "Turn cheat-gated visualization back off." );
+	}
 	ImGui::Separator();
 	if ( !cheats ) {
 		ImGui::TextDisabled( "Enable sv_cheats to edit the locked visualization controls below." );
@@ -4103,6 +6433,18 @@ static void CL_ImGuiDrawDevPage( void ) {
 	ImGui::BeginDisabled( !cheats );
 	CL_ImGuiBoolCvarName( "Draw Triggers", "cg_drawTriggers", "0" );
 	CL_ImGuiIntSliderCvarName( "Trigger Opacity", "cg_triggerOpacity", "140", 5, 255 );
+	CL_ImGuiIntSliderCvarName( "Trigger Log", "g_triggerLog", "0", 0, 2 );
+	ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x > 370.0f ? 260.0f : ImGui::GetContentRegionAvail().x );
+	ImGui::InputTextWithHint( "Trigger Name##dev_trigger_name", "targetname", triggerName, sizeof( triggerName ) );
+	CL_ImGuiSameLineIfFits( 126.0f );
+	ImGui::BeginDisabled( triggerName[0] == '\0' );
+	if ( ImGui::Button( "Run Trigger", ImVec2( 118, 0 ) ) ) {
+		Com_sprintf( triggerCommand, sizeof( triggerCommand ), "sp_trigger \"%s\"\n", triggerName );
+		Cbuf_AddText( triggerCommand );
+	}
+	ImGui::EndDisabled();
+	CL_ImGuiSameLineIfFits( 82.0f );
+	if ( ImGui::Button( "List", ImVec2( 74, 0 ) ) ) Cbuf_AddText( "sp_trigger_list\n" );
 	CL_ImGuiBoolCvarName( "Draw Enemies", "cg_drawEnemies", "0" );
 	CL_ImGuiIntSliderCvarName( "Enemy Opacity", "cg_enemyOpacity", "140", 5, 255 );
 	CL_ImGuiBoolCvarName( "Draw Items", "cg_drawItems", "0" );
@@ -4118,42 +6460,54 @@ static void CL_ImGuiDrawDevPage( void ) {
 	ImGui::EndDisabled();
 	ImGui::TextDisabled( "Some visualization options require sv_cheats 1." );
 	ImGui::TextDisabled( "Default Fonts requires vid_restart." );
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawAboutPage( void ) {
-	CL_ImGuiSectionHeader( "RtCW Speedrun Patch", "Speedrun settings, timer controls and practice tools." );
-	ImGui::BeginChild( "about_card", ImVec2( 0, 0 ), true );
-	ImGui::BeginChild( "about_hero", ImVec2( 0, 112 ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	CL_ImGuiSectionHeader( "RtCW Speedrun Patch", "Timer, routing, demo review and practice tooling for Return to Castle Wolfenstein." );
+	CL_ImGuiBeginAutoBox( "about_hero" );
 	ImGui::TextColored( ImVec4( 0.70f, 0.95f, 0.45f, 1.0f ), "Return to Castle Wolfenstein 1.45" );
 	ImGui::TextColored( ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ), "Speedrun Patch" );
 	ImGui::Spacing();
-	ImGui::TextWrapped( "Fast in-game setup for timer, split tracking, demos, records, movement tools and practice/debug options." );
+	ImGui::TextWrapped( "A focused in-game control center for LiveSplit setup, split records, demo playback, HUD layout, Race tools and practice/debug workflows." );
 	ImGui::TextDisabled( "Based on Knightmare's RtCW Patch 1.42d." );
 	ImGui::EndChild();
 	ImGui::Spacing();
-	ImGui::Columns( 2, NULL, false );
-	ImGui::BeginChild( "about_features", ImVec2( 0, 132 ), true );
+	bool wideAbout = ImGui::GetContentRegionAvail().x > 620.0f;
+	if ( wideAbout ) {
+		ImGui::Columns( 2, NULL, false );
+	}
+	CL_ImGuiBeginAutoBox( "about_features" );
 	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Included" );
 	ImGui::BulletText( "LiveSplit/in-game timer" );
 	ImGui::BulletText( "Demo browser and playback controls" );
 	ImGui::BulletText( "Records viewer and statistics" );
-	ImGui::BulletText( "HUD, movement and dev tools" );
+	ImGui::BulletText( "HUD, Race, movement and dev tools" );
 	ImGui::EndChild();
-	ImGui::NextColumn();
-	ImGui::BeginChild( "about_author", ImVec2( 0, 132 ), true );
+	if ( wideAbout ) {
+		ImGui::NextColumn();
+	} else {
+		ImGui::Spacing();
+	}
+	CL_ImGuiBeginAutoBox( "about_author" );
 	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Author" );
 	ImGui::TextColored( ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ), "KoRrNiK" );
 	ImGui::TextDisabled( "Discord: korrnik" );
 	ImGui::Spacing();
-	ImGui::TextWrapped( "Built for fast setup without leaving the game." );
+	ImGui::TextWrapped( "Built for fast setup without leaving the game, with tournament and practice workflows close at hand." );
 	ImGui::EndChild();
-	ImGui::Columns( 1 );
+	if ( wideAbout ) {
+		ImGui::Columns( 1 );
+	}
+	ImGui::Spacing();
+	CL_ImGuiBeginAutoBox( "about_credits" );
+	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Credits" );
+	ImGui::TextWrapped( "WolfETPlayer from RealRTCW for explaining and sharing several files." );
+	ImGui::TextDisabled( "Additional thanks to the RtCW speedrun community for testing workflows, route ideas and feedback." );
+	ImGui::EndChild();
 	ImGui::Separator();
 	ImGui::TextDisabled( "Version history" );
 	ImGui::BulletText( "1.45a  |  Jun 21, 2021  |  First speedrun patch release" );
 	ImGui::BulletText( "1.45b  |  Mar 16, 2026  |  Major update" );
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawPlaceholder( const char *title, const char *desc ) {
@@ -4166,23 +6520,95 @@ static void CL_ImGuiDrawPlaceholder( const char *title, const char *desc ) {
 	ImGui::EndChild();
 }
 
+typedef struct srGuiModernCategory_s {
+	const char *icon;
+	const char *nav;
+	const char *title;
+	const char *desc;
+	const char *tag;
+} srGuiModernCategory_t;
+
+static const srGuiModernCategory_t s_imguiModernCategories[] = {
+	{ "RUN", "Run Setup", "Run Setup", "Timer, category, difficulty, IL map and recording defaults.", "core" },
+	{ "FND", "Finder", "Settings Finder", "Search every exposed option, cvar, command and page.", "quick" },
+	{ "LS", "LiveSplit", "LiveSplit Look", "Overlay layout, text, colors and component styling.", "style" },
+	{ "HUD", "HUD", "HUD Overlay", "Keystrokes, speedometer, FPS/timer positions and HUD toggles.", "visual" },
+	{ "MOV", "Gameplay", "Gameplay Setup", "Movement, FOV, viewport, weapon and ghost settings.", "game" },
+	{ "LAY", "Layout", "Layout Tools", "Alignment grid, HUD drag mode and split name editing.", "tools" },
+	{ "KEY", "Keybinds", "Keybinds", "Assign run, demo and practice controls from one clean table.", "binds" },
+	{ "REC", "Records", "Records", "Browse split records, attempts, completions and reset tools.", "data" },
+	{ "DEM", "Demos", "Demo Review", "Find demos and control playback without leaving the panel.", "review" },
+	{ "ACT", "Actions", "Run Actions", "Start, pause, reset and validate the current run state.", "run" },
+	{ "ZON", "Zones", "Zone Timer", "Route zones, checkpoints, route timing and editor visuals.", "route" },
+	{ "RCE", "Race", "Race Styling", "Race overlay, ghost and nametag styling. Control the lobby in the separate Race Control window.", "style" },
+	{ "DEV", "Developer", "Developer Tools", "Cheat-gated visualization and renderer debug controls.", "dev" },
+	{ "REF", "Guide", "Guide", "Short command reference for routing, demos and recovery.", "help" },
+	{ "i", "About", "About", "Patch identity, author notes and feature overview.", "info" }
+};
+
+static void CL_ImGuiDrawModernNavItem( int index, const srGuiModernCategory_t *cat ) {
+	ImGuiStyle &style = ImGui::GetStyle();
+	ImDrawList *draw = ImGui::GetWindowDrawList();
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImVec2 avail = ImGui::GetContentRegionAvail();
+	ImVec2 size = ImVec2( avail.x, 46.0f );
+	bool active = s_imguiCategory == index;
+	ImGui::PushID( index );
+	if ( ImGui::InvisibleButton( "modern_nav", size ) ) {
+		s_imguiCategory = index;
+	}
+	bool hovered = ImGui::IsItemHovered();
+	ImU32 iconBg = active ? IM_COL32( 101, 198, 63, 235 ) : ( hovered ? IM_COL32( 64, 108, 48, 225 ) : IM_COL32( 39, 56, 34, 230 ) );
+	ImU32 iconText = active ? IM_COL32( 10, 18, 10, 255 ) : IM_COL32( 196, 224, 181, 245 );
+	float rounding = style.FrameRounding;
+	if ( active ) {
+		draw->AddRectFilled( pos, ImVec2( pos.x + size.x, pos.y + size.y ), IM_COL32( 31, 62, 28, 218 ), rounding );
+		draw->AddRect( pos, ImVec2( pos.x + size.x, pos.y + size.y ), IM_COL32( 110, 218, 74, 210 ), rounding, 0, 1.2f );
+		draw->AddRectFilled( ImVec2( pos.x + 4.0f, pos.y + 8.0f ), ImVec2( pos.x + 8.0f, pos.y + size.y - 8.0f ), IM_COL32( 126, 232, 84, 245 ), 2.0f );
+	} else if ( hovered ) {
+		draw->AddRectFilled( pos, ImVec2( pos.x + size.x, pos.y + size.y ), IM_COL32( 28, 48, 25, 168 ), rounding );
+		draw->AddRect( pos, ImVec2( pos.x + size.x, pos.y + size.y ), IM_COL32( 86, 170, 58, 150 ), rounding, 0, 1.0f );
+	}
+	ImVec2 badge0 = ImVec2( pos.x + 14.0f, pos.y + 9.0f );
+	ImVec2 badge1 = ImVec2( pos.x + 44.0f, pos.y + 37.0f );
+	ImVec2 iconSize = ImGui::CalcTextSize( cat->icon );
+	draw->AddRectFilled( badge0, badge1, iconBg, 5.0f );
+	draw->AddRect( badge0, badge1, IM_COL32( 126, 232, 84, active ? 130 : 70 ), 5.0f, 0, 1.0f );
+	draw->AddText( ImVec2( badge0.x + ( 30.0f - iconSize.x ) * 0.5f, badge0.y + ( 28.0f - iconSize.y ) * 0.5f ), iconText, cat->icon );
+	draw->AddText( ImVec2( pos.x + 56.0f, pos.y + 8.0f ), active ? IM_COL32( 225, 248, 211, 255 ) : ( hovered ? IM_COL32( 202, 226, 190, 255 ) : IM_COL32( 166, 178, 158, 255 ) ), cat->nav );
+	draw->AddText( ImVec2( pos.x + 56.0f, pos.y + 27.0f ), IM_COL32( 112, 128, 106, active ? 245 : 205 ), cat->tag );
+	if ( hovered ) {
+		ImGui::BeginTooltip();
+		ImGui::PushTextWrapPos( ImGui::GetFontSize() * 28.0f );
+		ImGui::TextColored( ImVec4( 0.70f, 0.95f, 0.45f, 1.0f ), "%s", cat->title );
+		ImGui::TextWrapped( "%s", cat->desc );
+		ImGui::PopTextWrapPos();
+		ImGui::EndTooltip();
+	}
+	ImGui::PopID();
+	ImGui::Dummy( ImVec2( 1.0f, 2.0f ) );
+}
+
 static void CL_ImGuiDrawSettings( void ) {
-	const char *cats[] = { "Run", "Search", "Style", "Overlay", "Game", "Tools", "Controls", "Records", "Demos", "Actions", "Dev Tools", "Help", "About" };
 	int i;
 	float openEase = ( s_imguiAnimations && s_imguiAnimations->integer != 0 ) ? CL_ImGuiEaseOutCubic( s_imguiAnim ) : 1.0f;
 	float alpha = s_imguiAlpha ? Com_Clamp( 0.70f, 1.0f, s_imguiAlpha->value ) : 0.96f;
 	ImGuiWindowFlags settingsFlags = ImGuiWindowFlags_NoCollapse | ( s_imguiPinned ? ImGuiWindowFlags_NoMove : 0 );
 	ImGuiWindowFlags minimizedFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ( s_imguiPinned ? ImGuiWindowFlags_NoMove : 0 );
 
+	if ( s_imguiCategory < 0 || s_imguiCategory >= IM_ARRAYSIZE( s_imguiModernCategories ) ) {
+		s_imguiCategory = 0;
+	}
+
 	if ( s_imguiMinimized ) {
 		ImGui::SetNextWindowPos( ImVec2( 32, 28 ), ImGuiCond_FirstUseEver );
-		ImGui::SetNextWindowSize( ImVec2( 318, 42 ), ImGuiCond_Always );
+		ImGui::SetNextWindowSize( ImVec2( 360, 44 ), ImGuiCond_Always );
 		ImGui::SetNextWindowBgAlpha( alpha );
-		if ( ImGui::Begin( "Speedrun Settings##minimized", &s_imguiOpen, minimizedFlags ) ) {
+		if ( ImGui::Begin( "Speedrun Control Center##minimized", &s_imguiOpen, minimizedFlags ) ) {
 			ImGui::SetCursorPosY( 10.0f );
-			ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Speedrun Settings" );
+			ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Speedrun Control Center" );
 			ImGui::SameLine();
-			ImGui::SetCursorPosX( ImGui::GetWindowWidth() - 172.0f );
+			ImGui::SetCursorPosX( ImGui::GetWindowWidth() - 178.0f );
 			if ( ImGui::SmallButton( "Restore" ) ) {
 				s_imguiMinimized = false;
 			}
@@ -4203,17 +6629,17 @@ static void CL_ImGuiDrawSettings( void ) {
 		float inv = 1.0f - openEase;
 		float baseX = s_imguiWindowX ? s_imguiWindowX->value : 32.0f;
 		float baseY = s_imguiWindowY ? s_imguiWindowY->value : 28.0f;
-		float baseW = s_imguiWindowW ? s_imguiWindowW->value : 660.0f;
-		float baseH = s_imguiWindowH ? s_imguiWindowH->value : 500.0f;
+		float baseW = s_imguiWindowW ? s_imguiWindowW->value : 840.0f;
+		float baseH = s_imguiWindowH ? s_imguiWindowH->value : 570.0f;
 		ImGui::SetNextWindowPos( ImVec2( baseX + inv * 18.0f, baseY + inv * 26.0f ), ImGuiCond_Always );
 		ImGui::SetNextWindowSize( ImVec2( baseW - inv * 42.0f, baseH - inv * 34.0f ), ImGuiCond_Always );
 	} else {
 		ImGui::SetNextWindowPos( ImVec2( s_imguiWindowX ? s_imguiWindowX->value : 32.0f, s_imguiWindowY ? s_imguiWindowY->value : 28.0f ), ImGuiCond_Appearing );
-		ImGui::SetNextWindowSize( ImVec2( s_imguiWindowW ? s_imguiWindowW->value : 660.0f, s_imguiWindowH ? s_imguiWindowH->value : 500.0f ), ImGuiCond_Appearing );
+		ImGui::SetNextWindowSize( ImVec2( s_imguiWindowW ? s_imguiWindowW->value : 840.0f, s_imguiWindowH ? s_imguiWindowH->value : 570.0f ), ImGuiCond_Appearing );
 	}
-	ImGui::SetNextWindowSizeConstraints( ImVec2( 520, 360 ), ImVec2( (float)cls.glconfig.vidWidth, (float)cls.glconfig.vidHeight ) );
+	ImGui::SetNextWindowSizeConstraints( ImVec2( 720, 430 ), ImVec2( (float)cls.glconfig.vidWidth, (float)cls.glconfig.vidHeight ) );
 	ImGui::SetNextWindowBgAlpha( alpha * ( 0.20f + 0.80f * openEase ) );
-	if ( !ImGui::Begin( "Speedrun Settings", &s_imguiOpen, settingsFlags ) ) {
+	if ( !ImGui::Begin( "Speedrun Control Center", &s_imguiOpen, settingsFlags ) ) {
 		ImGui::End();
 		return;
 	}
@@ -4231,24 +6657,41 @@ static void CL_ImGuiDrawSettings( void ) {
 	}
 	CL_ImGuiDrawBackgroundMist();
 	CL_ImGuiDrawAccentBanner();
-	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Speedrun Settings" );
-	ImGui::SameLine();
+	CL_ImGuiBeginAutoBox( "main_header" );
+	ImGui::TextColored( ImVec4( 0.70f, 0.95f, 0.45f, 1.0f ), "Speedrun Control Center" );
+	ImGui::TextWrapped( "%s", s_imguiModernCategories[s_imguiCategory].desc );
+	ImGui::Spacing();
+	if ( ImGui::SmallButton( "Find" ) ) {
+		s_imguiCategory = 1;
+	}
+	CL_ImGuiOptionTooltip( "Settings Finder", NULL, "Jump to the search page and filter all settings by label, cvar, tag or command." );
+	CL_ImGuiSameLineIfFits( 58.0f );
+	if ( ImGui::SmallButton( "Race" ) ) {
+		s_imguiOpen = false;
+		CL_SpeedrunImGui_OpenRace();
+	}
+	CL_ImGuiOptionTooltip( "Race Control", NULL, "Switches from the Speedrun settings window to the Race Control window." );
+	CL_ImGuiSameLineIfFits( 86.0f );
 	if ( ImGui::SmallButton( s_imguiMinimized ? "Restore" : "Minimize" ) ) {
 		s_imguiMinimized = !s_imguiMinimized;
 	}
-	ImGui::SameLine();
-	ImGui::SetCursorPosX( ImGui::GetWindowContentRegionMax().x - 108.0f );
+	CL_ImGuiOptionTooltip( "Minimize", NULL, "Collapse the settings window into a compact title bar." );
+	CL_ImGuiSameLineIfFits( 56.0f );
 	if ( ImGui::SmallButton( s_imguiPinned ? "Unpin" : "Pin" ) ) {
 		s_imguiPinned = !s_imguiPinned;
 	}
-	ImGui::SameLine();
-	if ( ImGui::SmallButton( "GUI" ) ) {
+	CL_ImGuiOptionTooltip( s_imguiPinned ? "Unpin window" : "Pin window", NULL, s_imguiPinned ? "Allow the settings window to move again." : "Locks the settings window position while editing." );
+	CL_ImGuiSameLineIfFits( 60.0f );
+	if ( ImGui::SmallButton( "Style" ) ) {
 		ImGui::OpenPopup( "gui_settings_popup" );
 	}
+	CL_ImGuiOptionTooltip( "Panel Style", NULL, "Opens window opacity, accent and animation controls." );
+	ImGui::SetNextWindowSize( ImVec2( 390.0f, 0.0f ), ImGuiCond_Appearing );
+	ImGui::SetNextWindowSizeConstraints( ImVec2( 320.0f, 0.0f ), ImVec2( 430.0f, (float)cls.glconfig.vidHeight * 0.85f ) );
 	if ( ImGui::BeginPopup( "gui_settings_popup" ) ) {
 		static const float accentFallback[4] = { 0.36f, 0.82f, 0.21f, 1.00f };
 		static const float accentAltFallback[4] = { 0.96f, 0.74f, 0.24f, 1.00f };
-		ImGui::TextDisabled( "GUI settings" );
+		ImGui::TextDisabled( "Panel style" );
 		CL_ImGuiSliderCvarName( "Window Opacity", "ui_speedrun_imgui_alpha", "0.96", 0.70f, 1.0f, "%.2f" );
 		CL_ImGuiSliderCvarName( "Card Opacity", "ui_speedrun_imgui_card_alpha", "0.92", 0.35f, 1.0f, "%.2f" );
 		CL_ImGuiBoolCvarName( "Rounded Corners", "ui_speedrun_imgui_rounding", "1" );
@@ -4258,13 +6701,14 @@ static void CL_ImGuiDrawSettings( void ) {
 		CL_ImGuiColorCvarName( "Accent Gold", "ui_speedrun_imgui_accent_alt", accentAltFallback );
 		ImGui::Separator();
 		if ( ImGui::Button( "Reset Window", ImVec2( 120, 0 ) ) ) {
-			ImGui::SetWindowPos( "Speedrun Settings", ImVec2( 32, 28 ), ImGuiCond_Always );
-			ImGui::SetWindowSize( "Speedrun Settings", ImVec2( 660, 500 ), ImGuiCond_Always );
+			ImGui::SetWindowPos( "Speedrun Control Center", ImVec2( 32, 28 ), ImGuiCond_Always );
+			ImGui::SetWindowSize( "Speedrun Control Center", ImVec2( 840, 570 ), ImGuiCond_Always );
 			if ( s_imguiWindowX ) Cvar_Set( s_imguiWindowX->name, "32" );
 			if ( s_imguiWindowY ) Cvar_Set( s_imguiWindowY->name, "28" );
-			if ( s_imguiWindowW ) Cvar_Set( s_imguiWindowW->name, "660" );
-			if ( s_imguiWindowH ) Cvar_Set( s_imguiWindowH->name, "500" );
+			if ( s_imguiWindowW ) Cvar_Set( s_imguiWindowW->name, "840" );
+			if ( s_imguiWindowH ) Cvar_Set( s_imguiWindowH->name, "570" );
 		}
+		CL_ImGuiOptionTooltip( "Reset Window", NULL, "Restores the refreshed default window size and position." );
 		ImGui::SameLine();
 		if ( ImGui::Button( "Reset Style", ImVec2( 120, 0 ) ) ) {
 			Cvar_Set( "ui_speedrun_imgui_alpha", "0.96" );
@@ -4274,69 +6718,76 @@ static void CL_ImGuiDrawSettings( void ) {
 			Cvar_Set( "ui_speedrun_imgui_accent", "92 210 54 1.00" );
 			Cvar_Set( "ui_speedrun_imgui_accent_alt", "244 188 62 1.00" );
 		}
+		CL_ImGuiOptionTooltip( "Reset Style", NULL, "Restores opacity, rounding, animations and accent colors." );
 		ImGui::EndPopup();
 	}
+	ImGui::EndChild();
 	ImGui::Spacing();
 	CL_ImGuiDrawUpdateNotice();
-	ImGui::Columns( 3, NULL, false );
-	CL_ImGuiMiniStat( "Timer", s_cg_livesplit && s_cg_livesplit->integer ? "enabled" : "disabled" );
-	ImGui::NextColumn();
-	CL_ImGuiMiniStat( "Run Mode", s_ls_mode && s_ls_mode->integer == 2 ? "Individual Level" : ( s_ls_mode && s_ls_mode->integer == 1 ? "Chapter" : "Full Game" ) );
-	ImGui::NextColumn();
-	CL_ImGuiMiniStat( "IL Map", CL_ImGuiMapLabel( Cvar_VariableString( "ls_map" ) ) );
-	ImGui::Columns( 1 );
+	if ( ImGui::BeginTable( "status_strip", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
+		lsRaceUiSnapshot_t race;
+		LS_RaceBuildSnapshot( &race );
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex( 0 );
+		CL_ImGuiMiniStat( "Timer", s_cg_livesplit && s_cg_livesplit->integer ? "enabled" : "disabled" );
+		ImGui::TableSetColumnIndex( 1 );
+		CL_ImGuiMiniStat( "Mode", s_ls_mode && s_ls_mode->integer == 2 ? "Individual Level" : ( s_ls_mode && s_ls_mode->integer == 1 ? "Chapter" : "Full Game" ) );
+		ImGui::TableSetColumnIndex( 2 );
+		CL_ImGuiMiniStat( "IL Map", CL_ImGuiMapLabel( Cvar_VariableString( "ls_map" ) ) );
+		ImGui::TableSetColumnIndex( 3 );
+		CL_ImGuiMiniStat( "Race", race.active ? "active" : "idle" );
+		ImGui::EndTable();
+	}
 	ImGui::Spacing();
 	ImGui::Separator();
 
-	ImGui::BeginChild( "sidebar", ImVec2( 142, 0 ), true );
-	for ( i = 0; i < IM_ARRAYSIZE( cats ); ++i ) {
-		bool active = s_imguiCategory == i;
-		ImDrawList *draw = ImGui::GetWindowDrawList();
-		const ImGuiStyle &style = ImGui::GetStyle();
-		const float navRounding = style.FrameRounding;
-		const float accentRounding = navRounding > 1.0f ? 3.0f : 0.0f;
-		const float hoverAccentRounding = navRounding > 1.0f ? 2.0f : 0.0f;
-		ImVec2 p = ImGui::GetCursorScreenPos();
-		ImVec2 avail = ImGui::GetContentRegionAvail();
-		ImVec2 size = ImVec2( avail.x, 28.0f );
-		ImGui::PushID( i );
-		if ( ImGui::InvisibleButton( "nav_item", size ) ) {
-			s_imguiCategory = i;
+	ImGui::PushStyleColor( ImGuiCol_TableBorderStrong, ImVec4( 0.28f, 0.58f, 0.18f, 0.92f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableBorderLight, ImVec4( 0.18f, 0.40f, 0.14f, 0.82f ) );
+	if ( ImGui::BeginTable( "modern_settings_layout", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoSavedSettings, ImVec2( 0, 0 ) ) ) {
+		ImGui::TableSetupColumn( "Navigation", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, 232.0f );
+		ImGui::TableSetupColumn( "Content", ImGuiTableColumnFlags_WidthStretch );
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex( 0 );
+		ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 8.0f, 7.0f ) );
+		ImGui::BeginChild( "modern_nav_panel", ImVec2( 0, 0 ), ImGuiChildFlags_AlwaysUseWindowPadding );
+		ImGui::TextDisabled( "CATEGORIES" );
+		ImGui::Separator();
+		for ( i = 0; i < IM_ARRAYSIZE( s_imguiModernCategories ); ++i ) {
+			CL_ImGuiDrawModernNavItem( i, &s_imguiModernCategories[i] );
 		}
-		bool hovered = ImGui::IsItemHovered();
-		if ( active ) {
-			draw->AddRectFilled( p, ImVec2( p.x + size.x, p.y + size.y ), IM_COL32( 42, 78, 32, 190 ), navRounding );
-			draw->AddRectFilled( ImVec2( p.x + 2.0f, p.y + 5.0f ), ImVec2( p.x + 5.0f, p.y + size.y - 5.0f ), IM_COL32( 112, 224, 70, 235 ), accentRounding );
-			draw->AddRect( p, ImVec2( p.x + size.x, p.y + size.y ), IM_COL32( 104, 206, 66, 200 ), navRounding, 0, 1.0f );
-		} else if ( hovered ) {
-			float hoverPulse = s_imguiAnimations && s_imguiAnimations->integer != 0 ? ( 0.60f + 0.20f * sinf( (float)ImGui::GetTime() * 6.0f ) ) : 0.60f;
-			draw->AddRectFilled( p, ImVec2( p.x + size.x, p.y + size.y ), IM_COL32( 36, 64, 28, 145 ), navRounding );
-			draw->AddRect( p, ImVec2( p.x + size.x, p.y + size.y ), ImGui::ColorConvertFloat4ToU32( ImVec4( 0.42f, 0.82f, 0.25f, hoverPulse ) ), navRounding, 0, 1.0f );
-			draw->AddRectFilled( ImVec2( p.x + 2.0f, p.y + 7.0f ), ImVec2( p.x + 4.0f, p.y + size.y - 7.0f ), IM_COL32( 100, 210, 64, 160 ), hoverAccentRounding );
-		}
-		draw->AddText( ImVec2( p.x + 12.0f, p.y + 6.0f ), active ? IM_COL32( 210, 246, 190, 255 ) : ( hovered ? IM_COL32( 190, 226, 170, 255 ) : IM_COL32( 150, 165, 145, 255 ) ), cats[i] );
-		ImGui::PopID();
+		ImGui::EndChild();
+		ImGui::PopStyleVar();
+
+		ImGui::TableSetColumnIndex( 1 );
+		ImGui::BeginChild( "modern_content_panel", ImVec2( 0, 0 ), false );
+		CL_ImGuiBeginAutoBox( "modern_content_header" );
+		ImGui::TextColored( ImVec4( 0.70f, 0.95f, 0.45f, 1.0f ), "%s  %s", s_imguiModernCategories[s_imguiCategory].icon, s_imguiModernCategories[s_imguiCategory].title );
+		ImGui::TextWrapped( "%s", s_imguiModernCategories[s_imguiCategory].desc );
+		ImGui::EndChild();
 		ImGui::Spacing();
+		ImGui::BeginChild( "modern_content_body", ImVec2( 0, 0 ), true );
+		switch ( s_imguiCategory ) {
+		case 0: CL_ImGuiDrawTimerPage(); break;
+		case 1: CL_ImGuiDrawSettingsSearchPage(); break;
+		case 2: CL_ImGuiDrawStylePage(); break;
+		case 3: CL_ImGuiDrawOverlayPage(); break;
+		case 4: CL_ImGuiDrawGamePage(); break;
+		case 5: CL_ImGuiDrawToolsPage(); break;
+		case 6: CL_ImGuiDrawBindsPage(); break;
+		case 7: CL_ImGuiDrawRecordsPage(); break;
+		case 8: CL_ImGuiDrawDemosPage(); break;
+		case 9: CL_ImGuiDrawActionsPage(); break;
+		case 10: CL_ImGuiDrawZonesPage(); break;
+		case 11: CL_ImGuiDrawRacePage(); break;
+		case 12: CL_ImGuiDrawDevPage(); break;
+		case 13: CL_ImGuiDrawHelpPage(); break;
+		default: CL_ImGuiDrawAboutPage(); break;
+		}
+		ImGui::EndChild();
+		ImGui::EndChild();
+		ImGui::EndTable();
 	}
-	ImGui::EndChild();
-	ImGui::SameLine();
-	ImGui::BeginChild( "content", ImVec2( 0, 0 ), true );
-	switch ( s_imguiCategory ) {
-	case 0: CL_ImGuiDrawTimerPage(); break;
-	case 1: CL_ImGuiDrawSettingsSearchPage(); break;
-	case 2: CL_ImGuiDrawStylePage(); break;
-	case 3: CL_ImGuiDrawOverlayPage(); break;
-	case 4: CL_ImGuiDrawGamePage(); break;
-	case 5: CL_ImGuiDrawToolsPage(); break;
-	case 6: CL_ImGuiDrawBindsPage(); break;
-	case 7: CL_ImGuiDrawRecordsPage(); break;
-	case 8: CL_ImGuiDrawDemosPage(); break;
-	case 9: CL_ImGuiDrawActionsPage(); break;
-	case 10: CL_ImGuiDrawDevPage(); break;
-	case 11: CL_ImGuiDrawHelpPage(); break;
-	default: CL_ImGuiDrawAboutPage(); break;
-	}
-	ImGui::EndChild();
+	ImGui::PopStyleColor( 2 );
 	ImGui::End();
 }
 
@@ -4354,6 +6805,22 @@ static void CL_SpeedrunImGui_Open_f( void ) {
 
 static void CL_SpeedrunImGui_Close_f( void ) {
 	CL_SpeedrunImGui_Close();
+}
+
+static void CL_SpeedrunImGui_ToggleRace_f( void ) {
+	if ( s_raceGuiOpen ) {
+		CL_SpeedrunImGui_CloseRaceGui();
+	} else {
+		CL_SpeedrunImGui_OpenRace();
+	}
+}
+
+static void CL_SpeedrunImGui_OpenRace_f( void ) {
+	CL_SpeedrunImGui_OpenRace();
+}
+
+static void CL_SpeedrunImGui_CloseRace_f( void ) {
+	CL_SpeedrunImGui_CloseRaceGui();
 }
 
 static bool CL_ImGuiCopyTextToClipboard( const char *text ) {
@@ -4390,18 +6857,18 @@ static void CL_SpeedrunImGui_DumpLiveSplitLayout_f( void ) {
 	static const char *names[] = {
 		"ls_x", "ls_y", "ls_w", "ls_scale", "ls_align", "ls_maxrows", "ls_opacity", "ls_opacity_ui", "ls_bgalpha", "ls_text_shadow",
 		"ls_draw", "ls_showtimer", "ls_showheader", "ls_showstats", "ls_showseg", "ls_showrgt", "ls_showpb", "ls_showbest", "ls_showseps", "ls_showdeltas", "ls_showbestdeltas", "ls_showatt", "ls_100pct",
-		"ls_imgui_rounding", "ls_imgui_padding", "ls_imgui_show_title", "ls_imgui_show_border", "ls_imgui_header_bg", "ls_imgui_show_status", "ls_imgui_gradient", "ls_imgui_gradient_angle", "ls_imgui_current_bg", "ls_imgui_border_size", "ls_imgui_font",
-		"ls_imgui_show_prevseg", "ls_imgui_show_ghostseg", "ls_imgui_show_bestsegments", "ls_imgui_row_size", "ls_imgui_name_size", "ls_imgui_bestdelta_size", "ls_imgui_delta_size", "ls_imgui_time_size", "ls_imgui_gold_rainbow",
+		"ls_imgui_rounding", "ls_imgui_padding", "ls_imgui_component_gap", "ls_imgui_show_title", "ls_imgui_show_border", "ls_imgui_header_bg", "ls_imgui_show_status", "ls_imgui_gradient", "ls_imgui_gradient_angle", "ls_imgui_current_bg", "ls_imgui_border_size", "ls_imgui_font",
+		"ls_imgui_show_prevseg", "ls_imgui_show_ghostseg", "ls_imgui_show_bestsegments", "ls_imgui_prev_gold_rainbow", "ls_imgui_row_size", "ls_imgui_name_size", "ls_imgui_bestdelta_size", "ls_imgui_delta_size", "ls_imgui_time_size", "ls_imgui_gold_rainbow",
 		"ls_imgui_col_name", "ls_imgui_col_best", "ls_imgui_col_delta", "ls_imgui_timer_size", "ls_imgui_stage_size", "ls_imgui_info_size", "ls_imgui_rgt_size", "ls_imgui_timer_gap", "ls_imgui_info_gap", "ls_imgui_timer_split",
 		"ls_imgui_show_sob", "ls_imgui_show_possible_save", "ls_imgui_show_best_possible",
-		"ls_imgui_bold_title", "ls_imgui_bold_attempts", "ls_imgui_bold_status", "ls_imgui_bold_header", "ls_imgui_bold_timer", "ls_imgui_bold_stage", "ls_imgui_bold_info", "ls_imgui_bold_splits", "ls_imgui_bold_split_name", "ls_imgui_bold_split_best", "ls_imgui_bold_split_delta", "ls_imgui_bold_split_time", "ls_imgui_bold_prev", "ls_imgui_bold_prev_label", "ls_imgui_bold_prev_value", "ls_imgui_bold_ghost", "ls_imgui_bold_stats", "ls_imgui_bold_stat_sob_label", "ls_imgui_bold_stat_sob_value", "ls_imgui_bold_stat_possible_label", "ls_imgui_bold_stat_possible_value", "ls_imgui_bold_stat_best_label", "ls_imgui_bold_stat_best_value", "ls_imgui_bold_rgt",
+		"ls_imgui_bold_title", "ls_imgui_bold_attempts", "ls_imgui_bold_status", "ls_imgui_bold_header", "ls_imgui_bold_timer", "ls_imgui_bold_stage", "ls_imgui_bold_info", "ls_imgui_bold_splits", "ls_imgui_bold_split_name", "ls_imgui_bold_split_best", "ls_imgui_bold_split_delta", "ls_imgui_bold_split_time", "ls_imgui_bold_prev", "ls_imgui_bold_prev_label", "ls_imgui_bold_prev_value", "ls_imgui_bold_ghost", "ls_imgui_bold_stats", "ls_imgui_bold_stats_values", "ls_imgui_bold_stat_sob_label", "ls_imgui_bold_stat_sob_value", "ls_imgui_bold_stat_possible_label", "ls_imgui_bold_stat_possible_value", "ls_imgui_bold_stat_best_label", "ls_imgui_bold_stat_best_value", "ls_imgui_bold_rgt",
 		"ls_imgui_text_gradient", "ls_imgui_text_gradient_angle",
 		"ls_clr_bg", "ls_clr_bg2", "ls_clr_border", "ls_clr_sep", "ls_clr_highlight", "ls_clr_text", "ls_clr_text_gradient2", "ls_clr_timer", "ls_clr_title", "ls_clr_category", "ls_clr_header_bg", "ls_clr_column_label",
-		"ls_clr_current", "ls_clr_completed", "ls_clr_future", "ls_clr_ahead", "ls_clr_behind", "ls_clr_gold", "ls_clr_stage_timer",
+		"ls_clr_current", "ls_clr_completed", "ls_clr_future", "ls_clr_split_time", "ls_clr_split_time_current", "ls_clr_split_time_completed", "ls_clr_ahead", "ls_clr_behind", "ls_clr_gold", "ls_clr_stage_timer",
 		"ls_clr_status_live", "ls_clr_status_ready", "ls_clr_status_pause", "ls_clr_status_done", "ls_clr_status_text",
 		"ls_clr_pb_label", "ls_clr_pb_value", "ls_clr_best_label", "ls_clr_best_value",
 		"ls_clr_prev_label", "ls_clr_prev_ahead", "ls_clr_prev_behind", "ls_clr_prev_gold",
-		"ls_clr_ghost_label", "ls_clr_ghost_time", "ls_clr_stat_label", "ls_clr_stat_sob", "ls_clr_stat_possible_label", "ls_clr_stat_possible_save", "ls_clr_stat_possible_zero", "ls_clr_stat_possible_missing", "ls_clr_stat_best_possible", "ls_clr_rgt", "ls_clr_empty",
+		"ls_clr_ghost_label", "ls_clr_ghost_time", "ls_clr_stat_label", "ls_clr_stat_sob_label", "ls_clr_stat_sob", "ls_clr_stat_possible_label", "ls_clr_stat_possible_save", "ls_clr_stat_possible_zero", "ls_clr_stat_possible_missing", "ls_clr_stat_best_possible_label", "ls_clr_stat_best_possible", "ls_clr_rgt", "ls_clr_empty",
 		"cg_drawKeys", "ks_ingame_only", "ks_x", "ks_y", "ks_scale", "ks_opacity", "ks_mouse", "ks_imgui", "ks_layout", "ks_effect", "ks_box_w", "ks_box_h", "ks_gap", "ks_rounding", "ks_border_size", "ks_font_scale",
 		"ks_mouse_grid_size", "ks_mouse_grid_cells", "ks_mouse_grid_cm", "ks_mouse_grid_run_cm", "ks_mouse_grid_total_cm_value", "ks_active_anchor", "ks_active_max", "ks_grid_keys", "ks_grid_keys_dir", "ks_grid_keys_x", "ks_grid_keys_y", "ks_grid_keys_font_scale",
 		"ks_show_use", "ks_show_reload", "ks_clr_bg", "ks_clr_active", "ks_clr_border", "ks_clr_active_border", "ks_clr_text", "ks_clr_active_text", "ks_clr_grid_checker", "ks_clr_grid_cross", "ks_clr_grid_trail", "ks_clr_grid_cm",
@@ -4470,6 +6937,10 @@ extern "C" void CL_SpeedrunImGui_Init( void ) {
 	s_imguiWindowY = Cvar_Get( "ui_speedrun_imgui_y", "28", CVAR_ARCHIVE );
 	s_imguiWindowW = Cvar_Get( "ui_speedrun_imgui_w", "660", CVAR_ARCHIVE );
 	s_imguiWindowH = Cvar_Get( "ui_speedrun_imgui_h", "500", CVAR_ARCHIVE );
+	s_raceGuiWindowX = Cvar_Get( "ui_race_imgui_x", "42", CVAR_ARCHIVE );
+	s_raceGuiWindowY = Cvar_Get( "ui_race_imgui_y", "34", CVAR_ARCHIVE );
+	s_raceGuiWindowW = Cvar_Get( "ui_race_imgui_w", "900", CVAR_ARCHIVE );
+	s_raceGuiWindowH = Cvar_Get( "ui_race_imgui_h", "640", CVAR_ARCHIVE );
 	s_cg_livesplit = Cvar_Get( "cg_livesplit", "0", CVAR_ARCHIVE );
 	s_ls_type = Cvar_Get( "ls_type", "0", CVAR_ARCHIVE );
 	s_ls_mode = Cvar_Get( "ls_mode", "0", CVAR_ARCHIVE );
@@ -4483,9 +6954,16 @@ extern "C" void CL_SpeedrunImGui_Init( void ) {
 	s_ls_showheaders = Cvar_Get( "ls_showheader", "1", CVAR_ARCHIVE );
 	s_ls_showstats = Cvar_Get( "ls_showstats", "1", CVAR_ARCHIVE );
 	s_ls_imgui = Cvar_Get( "ls_imgui", "1", CVAR_ARCHIVE );
+	CL_ImGuiForgetArchivedCvar( "ls_imgui_detached" );
+	CL_ImGuiForgetArchivedCvar( "ls_imgui_detached_x" );
+	CL_ImGuiForgetArchivedCvar( "ls_imgui_detached_y" );
+	CL_ImGuiForgetArchivedCvar( "ls_imgui_detached_w" );
+	CL_ImGuiForgetArchivedCvar( "ls_imgui_detached_h" );
+	CL_ImGuiForgetArchivedCvar( "ls_imgui_detached_ontop" );
 	Cvar_Set( "ls_imgui", "1" );
 	Cvar_Get( "ls_imgui_rounding", "0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_padding", "5", CVAR_ARCHIVE );
+	Cvar_Get( "ls_imgui_component_gap", "4", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_show_title", "0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_show_border", "1", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_header_bg", "0", CVAR_ARCHIVE );
@@ -4498,6 +6976,7 @@ extern "C" void CL_SpeedrunImGui_Init( void ) {
 	Cvar_Get( "ls_imgui_show_prevseg", "1", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_show_ghostseg", "0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_show_bestsegments", "0", CVAR_ARCHIVE );
+	Cvar_Get( "ls_imgui_prev_gold_rainbow", "0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_row_size", "0.88", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_name_size", "0.92", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_bestdelta_size", "0.920000", CVAR_ARCHIVE );
@@ -4536,6 +7015,7 @@ extern "C" void CL_SpeedrunImGui_Init( void ) {
 	Cvar_Get( "ls_imgui_bold_prev_value", "1", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_bold_ghost", "0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_bold_stats", "0", CVAR_ARCHIVE );
+	Cvar_Get( "ls_imgui_bold_stats_values", "0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_bold_stat_sob_label", "0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_bold_stat_sob_value", "1", CVAR_ARCHIVE );
 	Cvar_Get( "ls_imgui_bold_stat_possible_label", "0", CVAR_ARCHIVE );
@@ -4555,6 +7035,9 @@ extern "C" void CL_SpeedrunImGui_Init( void ) {
 	Cvar_Get( "ls_clr_category", "132 158 120 0.88", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_header_bg", "10 18 12 0.68", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_column_label", "128 142 118 0.68", CVAR_ARCHIVE );
+	Cvar_Get( "ls_clr_split_time", "218 226 214 0.92", CVAR_ARCHIVE );
+	Cvar_Get( "ls_clr_split_time_current", "224 246 214 1.00", CVAR_ARCHIVE );
+	Cvar_Get( "ls_clr_split_time_completed", "150 160 146 0.72", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_stage_timer", "178 190 172 0.84", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_pb_label", "128 142 118 0.68", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_pb_value", "218 226 214 0.92", CVAR_ARCHIVE );
@@ -4567,19 +7050,50 @@ extern "C" void CL_SpeedrunImGui_Init( void ) {
 	Cvar_Get( "ls_clr_ghost_label", "128 142 118 0.68", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_ghost_time", "178 190 172 0.84", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_stat_label", "128 142 118 0.68", CVAR_ARCHIVE );
+	Cvar_Get( "ls_clr_stat_sob_label", "128 142 118 0.68", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_stat_sob", "255 220 50 1.00", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_stat_possible_label", "128 142 118 0.68", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_stat_possible_save", "72 220 80 1.00", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_stat_possible_zero", "112 118 112 0.62", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_stat_possible_missing", "82 92 76 0.70", CVAR_ARCHIVE );
+	Cvar_Get( "ls_clr_stat_best_possible_label", "128 142 118 0.68", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_stat_best_possible", "255 220 50 1.00", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_rgt", "218 226 214 0.92", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_empty", "112 118 112 0.48", CVAR_ARCHIVE );
+	Cvar_Get( "sp_timer_decimals", "1", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer", "0", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_hud_progress", "1", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_edit", "0", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_draw", "0", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_draw_run_target_only", "1", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_opacity", "75", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_border_width", "0.75", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_start_color", "82 255 112 1.00", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_color", "82 184 255 1.00", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_finish_color", "255 108 86 1.00", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_handle_size", "6", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_handle_max_dist", "1200", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_hover_pixels", "18", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_drag_speed", "180", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_hud_x", "8", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_hud_y", "84", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_hud_scale", "1.0", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_hud_alpha", "0.52", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_bg", "5 8 7 0.86", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_bg2", "14 24 16 0.78", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_border", "105 170 70 0.46", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_time", "186 248 142 1.00", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_muted", "145 164 136 0.92", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_ahead", "108 255 108 1.00", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_behind", "255 92 72 1.00", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_gold", "255 220 46 1.00", CVAR_ARCHIVE );
+	Cvar_Get( "sp_zone_timer_clr_neutral", "235 190 62 1.00", CVAR_ARCHIVE );
 	Cvar_Get( "ls_clr_text_gradient2", "255 255 255 0.59", CVAR_ARCHIVE );
 	/* Runtime-open state must never survive a previous session.  If this cvar
 	   starts as 1 from an old config, legacy menu/cgame cursor drawing is hidden
 	   while ImGui is actually closed, making the normal game cursor disappear. */
 	s_imguiOpen = false;
+	s_raceGuiOpen = false;
 	s_lastEnabledCvar = 0;
 	if ( s_imguiEnabled ) {
 		Cvar_Set( s_imguiEnabled->name, "0" );
@@ -4588,6 +7102,11 @@ extern "C" void CL_SpeedrunImGui_Init( void ) {
 	Cmd_AddCommand( "speedrun_imgui", CL_SpeedrunImGui_Toggle_f );
 	Cmd_AddCommand( "speedrun_gui_open", CL_SpeedrunImGui_Open_f );
 	Cmd_AddCommand( "speedrun_gui_close", CL_SpeedrunImGui_Close_f );
+	Cmd_AddCommand( "race_gui", CL_SpeedrunImGui_ToggleRace_f );
+	Cmd_AddCommand( "race_gui_open", CL_SpeedrunImGui_OpenRace_f );
+	Cmd_AddCommand( "race_gui_close", CL_SpeedrunImGui_CloseRace_f );
+	Cmd_AddCommand( "ls_race_open", CL_SpeedrunImGui_OpenRace_f );
+	Cmd_AddCommand( "ls_race_close", CL_SpeedrunImGui_CloseRace_f );
 	Cmd_AddCommand( "speedrun_livesplit_dump", CL_SpeedrunImGui_DumpLiveSplitLayout_f );
 }
 
@@ -4606,14 +7125,21 @@ extern "C" void CL_SpeedrunImGui_InvalidateDeviceObjects( void ) {
 }
 
 extern "C" int CL_SpeedrunImGui_IsOpen( void ) {
-	return s_imguiOpen ? 1 : 0;
+	return CL_SpeedrunImGui_HasPanelOpen() ? 1 : 0;
 }
 
 extern "C" void CL_SpeedrunImGui_Draw( void ) {
 	int now;
 	float dt;
 	int enabledNow;
-	bool drawLiveSplitOverlay;
+	bool liveSplitVisible;
+	bool zoneTimerVisible;
+	bool raceVisible;
+	bool raceCountdownVisible;
+	bool raceChatVisible;
+	bool keystrokesVisible;
+	bool panelOpen;
+	bool raceGuiWasOpen;
 
 	enabledNow = s_imguiEnabled ? s_imguiEnabled->integer : 0;
 	if ( enabledNow && !s_lastEnabledCvar ) {
@@ -4622,49 +7148,74 @@ extern "C" void CL_SpeedrunImGui_Draw( void ) {
 		CL_SpeedrunImGui_Close();
 	}
 	s_lastEnabledCvar = enabledNow;
-	drawLiveSplitOverlay = CL_ImGuiShouldDrawLiveSplitOverlay();
-	if ( !s_imguiOpen && !drawLiveSplitOverlay ) {
+	zoneTimerVisible = CL_ImGuiShouldDrawZoneTimerOverlay();
+	raceVisible = CL_ImGuiShouldDrawRaceOverlay();
+	raceCountdownVisible = CL_ImGuiShouldDrawRaceCountdown();
+	raceChatVisible = CL_ImGuiShouldDrawRaceChat();
+	keystrokesVisible = CL_ImGuiShouldDrawKeystrokesOverlay();
+	if ( !s_imguiInitialized && s_imguiEnabled ) {
+		CL_ImGuiLazyInit();
+		CL_ImGuiEnsureDeviceObjects();
+	}
+	liveSplitVisible = CL_ImGuiShouldDrawLiveSplitOverlay();
+	if ( !CL_SpeedrunImGui_HasPanelOpen() && !liveSplitVisible && !zoneTimerVisible && !raceVisible && !raceCountdownVisible && !raceChatVisible && !keystrokesVisible ) {
 		return;
 	}
-	if ( s_imguiOpen ) {
+	if ( CL_SpeedrunImGui_HasPanelOpen() || s_raceChatOpen ) {
 		CL_SpeedrunImGui_ClearGameplayInput();
-		Key_SetCatcher( ( Key_GetCatcher() & ~KEYCATCH_CONSOLE ) | KEYCATCH_UI );
+		if ( CL_SpeedrunImGui_HasPanelOpen() ) Key_SetCatcher( ( Key_GetCatcher() & ~KEYCATCH_CONSOLE ) | KEYCATCH_UI );
 		if ( cls.state == CA_ACTIVE ) {
-			if ( !cl_paused || !cl_paused->integer ) {
+			if ( CL_SpeedrunImGui_HasPanelOpen() && ( !cl_paused || !cl_paused->integer ) ) {
 				Cvar_Set( "cl_paused", "1" );
 			}
-			if ( s_imguiRestorePause && !s_imguiRestorePause->integer ) {
+			if ( CL_SpeedrunImGui_HasPanelOpen() && s_imguiRestorePause && !s_imguiRestorePause->integer ) {
 				Cvar_Set( s_imguiRestorePause->name, "1" );
 			}
 		}
 	}
 
 	CL_ImGuiLazyInit();
+	CL_ImGuiEnsureDeviceObjects();
 	CL_ImGuiApplyRuntimeStyle();
 
 	ImGuiIO &io = ImGui::GetIO();
-	io.DisplaySize = ImVec2( (float)cls.glconfig.vidWidth, (float)cls.glconfig.vidHeight );
 	now = Sys_Milliseconds();
 	dt = s_lastFrameMs > 0 ? ( now - s_lastFrameMs ) / 1000.0f : 1.0f / 60.0f;
 	if ( dt <= 0.0f ) dt = 1.0f / 60.0f;
 	s_lastFrameMs = now;
 	if ( s_imguiAnimations && s_imguiAnimations->integer != 0 ) {
 		s_imguiAnim = Com_Clamp( 0.0f, 1.0f, s_imguiAnim + dt * 3.8f );
+		s_raceGuiAnim = Com_Clamp( 0.0f, 1.0f, s_raceGuiAnim + dt * 3.8f );
 	} else {
 		s_imguiAnim = 1.0f;
+		s_raceGuiAnim = 1.0f;
 	}
+	io.DisplaySize = ImVec2( (float)cls.glconfig.vidWidth, (float)cls.glconfig.vidHeight );
 	io.DeltaTime = dt;
-	io.MouseDown[0] = s_imguiOpen ? s_mouseDown[0] : false;
-	io.MouseDown[1] = s_imguiOpen ? s_mouseDown[1] : false;
-	io.MouseDown[2] = s_imguiOpen ? s_mouseDown[2] : false;
-	io.MouseWheel = s_imguiOpen ? s_mouseWheel : 0.0f;
-	io.MouseDrawCursor = s_imguiOpen;
-	s_mouseWheel = 0.0f;
+	panelOpen = CL_SpeedrunImGui_HasPanelOpen();
+	CL_ImGuiUpdateMousePosition( io );
+	io.MouseDown[0] = panelOpen ? s_mouseDown[0] : false;
+	io.MouseDown[1] = panelOpen ? s_mouseDown[1] : false;
+	io.MouseDown[2] = panelOpen ? s_mouseDown[2] : false;
+	io.MouseWheel = panelOpen ? s_mouseWheel : 0.0f;
+	io.MouseDrawCursor = panelOpen || s_raceChatOpen;
 
 	ImGui_ImplOpenGL2_NewFrame();
 	ImGui::NewFrame();
-	if ( drawLiveSplitOverlay ) {
+	if ( liveSplitVisible ) {
 		CL_ImGuiDrawLiveSplitOverlay();
+	}
+	if ( zoneTimerVisible ) {
+		CL_ImGuiDrawZoneTimerOverlay();
+	}
+	if ( raceVisible ) {
+		CL_ImGuiDrawRaceOverlay();
+	}
+	if ( raceCountdownVisible ) {
+		CL_ImGuiDrawRaceCenterCountdown();
+	}
+	if ( raceChatVisible ) {
+		CL_ImGuiDrawRaceChatOverlay();
 	}
 	CL_ImGuiDrawKeystrokesOverlay();
 	if ( s_imguiOpen ) {
@@ -4674,30 +7225,42 @@ extern "C" void CL_SpeedrunImGui_Draw( void ) {
 		CL_ImGuiDrawSettings();
 		ImGui::PopStyleVar();
 	}
+	raceGuiWasOpen = s_raceGuiOpen;
+	if ( s_raceGuiOpen ) {
+		ImGui::PushStyleVar( ImGuiStyleVar_Alpha, 0.08f + 0.92f * CL_ImGuiEaseOutCubic( s_raceGuiAnim ) );
+		CL_ImGuiDrawRaceControlWindow();
+		ImGui::PopStyleVar();
+	}
 	if ( enabledNow && !s_imguiOpen ) {
 		/* Window X / close path: keep cvar and state in sync so it does not
 		   immediately reopen on the next frame. Do not render this just-closed
 		   frame, otherwise the old window can remain visible until the next clear. */
 		CL_SpeedrunImGui_Close();
 		ImGui::EndFrame();
-		return;
+	} else if ( raceGuiWasOpen && !s_raceGuiOpen && !s_imguiOpen ) {
+		CL_SpeedrunImGui_CloseRaceGui();
+		ImGui::EndFrame();
+	} else {
+		ImGui::Render();
+		/* RtCW's fixed-function renderer is sensitive to client array/scissor/state
+		   leaks. Keep the full guard here; without it ImGui can leave GL state that
+		   causes window trails/ghosting after the panel is closed. */
+		glPushAttrib( GL_ALL_ATTRIB_BITS );
+		glPushClientAttrib( GL_CLIENT_ALL_ATTRIB_BITS );
+		CL_SpeedrunImGui_SetupKnownGLState();
+		ImGui_ImplOpenGL2_RenderDrawData( ImGui::GetDrawData() );
+		glPopClientAttrib();
+		glPopAttrib();
 	}
-	ImGui::Render();
-	/* RtCW's fixed-function renderer is sensitive to client array/scissor/state
-	   leaks. Keep the full guard here; without it ImGui can leave GL state that
-	   causes window trails/ghosting after the panel is closed. */
-	glPushAttrib( GL_ALL_ATTRIB_BITS );
-	glPushClientAttrib( GL_CLIENT_ALL_ATTRIB_BITS );
-	CL_SpeedrunImGui_SetupKnownGLState();
-	ImGui_ImplOpenGL2_RenderDrawData( ImGui::GetDrawData() );
-	glPopClientAttrib();
-	glPopAttrib();
+	s_mouseWheel = 0.0f;
 }
 
 extern "C" int CL_SpeedrunImGui_WndProc( void *hWnd, unsigned int uMsg, unsigned int wParam, long lParam ) {
-	(void)hWnd;
+	bool panelOpen;
+	s_imguiHwnd = (HWND)hWnd;
+	panelOpen = CL_SpeedrunImGui_HasPanelOpen();
 
-	if ( !s_imguiOpen ) {
+	if ( !panelOpen && !s_raceChatOpen ) {
 		return 0;
 	}
 
@@ -4714,12 +7277,15 @@ extern "C" int CL_SpeedrunImGui_WndProc( void *hWnd, unsigned int uMsg, unsigned
 			io.AddMousePosEvent( (float)(short)LOWORD( lParam ), (float)(short)HIWORD( lParam ) );
 			return 1;
 		case WM_RBUTTONDOWN:
+			if ( s_raceChatOpen && !panelOpen ) return 1;
 			if ( s_pendingBindCommand ) { CL_ImGuiAssignPendingBind( K_MOUSE2 ); return 1; }
 			s_mouseDown[1] = true; io.AddMouseButtonEvent( 1, true ); return 1;
 		case WM_MBUTTONDOWN:
+			if ( s_raceChatOpen && !panelOpen ) return 1;
 			if ( s_pendingBindCommand ) { CL_ImGuiAssignPendingBind( K_MOUSE3 ); return 1; }
 			s_mouseDown[2] = true; io.AddMouseButtonEvent( 2, true ); return 1;
 		case WM_LBUTTONDOWN:
+			if ( s_raceChatOpen && !panelOpen ) return 1;
 			if ( s_pendingBindCommand ) { CL_ImGuiAssignPendingBind( K_MOUSE1 ); return 1; }
 			s_mouseDown[0] = true; io.AddMouseButtonEvent( 0, true ); return 1;
 		case WM_LBUTTONUP: s_mouseDown[0] = false; io.AddMouseButtonEvent( 0, false ); return 1;
@@ -4730,14 +7296,24 @@ extern "C" int CL_SpeedrunImGui_WndProc( void *hWnd, unsigned int uMsg, unsigned
 			io.AddMouseWheelEvent( 0.0f, ( (short)HIWORD( wParam ) > 0 ) ? 1.0f : -1.0f );
 			return 1;
 		case WM_CHAR:
+			if ( s_raceChatOpen && Sys_Milliseconds() < s_raceChatSuppressInputUntilMs ) return 1;
 			if ( wParam > 0 && wParam < 0x10000 ) {
 				io.AddInputCharacter( (unsigned int)wParam );
 			}
 			return 1;
 		case WM_KEYDOWN:
 		case WM_SYSKEYDOWN:
+			if ( s_raceChatOpen && Sys_Milliseconds() < s_raceChatSuppressInputUntilMs && wParam != VK_ESCAPE ) return 1;
 			if ( s_pendingBindCommand ) {
 				CL_ImGuiAssignPendingBind( CL_ImGuiWinKeyToQuake( wParam, lParam ) );
+				return 1;
+			}
+			if ( wParam == VK_ESCAPE && s_raceChatOpen ) {
+				CL_SpeedrunImGui_CloseRaceChat();
+				return 1;
+			}
+			if ( wParam == VK_ESCAPE && s_raceGuiOpen ) {
+				CL_SpeedrunImGui_CloseRaceGui();
 				return 1;
 			}
 			if ( wParam == VK_ESCAPE ) {
@@ -4748,6 +7324,7 @@ extern "C" int CL_SpeedrunImGui_WndProc( void *hWnd, unsigned int uMsg, unsigned
 			return 1;
 		case WM_KEYUP:
 		case WM_SYSKEYUP:
+			if ( s_raceChatOpen && Sys_Milliseconds() < s_raceChatSuppressInputUntilMs ) return 1;
 			io.AddKeyEvent( CL_ImGuiMapVK( wParam ), false );
 			return 1;
 		}

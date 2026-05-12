@@ -44,6 +44,32 @@ cvar_t		*scr_surroundleft;		// left placement of HUD/menu elements on center scr
 cvar_t		*scr_surroundright;		// right placement of HUD/menu elements on center screen in triple-wide video modes
 // end Knightmare
 
+static qboolean SCR_GetBlackbarSafeRange( float *safeLeft, float *safeRight ) {
+	int left, right, total, maxTotal;
+
+	if ( cls.glconfig.vidWidth <= 0 || cls.glconfig.vidHeight <= 0 ) return qfalse;
+	if ( !Cvar_VariableIntegerValue( "cg_blackbars" ) ) return qfalse;
+	left = Cvar_VariableIntegerValue( "cg_blackbarLeft" );
+	right = Cvar_VariableIntegerValue( "cg_blackbarRight" );
+	if ( left < 0 ) left = 0;
+	if ( right < 0 ) right = 0;
+	if ( left <= 0 && right <= 0 ) return qfalse;
+
+	maxTotal = cls.glconfig.vidWidth - 320;
+	if ( maxTotal < 0 ) maxTotal = 0;
+	total = left + right;
+	if ( total > maxTotal && total > 0 ) {
+		left = (int)( (float)left * (float)maxTotal / (float)total );
+		right = maxTotal - left;
+	}
+
+	if ( cls.glconfig.vidWidth - right <= left ) return qfalse;
+
+	if ( safeLeft ) *safeLeft = (float)left;
+	if ( safeRight ) *safeRight = (float)( cls.glconfig.vidWidth - right );
+	return qtrue;
+}
+
 /*
 ================
 SCR_DrawNamedPic
@@ -73,7 +99,10 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 	float	screenAspect;
 	float	xscale, lb_xscale, yscale, minscale, vertscale;	// Knightmare added
 	float	tmp_x, tmp_y, tmp_w, tmp_h, tmp_left, tmp_right;	// Knightmare added
-	float	xleft, xright;
+	float	xleft, xright, safeLeft, safeRight;
+	qboolean blackbarSafe;
+
+	if ( cls.glconfig.vidWidth <= 0 || cls.glconfig.vidHeight <= 0 ) return;
 
 #if 0
 	// adjust for wide screens
@@ -106,8 +135,18 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 		xright = (float)cls.glconfig.vidWidth;
 		xscale = (float)cls.glconfig.vidWidth / SCREEN_WIDTH;
 	}
+	blackbarSafe = SCR_GetBlackbarSafeRange( &safeLeft, &safeRight );
+	if ( blackbarSafe ) {
+		if ( safeLeft > xleft ) xleft = safeLeft;
+		if ( safeRight < xright ) xright = safeRight;
+		if ( xright <= xleft ) {
+			xleft = safeLeft;
+			xright = safeRight;
+		}
+		xscale = ( xright - xleft ) / SCREEN_WIDTH;
+	}
 
-	lb_xscale = (float)cls.glconfig.vidWidth / SCREEN_WIDTH;
+	lb_xscale = blackbarSafe ? xscale : (float)cls.glconfig.vidWidth / SCREEN_WIDTH;
 	yscale = (float)cls.glconfig.vidHeight / SCREEN_HEIGHT;
 	minscale = min(xscale, yscale);
 
@@ -121,7 +160,7 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 	case ALIGN_CENTER:
 		if (x) {
 		tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * cls.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -170,7 +209,7 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 			*h *= minscale;
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * cls.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y)
 			*y *= minscale;
@@ -182,7 +221,7 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 			*h *= minscale;
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * cls.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -208,8 +247,10 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 			*w *= minscale;
 		if (h)
 			*h *= minscale;
-		if (x)
-			*x *= minscale + xleft;
+		if (x) {
+			tmp_x = *x;
+			*x = tmp_x * minscale + xleft;
+		}
 		if (y) {
 			tmp_y = *y;
 			*y = (tmp_y - (0.5 * SCREEN_HEIGHT)) * minscale + (0.5 * cls.glconfig.vidHeight);
@@ -295,7 +336,7 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 		break;
 	case ALIGN_STRETCH_ALL:
 		if (x)
-			*x *= lb_xscale;
+			*x = *x * lb_xscale + ( blackbarSafe ? xleft : 0.0f );
 		if (y) 
 			*y *= yscale;
 		if (w) 
@@ -308,7 +349,7 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 			tmp_x = *x;
 			tmp_w = *w;
 			tmp_left = tmp_x * xscale + xleft;
-			tmp_right = (tmp_x + tmp_w - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(cls.glconfig.vidWidth));
+			tmp_right = (tmp_x + tmp_w - (0.5*SCREEN_WIDTH)) * minscale + (0.5*( xleft + xright ));
 			*x = tmp_left;
 			*w = tmp_right - tmp_left;
 		}
@@ -321,7 +362,7 @@ void SCR_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align
 		if (x && w) {
 			tmp_x = *x;
 			tmp_w = *w;
-			tmp_left = (tmp_x - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(cls.glconfig.vidWidth));
+			tmp_left = (tmp_x - (0.5*SCREEN_WIDTH)) * minscale + (0.5*( xleft + xright ));
 			tmp_right = (tmp_x + tmp_w - SCREEN_WIDTH) * xscale + xright;
 			*x = tmp_left;
 			*w = tmp_right - tmp_left;
@@ -367,9 +408,16 @@ Coordinates are 640*480 virtual values
 =================
 */
 void SCR_FillRect( float x, float y, float width, float height, const float *color ) {
-	re.SetColor( color );
+	static const vec4_t fallbackColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+	if ( width <= 0.0f || height <= 0.0f ) return;
+	if ( !cls.whiteShader ) return;
+	if ( !color ) color = fallbackColor;
 
 	SCR_AdjustFrom640( &x, &y, &width, &height, ALIGN_STRETCH );
+	if ( width <= 0.0f || height <= 0.0f ) return;
+
+	re.SetColor( color );
 	re.DrawStretchPic( x, y, width, height, 0, 0, 0, 0, cls.whiteShader );
 
 	re.SetColor( NULL );
@@ -399,6 +447,9 @@ void SCR_DrawChar( int x, int y, float size, int ch ) {
 	float frow, fcol;
 	float ax, ay, aw, ah;
 
+	if ( size <= 0.0f ) return;
+	if ( !cls.charSetShader ) return;
+
 	ch &= 255;
 
 	if ( ch == ' ' ) {
@@ -414,6 +465,7 @@ void SCR_DrawChar( int x, int y, float size, int ch ) {
 	aw = size;
 	ah = size;
 	SCR_AdjustFrom640( &ax, &ay, &aw, &ah, ALIGN_STRETCH );
+	if ( aw <= 0.0f || ah <= 0.0f ) return;
 
 	row = ch >> 4;
 	col = ch & 15;
@@ -436,6 +488,8 @@ void SCR_DrawSmallChar( int x, int y, int ch ) {
 	int row, col;
 	float frow, fcol;
 	float size;
+
+	if ( !cls.charSetShader ) return;
 
 	ch &= 255;
 
@@ -473,12 +527,27 @@ Coordinates are at 640 by 480 virtual resolution
 */
 void SCR_DrawStringExt( int x, int y, float size, const char *string, float *setColor, qboolean forceColor ) {
 	vec4_t color;
+	vec4_t fallbackColor;
+	float *drawColor;
 	const char  *s;
 	int xx;
 
+	if ( !string || !string[0] || size <= 0.0f ) return;
+	if ( !cls.charSetShader ) return;
+
+	if ( setColor ) {
+		drawColor = setColor;
+	} else {
+		fallbackColor[0] = 1.0f;
+		fallbackColor[1] = 1.0f;
+		fallbackColor[2] = 1.0f;
+		fallbackColor[3] = 1.0f;
+		drawColor = fallbackColor;
+	}
+
 	// draw the drop shadow
 	color[0] = color[1] = color[2] = 0;
-	color[3] = setColor[3] * 0.6f;
+	color[3] = drawColor[3] * 0.6f;
 	re.SetColor( color );
 	s = string;
 	xx = x;
@@ -496,12 +565,12 @@ void SCR_DrawStringExt( int x, int y, float size, const char *string, float *set
 	// draw the colored text
 	s = string;
 	xx = x;
-	re.SetColor( setColor );
+	re.SetColor( drawColor );
 	while ( *s ) {
 		if ( Q_IsColorString( s ) ) {
 			if ( !forceColor ) {
 				memcpy( color, g_color_table[ColorIndex( *( s + 1 ) )], sizeof( color ) );
-				color[3] = setColor[3];
+				color[3] = drawColor[3];
 				re.SetColor( color );
 			}
 			s += 2;
@@ -540,18 +609,32 @@ Coordinates are at 640 by 480 virtual resolution
 */
 void SCR_DrawSmallStringExt( int x, int y, const char *string, float *setColor, qboolean forceColor ) {
 	vec4_t color;
+	vec4_t fallbackColor;
+	float *drawColor;
 	const char  *s;
 	int xx;
+
+	if ( !string || !string[0] ) return;
+
+	if ( setColor ) {
+		drawColor = setColor;
+	} else {
+		fallbackColor[0] = 1.0f;
+		fallbackColor[1] = 1.0f;
+		fallbackColor[2] = 1.0f;
+		fallbackColor[3] = 1.0f;
+		drawColor = fallbackColor;
+	}
 
 	// draw the colored text
 	s = string;
 	xx = x;
-	re.SetColor( setColor );
+	re.SetColor( drawColor );
 	while ( *s ) {
 		if ( Q_IsColorString( s ) ) {
 			if ( !forceColor ) {
 				memcpy( color, g_color_table[ColorIndex( *( s + 1 ) )], sizeof( color ) );
-				color[3] = setColor[3];
+				color[3] = drawColor[3];
 				re.SetColor( color );
 			}
 			s += 2;
@@ -1341,8 +1424,10 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 		SCR_DrawDebugGraph();
 	}
 
-	// LiveSplit overlay - always on top, visible in all states
-	SCR_LiveSplitDraw();
+	// LiveSplit overlay/state sync. SCR_LiveSplitDraw handles menu/gameplay safety internally.
+	if ( cls.rendererStarted ) {
+		SCR_LiveSplitDraw();
+	}
 
 	// Update notification overlay
 	SCR_UpdateDraw();
