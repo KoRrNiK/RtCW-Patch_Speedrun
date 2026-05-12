@@ -1896,9 +1896,22 @@ BG_GetAnimString
 */
 char *BG_GetAnimString( int client, int anim ) {
 	animModelInfo_t *modelinfo = BG_ModelInfoForClient( client );
+	static int lastWarnClient = -1;
+	static int lastWarnAnim = -999999;
+	static int lastWarnCount = -1;
 	//
-	if ( anim >= modelinfo->numAnimations ) {
-		BG_AnimParseError( "BG_GetAnimString: anim index is out of range" );
+	if ( modelinfo->numAnimations <= 0 ) {
+		return "";
+	}
+	if ( anim < 0 || anim >= modelinfo->numAnimations ) {
+		if ( lastWarnClient != client || lastWarnAnim != anim || lastWarnCount != modelinfo->numAnimations ) {
+			Com_Printf( "BG_GetAnimString: invalid animation %i for client %i model %s (animations: %i), using %s\n",
+				anim, client, modelinfo->modelname, modelinfo->numAnimations, modelinfo->animations[0].name );
+			lastWarnClient = client;
+			lastWarnAnim = anim;
+			lastWarnCount = modelinfo->numAnimations;
+		}
+		return modelinfo->animations[0].name;
 	}
 	//
 	return modelinfo->animations[anim].name;

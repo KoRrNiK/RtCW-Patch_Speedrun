@@ -651,6 +651,9 @@ void Blocked_Tramcar( gentity_t *ent, gentity_t *other ) {
 
 	if ( other->flags & FL_GODMODE ) {
 		other->flags &= ~FL_GODMODE;
+		if ( other->s.number == 0 ) {
+			trap_Cvar_Set( "ls_godmode", "0" );
+		}
 		other->client->ps.stats[STAT_HEALTH] = other->health = 0;
 	}
 

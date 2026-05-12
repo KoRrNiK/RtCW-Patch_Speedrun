@@ -36,6 +36,8 @@ If you have questions concerning this license or the applicable additional terms
 extern void G_CheckForCursorHints( gentity_t *ent );
 extern int bh_movement_integer;
 
+#define DEFAULT_CASTAI_PMOVE_SPEED 320.0f
+
 
 
 /*
@@ -701,7 +703,7 @@ void ClientEvents( gentity_t *ent, int oldEventSequence ) {
 				stunTime = 0;
 			}
 
-			if ( bh_movement_integer ) {
+			if ( bh_movement_integer && !ent->client->ps.aiChar ) {
 				stunTime = 0;
 			}
 
@@ -1071,8 +1073,8 @@ void ClientThink_real( gentity_t *ent ) {
 
 	client->ps.gravity = g_gravity.value;
 
-	// set speed
-	client->ps.speed = g_speed.value;
+	// Keep HL1 category speed changes player-only; cast AI uses the normal baseline.
+	client->ps.speed = ( bh_movement_integer && client->ps.aiChar ) ? DEFAULT_CASTAI_PMOVE_SPEED : g_speed.value;
 
 	if ( client->ps.powerups[PW_HASTE] ) {
 		client->ps.speed *= 1.3;

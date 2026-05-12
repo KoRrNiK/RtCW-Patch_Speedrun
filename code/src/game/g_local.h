@@ -799,6 +799,8 @@ void    G_KillBox( gentity_t *ent );
 gentity_t *G_Find( gentity_t *from, int fieldofs, const char *match );
 gentity_t *G_PickTarget( char *targetname );
 void    G_UseTargets( gentity_t *ent, gentity_t *activator );
+void    G_TriggerUseByName_f( gentity_t *activator );
+void    G_TriggerList_f( void );
 void    G_SetMovedir( vec3_t angles, vec3_t movedir );
 
 void    G_InitGentity( gentity_t *e );
@@ -1053,6 +1055,7 @@ void BotTestAAS( vec3_t origin );
 // g_cmd.c
 void Cmd_Activate_f( gentity_t *ent );
 int Cmd_WolfKick_f( gentity_t *ent );
+void G_PracticeSnapshotsShutdown( void );
 // Ridah
 
 // g_save.c

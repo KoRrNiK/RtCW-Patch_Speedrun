@@ -52,22 +52,30 @@ int bh_autojump_integer;
 #define HL1_STOPSPEED 100.0f
 #define HL1_JUMP_HEIGHT 45.0f
 
+qboolean PM_UseHL1Movement( void ) {
+	return ( bh_movement_integer && pm && pm->ps && !pm->ps->aiChar ) ? qtrue : qfalse;
+}
+
+static qboolean PM_UseHL1AutoJump( void ) {
+	return ( PM_UseHL1Movement() && bh_autojump_integer ) ? qtrue : qfalse;
+}
+
 static qboolean PM_HL1CrouchJumpHeld( void ) {
-	return ( bh_movement_integer && pm && pm->cmd.upmove == 0 &&
+	return ( PM_UseHL1Movement() && pm->cmd.upmove == 0 &&
 		( pm->cmd.wbuttons & WBUTTON_CROUCH ) &&
 		( pm->cmd.wbuttons & WBUTTON_JUMP ) ) ? qtrue : qfalse;
 }
 
 static qboolean PM_HL1JumpHeld( void ) {
-	return ( bh_movement_integer && pm && ( pm->cmd.upmove >= 10 || PM_HL1CrouchJumpHeld() ) ) ? qtrue : qfalse;
+	return ( PM_UseHL1Movement() && ( pm->cmd.upmove >= 10 || PM_HL1CrouchJumpHeld() ) ) ? qtrue : qfalse;
 }
 
 static qboolean PM_HL1DuckHeld( void ) {
-	return ( bh_movement_integer && pm && ( pm->cmd.upmove < 0 || ( pm->cmd.wbuttons & WBUTTON_CROUCH ) ) ) ? qtrue : qfalse;
+	return ( PM_UseHL1Movement() && ( pm->cmd.upmove < 0 || ( pm->cmd.wbuttons & WBUTTON_CROUCH ) ) ) ? qtrue : qfalse;
 }
 
 static void PM_HL1ScaleDuckedCmd( usercmd_t *cmd ) {
-	if ( !bh_movement_integer || !( pm->ps->pm_flags & PMF_DUCKED ) ) {
+	if ( !PM_UseHL1Movement() || !( pm->ps->pm_flags & PMF_DUCKED ) ) {
 		return;
 	}
 
@@ -81,7 +89,7 @@ static void PM_HL1ScaleDuckedCmd( usercmd_t *cmd ) {
 static void PM_HL1SetVelocityForGroundPlane( void ) {
 	float n2;
 
-	if ( !bh_movement_integer || !pml.walking ) {
+	if ( !PM_UseHL1Movement() || !pml.walking ) {
 		return;
 	}
 
@@ -350,8 +358,8 @@ static void PM_Friction( void ) {
 		if ( pml.walking && !( pml.groundTrace.surfaceFlags & SURF_SLICK ) ) {
 			// if getting knocked back, no friction
 			if ( !( pm->ps->pm_flags & PMF_TIME_KNOCKBACK ) ) {
-				float stopspeed = bh_movement_integer ? HL1_STOPSPEED : pm_stopspeed;
-				float friction = bh_movement_integer ? HL1_FRICTION : pm_friction;
+				float stopspeed = PM_UseHL1Movement() ? HL1_STOPSPEED : pm_stopspeed;
+				float friction = PM_UseHL1Movement() ? HL1_FRICTION : pm_friction;
 				control = speed < stopspeed ? stopspeed : speed;
 				drop += control * friction * pm->ps->friction * pml.frametime;
 			}
@@ -413,7 +421,7 @@ static void PM_Accelerate( vec3_t wishdir, float wishspeed, float accel ) {
 		return;
 	}
 	accelspeed = accel * pml.frametime * wishspeed;
-	if ( bh_movement_integer ) {
+	if ( PM_UseHL1Movement() ) {
 		accelspeed *= pm->ps->friction;
 	}
 	if ( accelspeed > addspeed ) {
@@ -421,7 +429,7 @@ static void PM_Accelerate( vec3_t wishdir, float wishspeed, float accel ) {
 	}
 
 	// Ridah, variable friction for AI's
-	if ( !bh_movement_integer && pm->ps->groundEntityNum != ENTITYNUM_NONE ) {
+	if ( !PM_UseHL1Movement() && pm->ps->groundEntityNum != ENTITYNUM_NONE ) {
 		accelspeed *= ( 1.0 / pm->ps->friction );
 	}
 	if ( accelspeed > addspeed ) {
@@ -481,7 +489,7 @@ static float PM_CmdScale( usercmd_t *cmd ) {
 	}
 
 	upmove = cmd->upmove;
-	if ( bh_movement_integer && upmove < 0 && ( cmd->wbuttons & WBUTTON_CROUCH ) ) {
+	if ( PM_UseHL1Movement() && upmove < 0 && ( cmd->wbuttons & WBUTTON_CROUCH ) ) {
 		// HL1 duck is a hull change, not real vertical movement.  Do not let
 		// crouch reduce air-strafe/wish speed through cmdscale.
 		upmove = 0;
@@ -502,7 +510,7 @@ static float PM_CmdScale( usercmd_t *cmd ) {
 				  + cmd->rightmove * cmd->rightmove + upmove * upmove );
 	scale = (float)pm->ps->speed * max / ( 127.0 * total );
 
-	if ( bh_movement_integer ) {
+	if ( PM_UseHL1Movement() ) {
 		// HL1 movement uses g_speed directly (default 320), not RtCW's 0.8 run scale.
 	} else if ( pm->cmd.buttons & BUTTON_SPRINT && pm->ps->sprintTime > 50 ) {
 		scale *= pm->ps->sprintSpeedScale;
@@ -627,7 +635,7 @@ static qboolean PM_CheckJump( void ) {
 	// JPW NERVE -- jumping in multiplayer uses and requires sprint juice (to prevent turbo skating, sprint + jumps)
 	// don't allow jump accel
 //	if (pm->cmd.serverTime - pm->ps->jumpTime < 850)
-	if ( !bh_movement_integer && !bh_autojump_integer && pm->cmd.serverTime - pm->ps->jumpTime < 500 ) {  // (SA) trying shorter time
+	if ( !PM_UseHL1Movement() && !PM_UseHL1AutoJump() && pm->cmd.serverTime - pm->ps->jumpTime < 500 ) {  // (SA) trying shorter time
 		return qfalse;
 	}
 
@@ -635,7 +643,7 @@ static qboolean PM_CheckJump( void ) {
 		return qfalse;      // don't allow jump until all buttons are up
 	}
 
-	if ( bh_autojump_integer ) {
+	if ( PM_UseHL1AutoJump() ) {
 		// HL1-style bhop: when both jump+crouch are held, upmove cancels to 0.
 		// Require both WBUTTON_JUMP and WBUTTON_CROUCH to distinguish this from
 		// duck-only at a frame boundary (where CL_KeyState returns 0).
@@ -662,7 +670,7 @@ static qboolean PM_CheckJump( void ) {
 	pm->ps->pm_flags |= PMF_JUMP_HELD;
 
 	pm->ps->groundEntityNum = ENTITYNUM_NONE;
-	pm->ps->velocity[2] = bh_movement_integer ? sqrt( 2.0f * pm->ps->gravity * HL1_JUMP_HEIGHT ) : JUMP_VELOCITY;
+	pm->ps->velocity[2] = PM_UseHL1Movement() ? sqrt( 2.0f * pm->ps->gravity * HL1_JUMP_HEIGHT ) : JUMP_VELOCITY;
 	PM_AddEvent( EV_JUMP );
 
 	if ( pm->cmd.forwardmove >= 0 ) {
@@ -939,7 +947,7 @@ static void PM_AirControl( vec3_t wishdir, float wishspeed ) {
 	float zspeed, speed, dot, k;
 	int i;
 
-	if ( !bh_movement_integer || pm_hl1aircontrol <= 0.0f ) {
+	if ( !PM_UseHL1Movement() || pm_hl1aircontrol <= 0.0f ) {
 		return;
 	}
 
@@ -1017,7 +1025,7 @@ static void PM_AirMove( void ) {
 	wishspeed *= scale;
 
 	// not on ground, so little effect on velocity
-	if ( bh_movement_integer ) {
+	if ( PM_UseHL1Movement() ) {
 		PM_AirAccelerateHL( wishdir, wishspeed, pm_hl1airaccelerate );
 		PM_AirControl( wishdir, wishspeed );
 	} else {
@@ -1028,7 +1036,7 @@ static void PM_AirMove( void ) {
 	// though we don't have a groundentity
 	// slide along the steep plane
 	if ( pml.groundPlane ) {
-		if ( bh_movement_integer ) {
+		if ( PM_UseHL1Movement() ) {
 			// HL1/CS-style surf physics: preserve speed on steep surfaces
 			// Instead of hard-clipping velocity, smoothly redirect along the surface
 			float speedBefore;
@@ -1152,7 +1160,7 @@ static void PM_WalkMove( void ) {
 				pm->ps->jumpTime = pm->cmd.serverTime;
 
 				stamtake = 2000;    // amount to take for jump
-				if ( bh_movement_integer ) {
+				if ( PM_UseHL1Movement() ) {
 					stamtake = 0;
 				}
 
@@ -1201,7 +1209,7 @@ static void PM_WalkMove( void ) {
 	// HL1 keeps command wish velocity flat on walkable slopes.  RtCW's ground-plane
 	// projection makes forward uphill movement fight the plane while side movement
 	// gets over-amplified, so keep the HL1 path XY-only here.
-	if ( !bh_movement_integer ) {
+	if ( !PM_UseHL1Movement() ) {
 		// project the forward and right directions onto the ground plane
 		PM_ClipVelocity( pml.forward, pml.groundTrace.plane.normal, pml.forward, OVERCLIP );
 		PM_ClipVelocity( pml.right, pml.groundTrace.plane.normal, pml.right, OVERCLIP );
@@ -1210,10 +1218,10 @@ static void PM_WalkMove( void ) {
 	VectorNormalize( pml.forward );
 	VectorNormalize( pml.right );
 
-	for ( i = 0 ; i < ( bh_movement_integer ? 2 : 3 ) ; i++ ) {
+	for ( i = 0 ; i < ( PM_UseHL1Movement() ? 2 : 3 ) ; i++ ) {
 		wishvel[i] = pml.forward[i] * fmove + pml.right[i] * smove;
 	}
-	if ( bh_movement_integer ) {
+	if ( PM_UseHL1Movement() ) {
 		wishvel[2] = 0;
 	} else {
 		// when going up or down slopes the wish velocity should Not be zero
@@ -1226,13 +1234,13 @@ static void PM_WalkMove( void ) {
 
 	// clamp the speed lower if ducking
 	if ( pm->ps->pm_flags & PMF_DUCKED ) {
-		float crouchWishMax = bh_movement_integer ? HL1_CROUCH_SPEED : pm->ps->speed * pm->ps->crouchSpeedScale;
+		float crouchWishMax = PM_UseHL1Movement() ? HL1_CROUCH_SPEED : pm->ps->speed * pm->ps->crouchSpeedScale;
 		/*
 		if ( wishspeed > pm->ps->speed * pm_duckScale ) {
 			wishspeed = pm->ps->speed * pm_duckScale;
 		}
 		*/
-		if ( bh_movement_integer ) {
+		if ( PM_UseHL1Movement() ) {
 			float hspeed = sqrt( pm->ps->velocity[0] * pm->ps->velocity[0] + pm->ps->velocity[1] * pm->ps->velocity[1] );
 			if ( hspeed < crouchWishMax && wishspeed > crouchWishMax ) {
 				wishspeed = crouchWishMax;
@@ -1264,7 +1272,7 @@ static void PM_WalkMove( void ) {
 		accelerate = pm_airaccelerate;
 	} else if ( ( pm->ps->stats[STAT_HEALTH] <= 0 ) && pm->ps->aiChar && ( pml.groundTrace.surfaceFlags & SURF_MONSTERSLICK ) )    {
 		accelerate = pm_airaccelerate;
-	} else if ( bh_movement_integer ) {
+	} else if ( PM_UseHL1Movement() ) {
 		accelerate = HL1_ACCELERATE;
 	} else {
 		accelerate = pm_accelerate;
@@ -1272,7 +1280,7 @@ static void PM_WalkMove( void ) {
 
 	PM_Accelerate( wishdir, wishspeed, accelerate );
 
-	if ( bh_movement_integer ) {
+	if ( PM_UseHL1Movement() ) {
 		PM_HL1SetVelocityForGroundPlane();
 	}
 
@@ -1283,7 +1291,7 @@ static void PM_WalkMove( void ) {
 		pm->ps->velocity[2] -= pm->ps->gravity * pml.frametime;
 	} else if ( ( pm->ps->stats[STAT_HEALTH] <= 0 ) && pm->ps->aiChar && ( pml.groundTrace.surfaceFlags & SURF_MONSTERSLICK ) )   {
 		pm->ps->velocity[2] -= pm->ps->gravity * pml.frametime;
-	} else if ( !bh_movement_integer ) {
+	} else if ( !PM_UseHL1Movement() ) {
 		// don't reset the z velocity for slopes
 //		pm->ps->velocity[2] = 0;
 	}
@@ -1300,7 +1308,7 @@ static void PM_WalkMove( void ) {
 	}
 
 
-	if ( !bh_movement_integer ) {
+	if ( !PM_UseHL1Movement() ) {
 		vel = VectorLength( pm->ps->velocity );
 		VectorCopy( pm->ps->velocity, oldvel );
 
@@ -1707,7 +1715,7 @@ static void PM_GroundTrace( void ) {
 
 	point[0] = pm->ps->origin[0];
 	point[1] = pm->ps->origin[1];
-	point[2] = pm->ps->origin[2] - ( bh_movement_integer ? 2.0f : 0.25f );
+	point[2] = pm->ps->origin[2] - ( PM_UseHL1Movement() ? 2.0f : 0.25f );
 
 	pm->trace( &trace, pm->ps->origin, pm->mins, pm->maxs, point, pm->ps->clientNum, pm->tracemask );
 	pml.groundTrace = trace;
@@ -1729,7 +1737,7 @@ static void PM_GroundTrace( void ) {
 
 	// check if getting thrown off the ground
 	if ( pm->ps->velocity[2] > 0 && DotProduct( pm->ps->velocity, trace.plane.normal ) > 10 &&
-		 ( !bh_movement_integer || pm->ps->velocity[2] > 180.0f ) ) {
+		 ( !PM_UseHL1Movement() || pm->ps->velocity[2] > 180.0f ) ) {
 		if ( pm->debugLevel ) {
 			Com_Printf( "%i:kickoff\n", c_pmove );
 		}
@@ -1781,7 +1789,7 @@ static void PM_GroundTrace( void ) {
 		// Momentum-style ramp handling for HL1 movement: clip velocity along
 		// the slope and only stay airborne if the clipped Z velocity is actually
 		// high enough.  No artificial boost is added here.
-		if ( bh_movement_integer && trace.plane.normal[2] < 0.80 ) {
+		if ( PM_UseHL1Movement() && trace.plane.normal[2] < 0.80 ) {
 			float hspeed;
 			vec3_t hvel;
 			vec3_t clipped;
@@ -1814,7 +1822,7 @@ static void PM_GroundTrace( void ) {
 		PM_CrashLand();
 
 		// don't do landing time if we were just going down a slope
-		if ( !bh_movement_integer && pml.previous_velocity[2] < -200 ) {
+		if ( !PM_UseHL1Movement() && pml.previous_velocity[2] < -200 ) {
 			// don't allow another jump for a little while
 			pm->ps->pm_flags |= PMF_TIME_LAND;
 			pm->ps->pm_time = 250;
@@ -4265,7 +4273,7 @@ PM_Sprint
 */
 //----(SA)	cleaned up for SP (10/22/01)
 void PM_Sprint( void ) {
-	if ( bh_movement_integer ) {
+	if ( PM_UseHL1Movement() ) {
 		pm->ps->sprintExertTime = 0;
 		pm->ps->sprintTime = 20000;
 		return;
@@ -4587,7 +4595,7 @@ void PmoveSingle( pmove_t *pmove ) {
 		// snap some parts of playerstate to save network bandwidth
 		
 
-		if( !bh_movement_integer ) {
+		if( !PM_UseHL1Movement() ) {
 			trap_SnapVector( pm->ps->velocity );
 		}
 //		SnapVector( pm->ps->velocity );
@@ -4676,7 +4684,7 @@ int Pmove( pmove_t *pmove ) {
 		if ( pmove->ps->pm_flags & PMF_JUMP_HELD ) {
 			// In bhop mode: when ducked, keep upmove at 0 so PM_CheckDuck
 			// preserves crouch on next subframe
-			if ( bh_movement_integer && ( pmove->ps->pm_flags & PMF_DUCKED ) ) {
+			if ( PM_UseHL1Movement() && ( pmove->ps->pm_flags & PMF_DUCKED ) ) {
 				pmove->cmd.upmove = 0;
 			} else {
 				pmove->cmd.upmove = 20;

@@ -86,7 +86,7 @@ qboolean    PM_SlideMove( qboolean gravity ) {
 
 	// never turn against the ground plane
 	if ( pml.groundPlane &&
-		 !( bh_movement_integer && !gravity && pml.walking && pml.groundTrace.plane.normal[2] < 0.98f ) ) {
+		 !( PM_UseHL1Movement() && !gravity && pml.walking && pml.groundTrace.plane.normal[2] < 0.98f ) ) {
 		numplanes = 1;
 		VectorCopy( pml.groundTrace.plane.normal, planes[0] );
 	} else {
@@ -251,7 +251,7 @@ void PM_StepSlideMove( qboolean gravity ) {
 
 	VectorCopy( pm->ps->origin, start_o );
 	VectorCopy( pm->ps->velocity, start_v );
-	stepSize = ( bh_movement_integer && !gravity && pml.walking ) ? 18.0f : STEPSIZE;
+	stepSize = ( PM_UseHL1Movement() && !gravity && pml.walking ) ? 18.0f : STEPSIZE;
 
 	if ( PM_SlideMove( gravity ) == 0 ) {
 		return;     // we got exactly where we wanted to go first try
@@ -262,7 +262,7 @@ void PM_StepSlideMove( qboolean gravity ) {
 	pm->trace( &trace, start_o, pm->mins, pm->maxs, down, pm->ps->clientNum, pm->tracemask );
 	VectorSet( up, 0, 0, 1 );
 	// never step up when you still have up velocity
-	if ( !( bh_movement_integer && !gravity && pml.walking ) &&
+	if ( !( PM_UseHL1Movement() && !gravity && pml.walking ) &&
 		 pm->ps->velocity[2] > 0 && ( trace.fraction == 1.0 ||
 									  DotProduct( trace.plane.normal, up ) < 0.7 ) ) {
 		return;
@@ -274,7 +274,7 @@ void PM_StepSlideMove( qboolean gravity ) {
 	// Momentum-style step fix for HL1 movement: if the direct slide already
 	// produced a real ramp/upward velocity, keep that result instead of trying
 	// a stair-step that can combine a better step position with the wrong speed.
-	if ( bh_movement_integer && down_v[2] > HL1_NON_JUMP_VELOCITY ) {
+	if ( PM_UseHL1Movement() && down_v[2] > HL1_NON_JUMP_VELOCITY ) {
 		return;
 	}
 
@@ -284,13 +284,13 @@ void PM_StepSlideMove( qboolean gravity ) {
 
 	// test the player position if they were a stepheight higher
 	pm->trace( &trace, up, pm->mins, pm->maxs, up, pm->ps->clientNum, pm->tracemask );
-	if ( trace.allsolid && bh_movement_integer && !gravity && pml.walking && stepTry > 24.0f ) {
+	if ( trace.allsolid && PM_UseHL1Movement() && !gravity && pml.walking && stepTry > 24.0f ) {
 		stepTry = 24.0f;
 		VectorCopy( start_o, up );
 		up[2] += stepTry;
 		pm->trace( &trace, up, pm->mins, pm->maxs, up, pm->ps->clientNum, pm->tracemask );
 	}
-	if ( trace.allsolid && bh_movement_integer && !gravity && pml.walking && stepTry > STEPSIZE ) {
+	if ( trace.allsolid && PM_UseHL1Movement() && !gravity && pml.walking && stepTry > STEPSIZE ) {
 		stepTry = STEPSIZE;
 		VectorCopy( start_o, up );
 		up[2] += stepTry;
@@ -320,7 +320,7 @@ void PM_StepSlideMove( qboolean gravity ) {
 		PM_ClipVelocity( pm->ps->velocity, trace.plane.normal, pm->ps->velocity, OVERCLIP );
 	}
 
-	if ( bh_movement_integer && !gravity && pml.walking ) {
+	if ( PM_UseHL1Movement() && !gravity && pml.walking ) {
 		VectorSubtract( down_o, start_o, delta );
 		down_dist = delta[0] * delta[0] + delta[1] * delta[1];
 		VectorSubtract( pm->ps->origin, start_o, delta );

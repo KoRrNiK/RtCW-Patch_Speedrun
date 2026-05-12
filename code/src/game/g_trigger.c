@@ -56,25 +56,6 @@ void multi_trigger( gentity_t *ent, gentity_t *activator ) {
 		return;     // can't retrigger until the wait is over
 	}
 
-	/* ---- Speedrun: trigger activation log ---- */
-	if ( g_triggerLog.integer ) {
-		float t = level.time / 1000.0f;
-		if ( g_triggerLog.integer >= 2 ) {
-			/* verbose: also send to client HUD */
-			trap_SendServerCommand( 0, va( "print \"^3[TRIG %6.1fs] ^7%s ^5(%s) ^3-> ^5%s\n\"",
-				t,
-				ent->classname ? ent->classname : "?",
-				ent->targetname ? ent->targetname : "",
-				ent->target ? ent->target : "" ) );
-		}
-		G_Printf( "[TRIG %6.1fs] %s (%s) -> %s  activator:%s\n",
-			t,
-			ent->classname ? ent->classname : "?",
-			ent->targetname ? ent->targetname : "",
-			ent->target ? ent->target : "",
-			activator && activator->classname ? activator->classname : "?" );
-	}
-
 	G_UseTargets( ent, ent->activator );
 
 	if ( ent->wait > 0 ) {

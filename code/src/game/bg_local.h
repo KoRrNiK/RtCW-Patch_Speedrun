@@ -93,6 +93,8 @@ extern float pm_flightfriction;
 extern int bh_movement_integer;
 extern int bh_autojump_integer;
 
+qboolean PM_UseHL1Movement( void );
+
 extern int c_pmove;
 
 void PM_AddTouchEnt( int entityNum );

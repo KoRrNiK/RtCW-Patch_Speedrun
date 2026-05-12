@@ -1710,6 +1710,9 @@ qboolean AICast_ScriptAction_GodMode( cast_state_t *cs, char *params ) {
 	} else {
 		G_Error( "AI Scripting: godmode requires an on/off specifier\n" );
 	}
+	if ( cs->bs->entitynum == 0 ) {
+		trap_Cvar_Set( "ls_godmode", ( g_entities[0].flags & FL_GODMODE ) ? "1" : "0" );
+	}
 
 	return qtrue;
 }

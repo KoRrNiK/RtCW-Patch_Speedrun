@@ -233,6 +233,197 @@ gentity_t *G_PickTarget( char *targetname ) {
 	return choice[rand() % num_choices];
 }
 
+static const char *G_TriggerValue( const char *value ) {
+	return ( value && value[0] ) ? value : "-";
+}
+
+static void G_TriggerEntityInfo( gentity_t *ent, char *buffer, int bufferSize ) {
+	if ( !ent ) {
+		Q_strncpyz( buffer, "#- none", bufferSize );
+		return;
+	}
+
+	Com_sprintf( buffer, bufferSize, "#%d %s name:%s target:%s script:%s ai:%s",
+		ent->s.number,
+		G_TriggerValue( ent->classname ),
+		G_TriggerValue( ent->targetname ),
+		G_TriggerValue( ent->target ),
+		G_TriggerValue( ent->scriptName ),
+		G_TriggerValue( ent->aiName ) );
+}
+
+static void G_LogTriggerEvent( const char *action, gentity_t *source, gentity_t *target, gentity_t *activator ) {
+	char sourceInfo[256];
+	char targetInfo[256];
+	char activatorInfo[128];
+
+	if ( !g_triggerLog.integer ) {
+		return;
+	}
+
+	G_TriggerEntityInfo( source, sourceInfo, sizeof( sourceInfo ) );
+	G_TriggerEntityInfo( target, targetInfo, sizeof( targetInfo ) );
+	G_TriggerEntityInfo( activator, activatorInfo, sizeof( activatorInfo ) );
+
+	if ( target ) {
+		G_Printf( "[TRIG %6.1fs] %s %s -> %s  activator:%s\n", level.time / 1000.0f, action, sourceInfo, targetInfo, activatorInfo );
+	} else {
+		G_Printf( "[TRIG %6.1fs] %s %s  activator:%s\n", level.time / 1000.0f, action, sourceInfo, activatorInfo );
+	}
+}
+
+static gentity_t *G_TriggerDefaultActivator( void ) {
+	int i;
+
+	for ( i = 0; i < level.maxclients; i++ ) {
+		gentity_t *ent = &g_entities[i];
+
+		if ( ent->inuse && ent->client && ent->client->pers.connected == CON_CONNECTED ) {
+			return ent;
+		}
+	}
+
+	return NULL;
+}
+
+static void G_TriggerCommandPrint( gentity_t *activator, const char *message ) {
+	if ( activator && activator->client ) {
+		char safeMessage[1024];
+		Q_strncpyz( safeMessage, message, sizeof( safeMessage ) );
+		trap_SendServerCommand( activator - g_entities, va( "print \"%s\"", safeMessage ) );
+		return;
+	}
+
+	G_Printf( "%s", message );
+}
+
+static qboolean G_TriggerCommandCheatsOk( gentity_t *activator ) {
+	if ( g_cheats.integer ) {
+		return qtrue;
+	}
+
+	G_TriggerCommandPrint( activator, "sp_trigger requires sv_cheats 1.\n" );
+	return qfalse;
+}
+
+void G_TriggerUseByName_f( gentity_t *activator ) {
+	char name[MAX_TOKEN_CHARS];
+	char option[MAX_TOKEN_CHARS];
+	gentity_t *target = NULL;
+	gentity_t *other;
+	qboolean firstOnly = qfalse;
+	int found = 0;
+	int used = 0;
+	int skipped = 0;
+
+	if ( trap_Argc() < 2 ) {
+		G_TriggerCommandPrint( activator, "usage: sp_trigger <targetname> [first]\n" );
+		return;
+	}
+
+	if ( !G_TriggerCommandCheatsOk( activator ) ) {
+		return;
+	}
+
+	trap_Argv( 1, name, sizeof( name ) );
+	trap_Argv( 2, option, sizeof( option ) );
+	firstOnly = ( Q_stricmp( option, "first" ) == 0 ) ? qtrue : qfalse;
+
+	if ( !name[0] ) {
+		G_TriggerCommandPrint( activator, "usage: sp_trigger <targetname> [first]\n" );
+		return;
+	}
+
+	if ( !activator ) {
+		activator = G_TriggerDefaultActivator();
+	}
+
+	if ( !activator ) {
+		G_TriggerCommandPrint( NULL, "sp_trigger: no connected player activator found.\n" );
+		return;
+	}
+
+	other = activator;
+
+	while ( ( target = G_Find( target, FOFS( targetname ), name ) ) != NULL ) {
+		found++;
+
+		if ( target->use ) {
+			G_LogTriggerEvent( "manual", target, NULL, activator );
+			target->use( target, other, activator );
+			used++;
+		} else if ( target->AIScript_AlertEntity ) {
+			G_LogTriggerEvent( "manual-ai", target, NULL, activator );
+			target->AIScript_AlertEntity( target );
+			used++;
+		} else if ( target->target ) {
+			G_LogTriggerEvent( "manual-target", target, NULL, activator );
+			G_UseTargets( target, activator );
+			used++;
+		} else {
+			skipped++;
+			if ( g_triggerLog.integer >= 2 ) {
+				G_LogTriggerEvent( "manual-skip", target, NULL, activator );
+			}
+		}
+
+		if ( firstOnly ) {
+			break;
+		}
+	}
+
+	if ( found == 0 ) {
+		G_TriggerCommandPrint( activator, va( "sp_trigger: no entity with targetname '%s'.\n", name ) );
+		return;
+	}
+
+	G_TriggerCommandPrint( activator, va( "sp_trigger: fired %d/%d entity(s) named '%s'%s.\n", used, found, name, skipped ? " (some had no use target)" : "" ) );
+}
+
+void G_TriggerList_f( void ) {
+	char filter[MAX_TOKEN_CHARS];
+	int i;
+	int count = 0;
+
+	filter[0] = '\0';
+	trap_Argv( 1, filter, sizeof( filter ) );
+
+	G_Printf( "Trigger entities%s%s%s:\n", filter[0] ? " matching '" : "", filter[0] ? filter : "", filter[0] ? "'" : "" );
+
+	for ( i = 0; i < level.num_entities; i++ ) {
+		gentity_t *ent = &g_entities[i];
+
+		if ( !ent->inuse ) {
+			continue;
+		}
+
+		if ( !ent->targetname && !ent->target && !ent->scriptName && !ent->aiName ) {
+			continue;
+		}
+
+		if ( filter[0]
+			 && ( !ent->targetname || Q_stricmp( ent->targetname, filter ) )
+			 && ( !ent->target || Q_stricmp( ent->target, filter ) )
+			 && ( !ent->scriptName || Q_stricmp( ent->scriptName, filter ) )
+			 && ( !ent->aiName || Q_stricmp( ent->aiName, filter ) ) ) {
+			continue;
+		}
+
+		G_Printf( "  #%3d %-24s name:%-24s -> %-24s script:%-18s ai:%s%s%s\n",
+			ent->s.number,
+			G_TriggerValue( ent->classname ),
+			G_TriggerValue( ent->targetname ),
+			G_TriggerValue( ent->target ),
+			G_TriggerValue( ent->scriptName ),
+			G_TriggerValue( ent->aiName ),
+			ent->use ? " use" : "",
+			ent->touch ? " touch" : "" );
+		count++;
+	}
+
+	G_Printf( "Trigger entities listed: %d\n", count );
+}
+
 
 /*
 ==============================
@@ -247,6 +438,7 @@ match (string)self.target and call their .use function
 */
 void G_UseTargets( gentity_t *ent, gentity_t *activator ) {
 	gentity_t       *t;
+	int targetCount = 0;
 
 	if ( !ent ) {
 		return;
@@ -262,12 +454,16 @@ void G_UseTargets( gentity_t *ent, gentity_t *activator ) {
 		return;
 	}
 
+	G_LogTriggerEvent( "fire", ent, NULL, activator );
+
 	t = NULL;
 	while ( ( t = G_Find( t, FOFS( targetname ), ent->target ) ) != NULL ) {
+		targetCount++;
 		if ( t == ent ) {
 			G_Printf( "WARNING: Entity used itself.\n" );
 		} else {
 			if ( t->use ) {
+				G_LogTriggerEvent( "use", ent, t, activator );
 				//G_Printf ("ent->classname %s ent->targetname %s t->targetname %s t->s.number %d\n", ent->classname, ent->targetname, t->targetname, t->s.number);
 
 				t->flags |= ( ent->flags & FL_KICKACTIVATE ); // (SA) If 'ent' was kicked to activate, pass this along to it's targets.
@@ -287,12 +483,18 @@ void G_UseTargets( gentity_t *ent, gentity_t *activator ) {
 				} else {
 					t->use( t, ent, activator );
 				}
+			} else if ( g_triggerLog.integer >= 2 ) {
+				G_LogTriggerEvent( "skip", ent, t, activator );
 			}
 		}
 		if ( !ent->inuse ) {
 			G_Printf( "entity was removed while using targets\n" );
 			return;
 		}
+	}
+
+	if ( !targetCount && g_triggerLog.integer >= 2 ) {
+		G_LogTriggerEvent( "missing", ent, NULL, activator );
 	}
 }
 

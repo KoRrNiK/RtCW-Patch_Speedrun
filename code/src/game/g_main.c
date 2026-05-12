@@ -1558,6 +1558,8 @@ void G_ShutdownGame( int restart ) {
 		AICast_AgePlayTime( 0 );
 	}
 
+	G_PracticeSnapshotsShutdown();
+
 	// Ridah, shutdown the Botlib, so weapons and things get reset upon doing a "map xxx" command
 	if ( trap_Cvar_VariableIntegerValue( "bot_enable" ) ) {
 		int i;

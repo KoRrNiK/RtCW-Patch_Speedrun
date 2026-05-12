@@ -1650,6 +1650,9 @@ void ClientSpawn( gentity_t *ent ) {
 
 	index = ent - g_entities;
 	client = ent->client;
+	if ( index == 0 ) {
+		trap_Cvar_Set( "ls_godmode", "0" );
+	}
 
 	// find a spawn point
 	// do it before setting health back up, so farthest

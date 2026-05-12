@@ -484,6 +484,16 @@ qboolean    ConsoleCommand( void ) {
 		return qtrue;
 	}
 
+	if ( Q_stricmp( cmd, "sp_trigger" ) == 0 || Q_stricmp( cmd, "sp_firetrigger" ) == 0 ) {
+		G_TriggerUseByName_f( NULL );
+		return qtrue;
+	}
+
+	if ( Q_stricmp( cmd, "sp_trigger_list" ) == 0 ) {
+		G_TriggerList_f();
+		return qtrue;
+	}
+
 	if ( Q_stricmp( cmd, "forceteam" ) == 0 ) {
 		Svcmd_ForceTeam_f();
 		return qtrue;
