@@ -61,11 +61,51 @@ cvar_t      *vid_xpos;          // X coordinate of window position
 cvar_t      *vid_ypos;          // Y coordinate of window position
 cvar_t      *r_fullscreen;
 
+#define WIN_RESIZE_MIN_WIDTH 320
+#define WIN_RESIZE_MIN_HEIGHT 240
+#define WIN_RESIZE_MAX_DIM 8192
+
+static qboolean s_windowResizeInMove = qfalse;
+static int s_windowResizeWidth = 0;
+static int s_windowResizeHeight = 0;
+
 #define VID_NUM_MODES ( sizeof( vid_modes ) / sizeof( vid_modes[0] ) )
 
 LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
 
 static qboolean s_alttab_disabled;
+
+static int WIN_ClampResizeDimension( int value, int minValue ) {
+	if ( value < minValue ) return minValue;
+	if ( value > WIN_RESIZE_MAX_DIM ) return WIN_RESIZE_MAX_DIM;
+	return value;
+}
+
+static void WIN_RecordPendingResize( LPARAM lParam ) {
+	int width = WIN_ClampResizeDimension( LOWORD( lParam ), WIN_RESIZE_MIN_WIDTH );
+	int height = WIN_ClampResizeDimension( HIWORD( lParam ), WIN_RESIZE_MIN_HEIGHT );
+	if ( width <= 0 || height <= 0 ) return;
+	s_windowResizeWidth = width;
+	s_windowResizeHeight = height;
+}
+
+static void WIN_CommitPendingResize( void ) {
+	char aspect[32];
+	if ( !s_windowResizeWidth || !s_windowResizeHeight ) return;
+	if ( r_fullscreen && r_fullscreen->integer ) return;
+	if ( !Cvar_VariableIntegerValue( "r_resizableWindow" ) ) return;
+	if ( Cvar_VariableIntegerValue( "r_mode" ) == -1 &&
+		 Cvar_VariableIntegerValue( "r_customwidth" ) == s_windowResizeWidth &&
+		 Cvar_VariableIntegerValue( "r_customheight" ) == s_windowResizeHeight ) {
+		return;
+	}
+	Com_sprintf( aspect, sizeof( aspect ), "%.6f", (float)s_windowResizeWidth / (float)s_windowResizeHeight );
+	Cvar_Set( "r_mode", "-1" );
+	Cvar_SetValue( "r_customwidth", s_windowResizeWidth );
+	Cvar_SetValue( "r_customheight", s_windowResizeHeight );
+	Cvar_Set( "r_customaspect", aspect );
+	Cbuf_AddText( "vid_restart\n" );
+}
 
 static void WIN_DisableAltTab( void ) {
 	if ( s_alttab_disabled ) {
@@ -471,6 +511,32 @@ LONG WINAPI MainWndProc(
 	}
 	break;
 
+	case WM_GETMINMAXINFO:
+		if ( Cvar_VariableIntegerValue( "r_resizableWindow" ) ) {
+			MINMAXINFO *mmi = (MINMAXINFO *)lParam;
+			mmi->ptMinTrackSize.x = WIN_RESIZE_MIN_WIDTH;
+			mmi->ptMinTrackSize.y = WIN_RESIZE_MIN_HEIGHT;
+		}
+		break;
+
+	case WM_ENTERSIZEMOVE:
+		s_windowResizeInMove = qtrue;
+		break;
+
+	case WM_EXITSIZEMOVE:
+		s_windowResizeInMove = qfalse;
+		WIN_CommitPendingResize();
+		break;
+
+	case WM_SIZE:
+		if ( wParam != SIZE_MINIMIZED && !( r_fullscreen && r_fullscreen->integer ) && Cvar_VariableIntegerValue( "r_resizableWindow" ) ) {
+			WIN_RecordPendingResize( lParam );
+			if ( !s_windowResizeInMove && wParam == SIZE_MAXIMIZED ) {
+				WIN_CommitPendingResize();
+			}
+		}
+		break;
+
 // this is complicated because Win32 seems to pack multiple mouse events into
 // one update sometimes, so we always check all states and look for events
 	case WM_INPUT:
@@ -489,6 +555,26 @@ LONG WINAPI MainWndProc(
 		}
 		break;
 	}
+	case WM_ACTIVATEAPP:
+		VID_AppActivate( wParam ? TRUE : FALSE, g_wv.isMinimized );
+		break;
+
+	case WM_SETFOCUS:
+		if ( !g_wv.isMinimized ) {
+			g_wv.activeApp = qtrue;
+			IN_Activate( qtrue );
+		}
+		break;
+
+	case WM_KILLFOCUS:
+		IN_Activate( qfalse );
+		break;
+
+	case WM_CAPTURECHANGED:
+		if ( (HWND)lParam != hWnd ) {
+			IN_DeactivateMouse();
+		}
+		break;
 
 	case WM_LBUTTONDOWN:
 	case WM_LBUTTONUP:

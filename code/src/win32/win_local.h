@@ -80,6 +80,7 @@ void    IN_Move( usercmd_t *cmd );
 void    IN_DeactivateWin32Mouse( void );
 
 void    IN_Activate( qboolean active );
+void    IN_DeactivateMouse( void );
 void    IN_Frame( void );
 
 // window procedure

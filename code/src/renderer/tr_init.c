@@ -164,6 +164,7 @@ cvar_t  *r_lodCurveError;
 
 cvar_t  *r_fullscreen;
 cvar_t  *r_borderless;
+cvar_t  *r_resizableWindow;
 
 cvar_t  *r_customwidth;
 cvar_t  *r_customheight;
@@ -439,16 +440,18 @@ qboolean R_GetModeInfo( int *width, int *height, float *windowAspect, int mode )
 
 	if ( mode == -1 )
 	{
-		// Knightmare- disallow custom modes below 640x480
-		if (r_customwidth->integer < 640 || r_customheight->integer < 480)
-		{
-			ri.Cvar_Set("r_customwidth", "640");
-			ri.Cvar_Set("r_customheight", "480");
-		}
+		int customWidth = r_customwidth->integer;
+		int customHeight = r_customheight->integer;
+		if ( customWidth < 320 ) customWidth = 320;
+		if ( customHeight < 240 ) customHeight = 240;
+		if ( customWidth > 8192 ) customWidth = 8192;
+		if ( customHeight > 8192 ) customHeight = 8192;
+		if ( customWidth != r_customwidth->integer ) ri.Cvar_Set( "r_customwidth", va( "%d", customWidth ) );
+		if ( customHeight != r_customheight->integer ) ri.Cvar_Set( "r_customheight", va( "%d", customHeight ) );
 
-		*width = r_customwidth->integer;
-		*height = r_customheight->integer;
-		*windowAspect = r_customaspect->value;
+		*width = customWidth;
+		*height = customHeight;
+		*windowAspect = r_customaspect->value > 0.01f ? r_customaspect->value : (float)customWidth / (float)customHeight;
 		return qtrue;
 	}
 
@@ -1088,9 +1091,10 @@ void R_Register( void ) {
 	r_mode = ri.Cvar_Get( "r_mode", "3", CVAR_ARCHIVE | CVAR_LATCH );
 	r_fullscreen = ri.Cvar_Get( "r_fullscreen", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_borderless = ri.Cvar_Get( "r_borderless", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	r_resizableWindow = ri.Cvar_Get( "r_resizableWindow", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_customwidth = ri.Cvar_Get( "r_customwidth", "1600", CVAR_ARCHIVE | CVAR_LATCH );
 	r_customheight = ri.Cvar_Get( "r_customheight", "1024", CVAR_ARCHIVE | CVAR_LATCH );
-	r_customaspect = ri.Cvar_Get( "r_customaspect", "1", CVAR_ARCHIVE | CVAR_LATCH );
+	r_customaspect = ri.Cvar_Get( "r_customaspect", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_simpleMipMaps = ri.Cvar_Get( "r_simpleMipMaps", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_vertexLight = ri.Cvar_Get( "r_vertexLight", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_uiFullScreen = ri.Cvar_Get( "r_uifullscreen", "0", 0 );
@@ -1446,9 +1450,10 @@ Touch all images to make sure they are resident
 */
 void RE_EndRegistration( void ) {
 	R_SyncRenderThread();
-	if ( !Sys_LowPhysicalMemory() ) {
+	if ( r_showImages && r_showImages->integer && !Sys_LowPhysicalMemory() ) {
 		RB_ShowImages();
 	}
+	R_FreeImageBuffer();
 }
 
 

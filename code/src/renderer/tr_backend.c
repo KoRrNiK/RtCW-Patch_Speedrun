@@ -47,20 +47,34 @@ static float s_flipMatrix[16] = {
 */
 void GL_Bind( image_t *image ) {
 	int texnum;
+	image_t *bindImage;
 
-	if ( !image ) {
+	bindImage = image;
+	if ( !bindImage ) {
 		ri.Printf( PRINT_WARNING, "GL_Bind: NULL image\n" );
-		texnum = tr.defaultImage->texnum;
-	} else {
-		texnum = image->texnum;
+		bindImage = tr.defaultImage;
 	}
+	if ( !bindImage ) {
+		return;
+	}
+	texnum = bindImage->texnum;
 
 	if ( r_nobind->integer && tr.dlightImage ) {        // performance evaluation option
-		texnum = tr.dlightImage->texnum;
+		bindImage = tr.dlightImage;
+		texnum = bindImage->texnum;
+	}
+
+	if ( texnum <= 0 ) {
+		if ( bindImage != tr.defaultImage && tr.defaultImage ) {
+			bindImage = tr.defaultImage;
+			texnum = bindImage->texnum;
+		} else {
+			return;
+		}
 	}
 
 	if ( glState.currenttextures[glState.currenttmu] != texnum ) {
-		image->frameUsed = tr.frameCount;
+		bindImage->frameUsed = tr.frameCount;
 		glState.currenttextures[glState.currenttmu] = texnum;
 		qglBindTexture( GL_TEXTURE_2D, texnum );
 	}
@@ -1486,6 +1500,14 @@ void RB_ShowImages( void ) {
 	float x, y, w, h;
 	int start, end;
 
+	if ( !r_showImages || r_showImages->integer <= 0 ) {
+		return;
+	}
+
+	if ( tess.numIndexes ) {
+		RB_EndSurface();
+	}
+
 	if ( !backEnd.projection2D ) {
 		RB_SetGL2D();
 	}
@@ -1499,12 +1521,18 @@ void RB_ShowImages( void ) {
 
 	for ( i = 0 ; i < tr.numImages ; i++ ) {
 		image = tr.images[i];
+		if ( !image || image->texnum == 0 || image->width <= 0 || image->height <= 0 || image->uploadWidth <= 0 || image->uploadHeight <= 0 ) {
+			continue;
+		}
+		if ( qglIsTexture && !qglIsTexture( image->texnum ) ) {
+			continue;
+		}
 
 		w = glConfig.vidWidth / 40;
 		h = glConfig.vidHeight / 30;
 
 		x = i % 40 * w;
-		y = i / 30 * h;
+		y = i / 40 * h;
 
 		// show in proportional size in mode 2
 		if ( r_showImages->integer == 2 ) {

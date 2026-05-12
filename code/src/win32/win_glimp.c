@@ -527,6 +527,7 @@ static qboolean GLW_InitDriver( const char *drivername, int colorbits ) {
 ** Responsible for creating the Win32 window and initializing the OpenGL driver.
 */
 #define WINDOW_STYLE    ( WS_OVERLAPPED | WS_BORDER | WS_CAPTION | WS_VISIBLE | WS_MINIMIZEBOX )
+#define WINDOW_STYLE_RESIZE ( WS_THICKFRAME | WS_MAXIMIZEBOX )
 static qboolean GLW_CreateWindow( const char *drivername, int width, int height, int colorbits, qboolean cdsFullscreen ) {
 	RECT r;
 	cvar_t          *vid_xpos, *vid_ypos;
@@ -582,6 +583,9 @@ static qboolean GLW_CreateWindow( const char *drivername, int width, int height,
 		{
 			exstyle = 0;
 			stylebits = WINDOW_STYLE | WS_SYSMENU;
+			if ( r_resizableWindow && r_resizableWindow->integer ) {
+				stylebits |= WINDOW_STYLE_RESIZE;
+			}
 			AdjustWindowRect( &r, stylebits, FALSE );
 		}
 
@@ -593,6 +597,22 @@ static qboolean GLW_CreateWindow( const char *drivername, int width, int height,
 			y = 0;
 		} else
 		{
+			int virtualLeft = GetSystemMetrics( SM_XVIRTUALSCREEN );
+			int virtualTop = GetSystemMetrics( SM_YVIRTUALSCREEN );
+			int virtualWidth = GetSystemMetrics( SM_CXVIRTUALSCREEN );
+			int virtualHeight = GetSystemMetrics( SM_CYVIRTUALSCREEN );
+			int virtualRight;
+			int virtualBottom;
+			if ( virtualWidth <= 0 ) {
+				virtualLeft = 0;
+				virtualWidth = glw_state.desktopWidth;
+			}
+			if ( virtualHeight <= 0 ) {
+				virtualTop = 0;
+				virtualHeight = glw_state.desktopHeight;
+			}
+			virtualRight = virtualLeft + virtualWidth;
+			virtualBottom = virtualTop + virtualHeight;
 			vid_xpos = ri.Cvar_Get( "vid_xpos", "", 0 );
 			vid_ypos = ri.Cvar_Get( "vid_ypos", "", 0 );
 			x = vid_xpos->integer;
@@ -600,20 +620,20 @@ static qboolean GLW_CreateWindow( const char *drivername, int width, int height,
 
 			// adjust window coordinates if necessary
 			// so that the window is completely on screen
-			if ( x < 0 ) {
-				x = 0;
+			if ( x < virtualLeft ) {
+				x = virtualLeft;
 			}
-			if ( y < 0 ) {
-				y = 0;
+			if ( y < virtualTop ) {
+				y = virtualTop;
 			}
 
-			if ( w < glw_state.desktopWidth &&
-				 h < glw_state.desktopHeight ) {
-				if ( x + w > glw_state.desktopWidth ) {
-					x = ( glw_state.desktopWidth - w );
+			if ( w < virtualWidth &&
+				 h < virtualHeight ) {
+				if ( x + w > virtualRight ) {
+					x = virtualRight - w;
 				}
-				if ( y + h > glw_state.desktopHeight ) {
-					y = ( glw_state.desktopHeight - h );
+				if ( y + h > virtualBottom ) {
+					y = virtualBottom - h;
 				}
 			}
 		}

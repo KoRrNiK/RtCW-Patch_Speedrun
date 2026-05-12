@@ -77,16 +77,18 @@ int imageBufferSize[BUFFER_MAX_TYPES] = {0,0,0};
 void        *imageBufferPtr[BUFFER_MAX_TYPES] = {NULL,NULL,NULL};
 
 void *R_GetImageBuffer( int size, bufferMemType_t bufferType ) {
-	if ( imageBufferSize[bufferType] < R_IMAGE_BUFFER_SIZE && size <= imageBufferSize[bufferType] ) {
-		imageBufferSize[bufferType] = R_IMAGE_BUFFER_SIZE;
-		imageBufferPtr[bufferType] = malloc( imageBufferSize[bufferType] );
+	if ( size < R_IMAGE_BUFFER_SIZE ) {
+		size = R_IMAGE_BUFFER_SIZE;
 	}
-	if ( size > imageBufferSize[bufferType] ) {   // it needs to grow
+	if ( size > imageBufferSize[bufferType] || !imageBufferPtr[bufferType] ) {   // it needs to grow
 		if ( imageBufferPtr[bufferType] ) {
 			free( imageBufferPtr[bufferType] );
 		}
 		imageBufferSize[bufferType] = size;
 		imageBufferPtr[bufferType] = malloc( imageBufferSize[bufferType] );
+		if ( !imageBufferPtr[bufferType] ) {
+			imageBufferSize[bufferType] = 0;
+		}
 	}
 
 	return imageBufferPtr[bufferType];
@@ -96,7 +98,7 @@ void R_FreeImageBuffer( void ) {
 	int bufferType;
 	for ( bufferType = 0; bufferType < BUFFER_MAX_TYPES; bufferType++ ) {
 		if ( !imageBufferPtr[bufferType] ) {
-			return;
+			continue;
 		}
 		free( imageBufferPtr[bufferType] );
 		imageBufferSize[bufferType] = 0;
@@ -2483,7 +2485,10 @@ void R_DeleteTextures( void ) {
 	int i;
 
 	for ( i = 0; i < tr.numImages ; i++ ) {
-		qglDeleteTextures( 1, &tr.images[i]->texnum );
+		if ( tr.images[i] && tr.images[i]->texnum > 0 ) {
+			qglDeleteTextures( 1, &tr.images[i]->texnum );
+			tr.images[i]->texnum = 0;
+		}
 	}
 	memset( tr.images, 0, sizeof( tr.images ) );
 	// Ridah
@@ -2500,6 +2505,9 @@ void R_DeleteTextures( void ) {
 		} else {
 			qglBindTexture( GL_TEXTURE_2D, 0 );
 		}
+	}
+	if ( qglFinish ) {
+		qglFinish();
 	}
 }
 

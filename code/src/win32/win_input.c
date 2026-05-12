@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 // 02/21/97 JCB Added extended DirectInput code to support external controllers.
 
 #include "../client/client.h"
+#include "../client/cl_speedrun_imgui.h"
 #include "win_local.h"
 
 
@@ -96,6 +97,32 @@ cvar_t  *m_rawinput;
 
 qboolean in_appactive;
 
+static void IN_RefreshAppActiveFromForeground( void ) {
+	if ( !g_wv.hWnd || g_wv.isMinimized ) {
+		return;
+	}
+	if ( GetForegroundWindow() == g_wv.hWnd ) {
+		g_wv.activeApp = qtrue;
+		in_appactive = qtrue;
+	}
+}
+
+static qboolean IN_Win32MouseShouldCapture( void ) {
+	if ( !s_wmv.mouseInitialized ) {
+		return qfalse;
+	}
+	if ( CL_SpeedrunImGui_IsOpen() || CL_SpeedrunImGui_IsRaceChatOpen() ) {
+		return qfalse;
+	}
+	if ( !g_wv.hWnd || !in_appactive || !g_wv.activeApp || g_wv.isMinimized ) {
+		return qfalse;
+	}
+	if ( GetForegroundWindow() != g_wv.hWnd ) {
+		return qfalse;
+	}
+	return qtrue;
+}
+
 // Raw Input mouse state
 static int raw_mouse_dx = 0;
 static int raw_mouse_dy = 0;
@@ -137,24 +164,54 @@ IN_ActivateWin32Mouse
 ================
 */
 void IN_ActivateWin32Mouse( void ) {
-	int width, height;
+	int virtualLeft, virtualTop, virtualRight, virtualBottom;
+	RECT client_rect;
 	RECT window_rect;
+	POINT top_left, bottom_right;
 
-	width = GetSystemMetrics( SM_CXSCREEN );
-	height = GetSystemMetrics( SM_CYSCREEN );
+	if ( !IN_Win32MouseShouldCapture() ) {
+		return;
+	}
 
-	GetWindowRect( g_wv.hWnd, &window_rect );
-	if ( window_rect.left < 0 ) {
-		window_rect.left = 0;
+	virtualLeft = GetSystemMetrics( SM_XVIRTUALSCREEN );
+	virtualTop = GetSystemMetrics( SM_YVIRTUALSCREEN );
+	virtualRight = virtualLeft + GetSystemMetrics( SM_CXVIRTUALSCREEN );
+	virtualBottom = virtualTop + GetSystemMetrics( SM_CYVIRTUALSCREEN );
+	if ( virtualRight <= virtualLeft || virtualBottom <= virtualTop ) {
+		virtualLeft = 0;
+		virtualTop = 0;
+		virtualRight = GetSystemMetrics( SM_CXSCREEN );
+		virtualBottom = GetSystemMetrics( SM_CYSCREEN );
 	}
-	if ( window_rect.top < 0 ) {
-		window_rect.top = 0;
+
+	if ( GetClientRect( g_wv.hWnd, &client_rect ) ) {
+		top_left.x = client_rect.left;
+		top_left.y = client_rect.top;
+		bottom_right.x = client_rect.right;
+		bottom_right.y = client_rect.bottom;
+		ClientToScreen( g_wv.hWnd, &top_left );
+		ClientToScreen( g_wv.hWnd, &bottom_right );
+		window_rect.left = top_left.x;
+		window_rect.top = top_left.y;
+		window_rect.right = bottom_right.x;
+		window_rect.bottom = bottom_right.y;
+	} else {
+		GetWindowRect( g_wv.hWnd, &window_rect );
 	}
-	if ( window_rect.right >= width ) {
-		window_rect.right = width - 1;
+	if ( window_rect.left < virtualLeft ) {
+		window_rect.left = virtualLeft;
 	}
-	if ( window_rect.bottom >= height - 1 ) {
-		window_rect.bottom = height - 1;
+	if ( window_rect.top < virtualTop ) {
+		window_rect.top = virtualTop;
+	}
+	if ( window_rect.right > virtualRight ) {
+		window_rect.right = virtualRight;
+	}
+	if ( window_rect.bottom > virtualBottom ) {
+		window_rect.bottom = virtualBottom;
+	}
+	if ( window_rect.right <= window_rect.left || window_rect.bottom <= window_rect.top ) {
+		GetWindowRect( g_wv.hWnd, &window_rect );
 	}
 	window_center_x = ( window_rect.right + window_rect.left ) / 2;
 	window_center_y = ( window_rect.top + window_rect.bottom ) / 2;
@@ -186,6 +243,12 @@ IN_Win32Mouse
 */
 void IN_Win32Mouse( int *mx, int *my ) {
 	POINT current_pos;
+
+	if ( !IN_Win32MouseShouldCapture() ) {
+		*mx = 0;
+		*my = 0;
+		return;
+	}
 
 	// find mouse movement
 	GetCursorPos( &current_pos );
@@ -357,6 +420,9 @@ Called when the window gains focus or changes in some way
 */
 void IN_ActivateMouse( void ) {
 	if ( !s_wmv.mouseInitialized ) {
+		return;
+	}
+	if ( !IN_Win32MouseShouldCapture() ) {
 		return;
 	}
 	if ( !in_mouse->integer ) {
@@ -569,6 +635,8 @@ void IN_Frame( void ) {
 		return;
 	}
 
+	IN_RefreshAppActiveFromForeground();
+
 	// handle m_rawinput toggle at runtime
 	if ( m_rawinput->modified ) {
 		m_rawinput->modified = qfalse;
@@ -593,6 +661,11 @@ void IN_Frame( void ) {
 	}
 
 	if ( !in_appactive ) {
+		IN_DeactivateMouse();
+		return;
+	}
+
+	if ( !IN_Win32MouseShouldCapture() ) {
 		IN_DeactivateMouse();
 		return;
 	}

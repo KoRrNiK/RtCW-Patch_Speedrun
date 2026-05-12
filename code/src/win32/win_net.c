@@ -463,7 +463,7 @@ NET_IPSocket
 int NET_IPSocket( char *net_interface, int port ) {
 	SOCKET newsocket;
 	struct sockaddr_in address;
-	qboolean _true = qtrue;
+	u_long _true = 1;
 	int i = 1;
 	int err;
 
@@ -963,8 +963,6 @@ NET_Init
 */
 void NET_Init( void ) {
 	int r;
-
-	return; //----(SA)	disabled networking for SP
 
 	r = WSAStartup( MAKEWORD( 1, 1 ), &winsockdata );
 	if ( r ) {
