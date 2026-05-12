@@ -625,6 +625,7 @@ void Con_DrawSolidConsole( float frac ) {
 	int		currentColor;
 	vec4_t	color;
 	float	conLeft, conWidth;	// Knightmare added
+	char	buildId[64];
 
 	lines = cls.glconfig.vidHeight * frac;
 	if ( lines <= 0 ) {
@@ -669,18 +670,23 @@ void Con_DrawSolidConsole( float frac ) {
 	color[3] = 0.6f;
 	SCR_FillRect( 0, y, SCREEN_WIDTH, 2, color );
 
-	// draw the version number
+	// draw the build id
 
 	re.SetColor( g_color_table[ColorIndex( COLNSOLE_COLOR )] );
 
-	i = strlen( Q3_VERSION );
+	Cvar_VariableStringBuffer( "sp_build_id", buildId, sizeof( buildId ) );
+	if ( !buildId[0] ) {
+		Q_strncpyz( buildId, Q3_VERSION, sizeof( buildId ) );
+	}
+
+	i = strlen( buildId );
 
 	for ( x = 0 ; x < i ; x++ )
 	{
 		// Knightmare- use 2D coord left instead of screen left
 	//	SCR_DrawSmallChar( cls.glconfig.vidWidth - ( i - x ) * SMALLCHAR_WIDTH,
 		SCR_DrawSmallChar( (int)(conLeft+conWidth) - ( i - x ) * SMALLCHAR_WIDTH,
-						   ( lines - ( SMALLCHAR_HEIGHT + SMALLCHAR_HEIGHT / 2 ) ), Q3_VERSION[x] );
+						   ( lines - ( SMALLCHAR_HEIGHT + SMALLCHAR_HEIGHT / 2 ) ), buildId[x] );
 	}
 
 

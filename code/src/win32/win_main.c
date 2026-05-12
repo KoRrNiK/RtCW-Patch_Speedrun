@@ -82,6 +82,66 @@ qboolean Sys_LowPhysicalMemory() {
 	return ( stat.dwTotalPhys <= MEM_THRESHOLD ) ? qtrue : qfalse;
 }
 
+typedef struct {
+	DWORD cb;
+	DWORD PageFaultCount;
+	SIZE_T PeakWorkingSetSize;
+	SIZE_T WorkingSetSize;
+	SIZE_T QuotaPeakPagedPoolUsage;
+	SIZE_T QuotaPagedPoolUsage;
+	SIZE_T QuotaPeakNonPagedPoolUsage;
+	SIZE_T QuotaNonPagedPoolUsage;
+	SIZE_T PagefileUsage;
+	SIZE_T PeakPagefileUsage;
+} sysProcessMemoryCounters_t;
+
+typedef BOOL ( WINAPI *sysGetProcessMemoryInfoProc_t )( HANDLE, sysProcessMemoryCounters_t *, DWORD );
+
+qboolean Sys_GetProcessMemoryStats( sysProcessMemoryStats_t *stats ) {
+	static qboolean attempted = qfalse;
+	static sysGetProcessMemoryInfoProc_t getProcessMemoryInfo = NULL;
+	sysProcessMemoryCounters_t counters;
+	HMODULE module;
+
+	if ( !stats ) {
+		return qfalse;
+	}
+	memset( stats, 0, sizeof( *stats ) );
+
+	if ( !attempted ) {
+		attempted = qtrue;
+		module = GetModuleHandleA( "psapi.dll" );
+		if ( !module ) {
+			module = LoadLibraryA( "psapi.dll" );
+		}
+		if ( module ) {
+			getProcessMemoryInfo = (sysGetProcessMemoryInfoProc_t)GetProcAddress( module, "GetProcessMemoryInfo" );
+		}
+		if ( !getProcessMemoryInfo ) {
+			module = GetModuleHandleA( "kernel32.dll" );
+			if ( module ) {
+				getProcessMemoryInfo = (sysGetProcessMemoryInfoProc_t)GetProcAddress( module, "K32GetProcessMemoryInfo" );
+			}
+		}
+	}
+
+	if ( !getProcessMemoryInfo ) {
+		return qfalse;
+	}
+
+	memset( &counters, 0, sizeof( counters ) );
+	counters.cb = sizeof( counters );
+	if ( !getProcessMemoryInfo( GetCurrentProcess(), &counters, sizeof( counters ) ) ) {
+		return qfalse;
+	}
+
+	stats->workingSetKB = (int)( counters.WorkingSetSize / 1024 );
+	stats->peakWorkingSetKB = (int)( counters.PeakWorkingSetSize / 1024 );
+	stats->pagefileKB = (int)( counters.PagefileUsage / 1024 );
+	stats->peakPagefileKB = (int)( counters.PeakPagefileUsage / 1024 );
+	return qtrue;
+}
+
 //NOTE TTimo: heavily NON PORTABLE, PLZ DON'T USE
 //  show_bug.cgi?id=447
 #if 0
@@ -277,6 +337,26 @@ char *Sys_Cwd( void ) {
 	cwd[MAX_OSPATH - 1] = 0;
 
 	return cwd;
+}
+
+static char *Sys_ExeDir( void ) {
+	static char exeDir[MAX_OSPATH];
+	char *slash;
+	char *altSlash;
+
+	if ( !GetModuleFileNameA( NULL, exeDir, sizeof( exeDir ) ) ) {
+		return Sys_Cwd();
+	}
+	exeDir[MAX_OSPATH - 1] = 0;
+	slash = strrchr( exeDir, '\\' );
+	altSlash = strrchr( exeDir, '/' );
+	if ( altSlash && ( !slash || altSlash > slash ) ) {
+		slash = altSlash;
+	}
+	if ( slash ) {
+		*slash = 0;
+	}
+	return exeDir;
 }
 
 /*
@@ -613,6 +693,33 @@ Used to load a development dll instead of a virtual machine
 */
 extern char     *FS_BuildOSPath( const char *base, const char *game, const char *qpath );
 
+static HINSTANCE Sys_TryLoadDllPath( const char *path, DWORD *lastError ) {
+	qboolean hasPath;
+	DWORD error;
+	DWORD attributes;
+	HINSTANCE libHandle;
+
+	if ( !path || !path[0] ) {
+		return NULL;
+	}
+	hasPath = strchr( path, '\\' ) || strchr( path, '/' );
+	libHandle = hasPath ? LoadLibraryExA( path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH ) : LoadLibraryA( path );
+	if ( libHandle ) {
+		return libHandle;
+	}
+	error = GetLastError();
+	if ( lastError ) {
+		*lastError = error;
+	}
+	attributes = GetFileAttributesA( path );
+	if ( attributes != INVALID_FILE_ATTRIBUTES ) {
+		Com_Printf( "^3Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n", path, error );
+	} else {
+		Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n", path, error );
+	}
+	return NULL;
+}
+
 void * QDECL Sys_LoadDll( const char *name, int( QDECL **entryPoint ) ( int, ... ),
 						  int ( QDECL *systemcalls )( int, ... ) ) {
 	static int lastWarning = 0;
@@ -621,7 +728,9 @@ void * QDECL Sys_LoadDll( const char *name, int( QDECL **entryPoint ) ( int, ...
 	char    *basepath;
 	char    *cdpath;
 	char    *gamedir;
+	char    *exedir;
 	char    *fn;
+	DWORD lastError = 0;
 #ifdef NDEBUG
 	int timestamp;
 	int ret;
@@ -660,47 +769,50 @@ void * QDECL Sys_LoadDll( const char *name, int( QDECL **entryPoint ) ( int, ...
 	// check current folder only if we are a developer
 	if ( 1 ) { //----(SA)	always dll
 //	if (Cvar_VariableIntegerValue( "devdll" )) {
-		libHandle = LoadLibrary( filename );
+		libHandle = Sys_TryLoadDllPath( filename, &lastError );
 		if ( libHandle ) {
 			goto found_dll;
 		}
-		Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n",
-					 filename, GetLastError() );
 	}
 
 	basepath = Cvar_VariableString( "fs_basepath" );
 	cdpath = Cvar_VariableString( "fs_cdpath" );
 	gamedir = Cvar_VariableString( "fs_game" );
+	exedir = Sys_ExeDir();
+
+	fn = FS_BuildOSPath( exedir, gamedir && gamedir[0] ? gamedir : "Main", filename );
+	libHandle = Sys_TryLoadDllPath( fn, &lastError );
+	if ( libHandle ) {
+		goto found_dll;
+	}
+	if ( gamedir[0] && Q_stricmp( gamedir, "Main" ) ) {
+		fn = FS_BuildOSPath( exedir, "Main", filename );
+		libHandle = Sys_TryLoadDllPath( fn, &lastError );
+		if ( libHandle ) {
+			goto found_dll;
+		}
+	}
 
 	fn = FS_BuildOSPath( basepath, gamedir, filename );
-	libHandle = LoadLibrary( fn );
+	libHandle = Sys_TryLoadDllPath( fn, &lastError );
 
 	if ( !libHandle ) {
-		Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n",
-					 fn, GetLastError() );
-
-		// Also try basepath/Main directly (fallback if fs_game is empty)
-		if ( !gamedir[0] ) {
+		// Also try basepath/Main directly. Media-only fs_game folders do not ship qagame DLLs.
+		if ( !gamedir[0] || Q_stricmp( gamedir, "Main" ) ) {
 			fn = FS_BuildOSPath( basepath, "Main", filename );
-			libHandle = LoadLibrary( fn );
+			libHandle = Sys_TryLoadDllPath( fn, &lastError );
 			if ( libHandle ) {
 				goto found_dll;
 			}
-			Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n",
-						 fn, GetLastError() );
 		}
 
 		if ( cdpath[0] ) {
 			fn = FS_BuildOSPath( cdpath, gamedir, filename );
-			libHandle = LoadLibrary( fn );
-			if ( !libHandle ) {
-				Com_DPrintf( "Sys_LoadDll: LoadLibrary('%s') failed (error %lu)\n",
-							 fn, GetLastError() );
-			}
+			libHandle = Sys_TryLoadDllPath( fn, &lastError );
 		}
 
 		if ( !libHandle ) {
-			Com_Printf( "^1Sys_LoadDll(%s): all search paths exhausted\n", name );
+			Com_Printf( "^1Sys_LoadDll(%s): all search paths exhausted (fs_basepath='%s', fs_game='%s', exe='%s', last error %lu)\n", name, basepath, gamedir, exedir, lastError );
 			return NULL;
 		}
 	}
@@ -710,6 +822,7 @@ found_dll:
 	dllEntry = ( void ( QDECL * )( int ( QDECL * )( int, ... ) ) )GetProcAddress( libHandle, "dllEntry" );
 	*entryPoint = ( int ( QDECL * )( int,... ) )GetProcAddress( libHandle, "vmMain" );
 	if ( !*entryPoint || !dllEntry ) {
+		Com_Printf( "^1Sys_LoadDll(%s): missing vmMain or dllEntry in %s\n", name, filename );
 		FreeLibrary( libHandle );
 		return NULL;
 	}

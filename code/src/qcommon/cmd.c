@@ -31,7 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../game/q_shared.h"
 #include "qcommon.h"
 
-#define MAX_CMD_BUFFER  16384
+#define MAX_CMD_BUFFER  ( 512 * 1024 )
 #define MAX_CMD_LINE    1024
 
 typedef struct {
@@ -97,7 +97,7 @@ void Cbuf_AddText( const char *text ) {
 	l = strlen( text );
 
 	if ( cmd_text.cmdsize + l >= cmd_text.maxsize ) {
-		Com_Printf( "Cbuf_AddText: overflow\n" );
+		Com_Printf( "Cbuf_AddText: overflow (%i > %i)\n", cmd_text.cmdsize + l, cmd_text.maxsize );
 		return;
 	}
 	memcpy( &cmd_text.data[cmd_text.cmdsize], text, l );
@@ -119,7 +119,7 @@ void Cbuf_InsertText( const char *text ) {
 
 	len = strlen( text ) + 1;
 	if ( len + cmd_text.cmdsize > cmd_text.maxsize ) {
-		Com_Printf( "Cbuf_InsertText overflowed\n" );
+		Com_Printf( "Cbuf_InsertText overflowed (%i > %i)\n", len + cmd_text.cmdsize, cmd_text.maxsize );
 		return;
 	}
 

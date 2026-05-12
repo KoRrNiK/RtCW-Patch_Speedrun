@@ -637,6 +637,22 @@ usercmd_t CL_CreateCmd( void ) {
 	VectorCopy( cl.viewangles, oldAngles );
 	memset( &cmd, 0, sizeof( cmd ) );
 
+	if ( LS_RaceShouldBlockInput() ) {
+		CL_ClearKeys();
+		cl.mouseDx[0] = cl.mouseDx[1] = 0;
+		cl.mouseDy[0] = cl.mouseDy[1] = 0;
+		cl.joystickAxis[AXIS_FORWARD] = 0;
+		cl.joystickAxis[AXIS_SIDE] = 0;
+		cl.joystickAxis[AXIS_UP] = 0;
+		cl.joystickAxis[AXIS_YAW] = 0;
+		cl.joystickAxis[AXIS_PITCH] = 0;
+		if ( !cl_paused || !cl_paused->integer ) {
+			Cvar_Set( "cl_paused", "1" );
+		}
+		CL_FinishMove( &cmd );
+		return cmd;
+	}
+
 	if ( CL_SpeedrunImGui_IsOpen() ) {
 		CL_ClearKeys();
 		cl.mouseDx[0] = cl.mouseDx[1] = 0;
@@ -942,8 +958,11 @@ void CL_SendCmd( void ) {
 		return;
 	}
 
-	// don't send commands if paused
+	// don't send movement commands if paused, but keep reliable commands moving.
 	if ( com_sv_running->integer && sv_paused->integer && cl_paused->integer ) {
+		if ( clc.reliableSequence > clc.reliableAcknowledge && CL_ReadyToSendPacket() ) {
+			CL_WritePacket();
+		}
 		return;
 	}
 

@@ -109,6 +109,28 @@ static cvar_t *Cvar_FindVar( const char *var_name ) {
 	return NULL;
 }
 
+static void Cvar_ClearIfNonZero( const char *var_name ) {
+	cvar_t *var = Cvar_FindVar( var_name );
+	if ( var && var->integer ) {
+		Cvar_Set2( var_name, "0", qtrue );
+	}
+}
+
+static void Cvar_ClearSpeedrunProtectedState( void ) {
+	Cvar_ClearIfNonZero( "ls_godmode" );
+	Cvar_ClearIfNonZero( "cg_drawTriggers" );
+	Cvar_ClearIfNonZero( "cg_drawEnemies" );
+	Cvar_ClearIfNonZero( "cg_drawItems" );
+	Cvar_ClearIfNonZero( "cg_drawEnemySight" );
+	Cvar_ClearIfNonZero( "cg_drawAIPath" );
+	Cvar_ClearIfNonZero( "cg_explosiveTimers" );
+	Cvar_ClearIfNonZero( "r_drawClips" );
+	Cvar_ClearIfNonZero( "g_triggerLog" );
+	Cvar_ClearIfNonZero( "sp_zone_draw" );
+	Cvar_ClearIfNonZero( "sp_zone_edit" );
+	Cvar_ClearIfNonZero( "sp_zone_race_debug" );
+}
+
 /*
 ============
 Cvar_VariableValue
@@ -330,6 +352,10 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 	}
 
 	if ( !strcmp( value,var->string ) ) {
+		if ( !Q_stricmp( var_name, "sv_cheats" ) && atoi( value ) == 0 ) {
+			Cvar_SetCheatState();
+			Cvar_ClearSpeedrunProtectedState();
+		}
 		return var;
 	}
 	// note what types of cvars have been modified (userinfo, archive, serverinfo, systeminfo)
@@ -392,6 +418,10 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 	}
 
 	if ( !strcmp( value, var->string ) ) {
+		if ( !Q_stricmp( var_name, "sv_cheats" ) && atoi( value ) == 0 ) {
+			Cvar_SetCheatState();
+			Cvar_ClearSpeedrunProtectedState();
+		}
 		return var;     // not changed
 
 	}
@@ -403,6 +433,11 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 	var->string = CopyString( value );
 	var->value = atof( var->string );
 	var->integer = atoi( var->string );
+
+	if ( !Q_stricmp( var_name, "sv_cheats" ) && var->integer == 0 ) {
+		Cvar_SetCheatState();
+		Cvar_ClearSpeedrunProtectedState();
+	}
 
 	return var;
 }

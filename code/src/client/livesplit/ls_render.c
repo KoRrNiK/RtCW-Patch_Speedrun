@@ -14,29 +14,57 @@ static int lswnd_dpi = 96;
 /* ---- Drawing helpers ----------------------------------------------- */
 
 /* ---- Local formatting helpers (renderer cannot call cl_livesplit.c) - */
+static int LSRND_ShowTimerDecimals( void ) {
+	const char *value = Cvar_VariableString( "sp_timer_decimals" );
+	return ( !value || !value[0] || atoi( value ) != 0 );
+}
+
 static void LSRND_FormatTime( int ms, char *out, int outSize ) {
-	int mins, secs, hundredths;
+	int hours, mins, secs, hundredths;
 	int neg = 0;
 	if ( ms < 0 ) { neg = 1; ms = -ms; }
+	hours = ms / 3600000;
+	mins = ( ms / 60000 ) % 60;
+	secs = ( ms / 1000 ) % 60;
+	if ( !LSRND_ShowTimerDecimals() ) {
+		if ( hours > 0 )
+			Com_sprintf( out, outSize, "%s%d:%02d:%02d", neg ? "-" : "", hours, mins, secs );
+		else
+			Com_sprintf( out, outSize, "%s%d:%02d", neg ? "-" : "", mins, secs );
+		return;
+	}
 	hundredths = ( ms % 1000 ) / 10;
-	secs       = ( ms / 1000 ) % 60;
-	mins       = ms / 60000;
-	if ( neg )
-		Com_sprintf( out, outSize, "-%d:%02d.%02d", mins, secs, hundredths );
+	if ( hours > 0 )
+		Com_sprintf( out, outSize, "%s%d:%02d:%02d.%02d", neg ? "-" : "", hours, mins, secs, hundredths );
 	else
-		Com_sprintf( out, outSize, "%d:%02d.%02d", mins, secs, hundredths );
+		Com_sprintf( out, outSize, "%s%d:%02d.%02d", neg ? "-" : "", mins, secs, hundredths );
 }
 
 static void LSRND_FormatDelta( int deltaMs, char *out, int outSize ) {
-	int ad, secs, hundredths;
+	int ad, hours, mins, secs, hundredths;
+	char sign;
 	if ( deltaMs == 0 ) { Com_sprintf( out, outSize, "-" ); return; }
-	ad         = deltaMs < 0 ? -deltaMs : deltaMs;
-	secs       = ad / 1000;
+	ad = deltaMs < 0 ? -deltaMs : deltaMs;
+	sign = deltaMs < 0 ? '-' : '+';
+	hours = ad / 3600000;
+	mins = ( ad / 60000 ) % 60;
+	secs = ( ad / 1000 ) % 60;
+	if ( !LSRND_ShowTimerDecimals() ) {
+		if ( hours > 0 )
+			Com_sprintf( out, outSize, "%c%d:%02d:%02d", sign, hours, mins, secs );
+		else if ( mins > 0 )
+			Com_sprintf( out, outSize, "%c%d:%02d", sign, mins, secs );
+		else
+			Com_sprintf( out, outSize, "%c%d", sign, secs );
+		return;
+	}
 	hundredths = ( ad % 1000 ) / 10;
-	if ( secs >= 60 )
-		Com_sprintf( out, outSize, "%c%d:%02d", deltaMs < 0 ? '-' : '+', secs / 60, secs % 60 );
+	if ( hours > 0 )
+		Com_sprintf( out, outSize, "%c%d:%02d:%02d", sign, hours, mins, secs );
+	else if ( mins > 0 )
+		Com_sprintf( out, outSize, "%c%d:%02d", sign, mins, secs );
 	else
-		Com_sprintf( out, outSize, "%c%d.%02d", deltaMs < 0 ? '-' : '+', secs, hundredths );
+		Com_sprintf( out, outSize, "%c%d.%02d", sign, secs, hundredths );
 }
 
 /* Return comparison cumulative ms for a row based on given compareAgainst value */

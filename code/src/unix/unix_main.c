@@ -118,6 +118,13 @@ qboolean Sys_LowPhysicalMemory() {
 	return qfalse; // bk001207 - FIXME
 }
 
+qboolean Sys_GetProcessMemoryStats( sysProcessMemoryStats_t *stats ) {
+	if ( stats ) {
+		memset( stats, 0, sizeof( *stats ) );
+	}
+	return qfalse;
+}
+
 void Sys_BeginProfiling( void ) {
 }
 
@@ -435,7 +442,7 @@ void Sys_ConsoleInputInit() {
 				  characters  EOF,  EOL,  EOL2, ERASE, KILL, REPRINT,
 				  STATUS, and WERASE, and buffers by lines.
 		 ISIG: when any of the characters  INTR,  QUIT,  SUSP,  or
-				  DSUSP are received, generate the corresponding sig­
+				  DSUSP are received, generate the corresponding sigï¿½
 				  nal
 		*/
 		tc.c_lflag &= ~( ECHO | ICANON );

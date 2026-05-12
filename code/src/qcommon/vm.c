@@ -501,6 +501,13 @@ vm_t *VM_Create( const char *module, int ( *systemCalls )(int *),
 			return vm;
 		}
 
+		Com_Printf( "^3WARNING: VM_Create(%s): native DLL load failed, retrying...\n", module );
+		Sys_Sleep( 100 );
+		vm->dllHandle = Sys_LoadDll( module, &vm->entryPoint, VM_DllSyscall );
+		if ( vm->dllHandle ) {
+			return vm;
+		}
+
 		Com_Printf( "Failed to load dll, looking for qvm.\n" );
 		interpret = VMI_COMPILED;
 	}

@@ -563,10 +563,74 @@ void    SCR_FillRect( float x, float y, float width, float height,
 //
 // cl_livesplit.c
 //
+#define LS_RACE_UI_MAX_PLAYERS 8
+#define LS_RACE_UI_CHAT_LINES  6
+#define LS_RACE_UI_CHAT_TEXT   128
+
+typedef struct {
+	int rank;
+	int slot;
+	int progress;
+	int finished;
+	int local;
+	int red;
+	int green;
+	int blue;
+	int objectivesFound;
+	int objectivesTotal;
+	int zonesFound;
+	int zonesTotal;
+	int score;
+	int cheatFlags;
+	int inMenu;
+	int left;
+	int timedOut;
+	char nick[32];
+	char map[32];
+	char stage[32];
+	char state[16];
+	char rgt[32];
+	char stageIgt[32];
+} lsRaceUiPlayer_t;
+
+typedef struct {
+	int timeMs;
+	int red;
+	int green;
+	int blue;
+	char nick[32];
+	char text[LS_RACE_UI_CHAT_TEXT];
+} lsRaceUiChatLine_t;
+
+typedef struct {
+	int active;
+	int localCheatFlags;
+	int playerCount;
+	int chatCount;
+	char role[16];
+	char state[16];
+	char category[64];
+	char status[128];
+	char timer[32];
+	char stage[32];
+	char stageIgt[32];
+	char ready[32];
+	char flags[96];
+	char countdownText[32];
+	lsRaceUiPlayer_t players[LS_RACE_UI_MAX_PLAYERS];
+	lsRaceUiChatLine_t chat[LS_RACE_UI_CHAT_LINES];
+	char chatLines[LS_RACE_UI_CHAT_LINES][LS_RACE_UI_CHAT_TEXT];
+} lsRaceUiSnapshot_t;
+
 void    SCR_LiveSplitInit( void );
 void    SCR_LiveSplitShutdown( void );
 void    SCR_LiveSplitDraw( void );
 void    SCR_LiveSplitNotifyDisconnect( void );
+void    LS_RaceFrame( void );
+void    LS_RaceDrawOverlay( void );
+qboolean LS_RaceShouldBlockInput( void );
+void    LS_RaceConnectionlessPacket( netadr_t from );
+void    LS_RaceBuildSnapshot( lsRaceUiSnapshot_t *out );
 int     LS_GetModifiedSettingsCount( void );
 int     LS_BuildDemoCvarString( char *out, int outSize );
 void    LS_DemoBuildState( char *out, int outSize );

@@ -99,7 +99,44 @@ qboolean com_fullyInitialized;
 
 char com_errorMessage[MAXPRINTMSG];
 
+static unsigned int Com_BuildHash( void ) {
+	const unsigned char *seed = (const unsigned char *)PRODUCT_BUILD_SEED;
+	unsigned int hash = 2166136261u;
+
+	while ( *seed ) {
+		hash ^= *seed++;
+		hash *= 16777619u;
+	}
+
+	return hash;
+}
+
+static const char *Com_BuildIDString( void ) {
+	static char id[64];
+	static qboolean initialized = qfalse;
+
+	if ( !initialized ) {
+		Com_sprintf( id, sizeof( id ), "SR-%s-%s+%08x", PRODUCT_VERSION, PRODUCT_BUILD_CONFIG_SHORT, Com_BuildHash() );
+		initialized = qtrue;
+	}
+
+	return id;
+}
+
+static const char *Com_BuildInfoString( void ) {
+	static char info[128];
+	static qboolean initialized = qfalse;
+
+	if ( !initialized ) {
+		Com_sprintf( info, sizeof( info ), "%s %s", PRODUCT_BUILD_INFO, CPUSTRING );
+		initialized = qtrue;
+	}
+
+	return info;
+}
+
 void Com_WriteConfig_f( void );
+static void Com_RestoreConfigBackupIfNeeded( const char *filename );
 void CIN_CloseAllVideos();
 
 //============================================================================
@@ -936,6 +973,48 @@ void Com_Meminfo_f( void ) {
 	Com_Printf( "\n" );
 
 	//Com_Printf( "        %i number of tagged renderer allocations\n", g_numTaggedAllocs);
+	Com_PrintProcessMemoryStats( "process" );
+}
+
+void Com_PrintProcessMemoryStats( const char *label ) {
+	sysProcessMemoryStats_t stats;
+	const char *prefix;
+
+	prefix = label && label[0] ? label : "process";
+	if ( !Sys_GetProcessMemoryStats( &stats ) ) {
+		Com_Printf( "%s: process memory unavailable\n", prefix );
+		return;
+	}
+
+	Com_Printf( "%s: working %.1f MB (peak %.1f), commit %.1f MB (peak %.1f)\n",
+				prefix,
+				stats.workingSetKB / 1024.0f,
+				stats.peakWorkingSetKB / 1024.0f,
+				stats.pagefileKB / 1024.0f,
+				stats.peakPagefileKB / 1024.0f );
+}
+
+void Com_PrintBriefMemoryStats( const char *label ) {
+	int unused;
+	const char *prefix;
+
+	unused = 0;
+	if ( hunk_low.tempHighwater > hunk_low.permanent ) {
+		unused += hunk_low.tempHighwater - hunk_low.permanent;
+	}
+	if ( hunk_high.tempHighwater > hunk_high.permanent ) {
+		unused += hunk_high.tempHighwater - hunk_high.permanent;
+	}
+
+	prefix = label && label[0] ? label : "memory";
+	Com_Printf( "%s: hunk %.1f/%.1f MB, low %.1f MB, high %.1f MB, unused highwater %.1f MB\n",
+				prefix,
+				( hunk_low.permanent + hunk_high.permanent ) / ( 1024.0f * 1024.0f ),
+				s_hunkTotal / ( 1024.0f * 1024.0f ),
+				hunk_low.permanent / ( 1024.0f * 1024.0f ),
+				hunk_high.permanent / ( 1024.0f * 1024.0f ),
+				unused / ( 1024.0f * 1024.0f ) );
+	Com_PrintProcessMemoryStats( prefix );
 }
 
 /*
@@ -1626,6 +1705,17 @@ void Com_RunAndTimeServerPacket( netadr_t *evFrom, msg_t *buf ) {
 	}
 }
 
+static qboolean Com_IsLiveSplitRacePacket( const msg_t *msg ) {
+	const char *text;
+	char end;
+	if ( !msg || msg->cursize < 9 ) return qfalse;
+	if ( *(int *)msg->data != -1 ) return qfalse;
+	text = (const char *)msg->data + 4;
+	if ( Q_strncmp( text, "srace", 5 ) ) return qfalse;
+	end = msg->cursize > 9 ? text[5] : '\0';
+	return ( end == '\0' || end <= ' ' ) ? qtrue : qfalse;
+}
+
 /*
 =================
 Com_EventLoop
@@ -1709,7 +1799,7 @@ int Com_EventLoop( void ) {
 				continue;
 			}
 			memcpy( buf.data, ( byte * )( (netadr_t *)ev.evPtr + 1 ), buf.cursize );
-			if ( com_sv_running->integer ) {
+			if ( com_sv_running->integer && !Com_IsLiveSplitRacePacket( &buf ) ) {
 				Com_RunAndTimeServerPacket( &evFrom, &buf );
 			} else {
 				CL_PacketEvent( evFrom, &buf );
@@ -1964,7 +2054,7 @@ Com_Init
 void Com_Init( char *commandLine ) {
 	char    *s;
 
-	Com_Printf("%s %s %s\n", Q3_VERSION, CPUSTRING, PRODUCT_DATE);
+	Com_Printf( "%s %s %s\n", Q3_VERSION, Com_BuildIDString(), CPUSTRING );
 
 	if ( setjmp( abortframe ) ) {
 		Sys_Error( "Error during initialization" );
@@ -2008,6 +2098,7 @@ void Com_Init( char *commandLine ) {
 
 	// skip the q3config.cfg if "safe" is on the command line
 	if ( !Com_SafeMode() ) {
+		Com_RestoreConfigBackupIfNeeded( "wolfconfig.cfg" );
 		Cbuf_AddText( "exec wolfconfig.cfg\n" );
 	}
 
@@ -2082,10 +2173,12 @@ void Com_Init( char *commandLine ) {
 	Cmd_AddCommand( "writeconfig", Com_WriteConfig_f );
 
 
-	s = va("%s - %s %s", Q3_VERSION, PRODUCT_DATE, PRODUCT_TIME);
+	s = va( "%s %s %s", Q3_VERSION, Com_BuildIDString(), CPUSTRING );
 
 	com_version = Cvar_Get( "version", s, CVAR_ROM | CVAR_SERVERINFO );
 	Cvar_Get( "sp_version", SP_VERSION, CVAR_ROM | CVAR_SERVERINFO );
+	Cvar_Get( "sp_build_id", Com_BuildIDString(), CVAR_ROM );
+	Cvar_Get( "sp_build_info", Com_BuildInfoString(), CVAR_ROM );
 
 	Sys_Init();
 	Netchan_Init( Com_Milliseconds() & 0xffff );    // pick a port value that should be nice and random
@@ -2142,8 +2235,53 @@ void Com_Init( char *commandLine ) {
 
 //==================================================================
 
+static qboolean Com_ConfigTempAndBackupNames( const char *filename, char *tempName, size_t tempNameSize, char *backupName, size_t backupNameSize ) {
+	size_t len;
+
+	if ( !filename || !filename[0] || !tempName || !backupName ) {
+		return qfalse;
+	}
+	len = strlen( filename );
+	if ( len + 4 >= tempNameSize || len + 4 >= backupNameSize ) {
+		return qfalse;
+	}
+	Com_sprintf( tempName, tempNameSize, "%s.tmp", filename );
+	Com_sprintf( backupName, backupNameSize, "%s.bak", filename );
+	return qtrue;
+}
+
+static void Com_RestoreConfigBackupIfNeeded( const char *filename ) {
+	char tempName[MAX_QPATH];
+	char backupName[MAX_QPATH];
+	fileHandle_t f;
+	int len;
+
+	if ( !Com_ConfigTempAndBackupNames( filename, tempName, sizeof( tempName ), backupName, sizeof( backupName ) ) ) {
+		return;
+	}
+	if ( FS_FileExists( filename ) ) {
+		f = 0;
+		len = FS_FOpenFileRead( filename, &f, qtrue );
+		if ( f ) {
+			FS_FCloseFile( f );
+		}
+		if ( len >= 128 ) {
+			return;
+		}
+	}
+	if ( !FS_FileExists( backupName ) ) {
+		return;
+	}
+	Com_Printf( "^3%s is missing or incomplete; restoring %s\n", filename, backupName );
+	FS_Rename( backupName, filename );
+}
+
 void Com_WriteConfigToFile( const char *filename ) {
 	fileHandle_t f;
+	char tempName[MAX_QPATH];
+	char backupName[MAX_QPATH];
+	const char *writeName;
+	qboolean useTemp;
 
 #ifdef __MACOS__    //DAJ MacOS file typing
 	{
@@ -2152,9 +2290,11 @@ void Com_WriteConfigToFile( const char *filename ) {
 		_fcreator = 'R*ch';
 	}
 #endif
-	f = FS_FOpenFileWrite( filename );
+	useTemp = Com_ConfigTempAndBackupNames( filename, tempName, sizeof( tempName ), backupName, sizeof( backupName ) );
+	writeName = useTemp ? tempName : filename;
+	f = FS_FOpenFileWrite( writeName );
 	if ( !f ) {
-		Com_Printf( "Couldn't write %s.\n", filename );
+		Com_Printf( "Couldn't write %s.\n", writeName );
 		return;
 	}
 
@@ -2162,6 +2302,21 @@ void Com_WriteConfigToFile( const char *filename ) {
 	Key_WriteBindings( f );
 	Cvar_WriteVariables( f );
 	FS_FCloseFile( f );
+
+	if ( useTemp ) {
+		if ( FS_FileExists( filename ) ) {
+			FS_Rename( filename, backupName );
+		}
+		FS_Rename( tempName, filename );
+		if ( !FS_FileExists( filename ) ) {
+			if ( FS_FileExists( backupName ) ) {
+				Com_Printf( "^1Couldn't finalize %s; restoring %s\n", filename, backupName );
+				FS_Rename( backupName, filename );
+			} else {
+				Com_Printf( "^1Couldn't finalize %s; %s was left behind\n", filename, tempName );
+			}
+		}
+	}
 }
 
 

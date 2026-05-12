@@ -43,6 +43,28 @@ cvar_t  *rconAddress;
 
 cvar_t  *cl_timeout;
 cvar_t  *cl_maxpackets;
+
+typedef enum {
+	RELOAD_LOOP_LOAD_PENDING,
+	RELOAD_LOOP_WAIT_ACTIVE,
+	RELOAD_LOOP_DISCONNECT_PENDING,
+	RELOAD_LOOP_WAIT_DISCONNECTED
+} reloadLoopState_t;
+
+typedef struct {
+	qboolean active;
+	reloadLoopState_t state;
+	int totalCycles;
+	int currentCycle;
+	int loadDelayMs;
+	int disconnectDelayMs;
+	int nextActionTime;
+	int stateStartTime;
+	char loadCommand[MAX_STRING_CHARS];
+} reloadLoopTest_t;
+
+static reloadLoopTest_t cl_reloadLoop;
+static cvar_t *cl_reloadLoopMemInfo;
 cvar_t  *cl_packetdup;
 cvar_t  *cl_timeNudge;
 cvar_t  *cl_showTimeDelta;
@@ -155,6 +177,15 @@ CLIENT RELIABLE COMMAND COMMUNICATION
 
 /*
 ======================
+CL_IsCameraOriginCommand
+======================
+*/
+static qboolean CL_IsCameraOriginCommand( const char *cmd ) {
+	return cmd && !Q_strncmp( cmd, "setCameraOrigin", 15 ) && ( cmd[15] == '\0' || cmd[15] == ' ' ) ? qtrue : qfalse;
+}
+
+/*
+======================
 CL_AddReliableCommand
 
 The given command will be transmitted to the server, and is gauranteed to
@@ -168,11 +199,21 @@ void CL_AddReliableCommand( const char *cmd ) {
 	// we must drop the connection
 //	if(cl.cameraMode)
 //		Com_Printf ("cmd: %s\n", cmd);
+	if ( CL_IsCameraOriginCommand( cmd ) && clc.reliableSequence > clc.reliableAcknowledge ) {
+		index = clc.reliableSequence & ( MAX_RELIABLE_COMMANDS - 1 );
+		if ( CL_IsCameraOriginCommand( clc.reliableCommands[index] ) ) {
+			Q_strncpyz( clc.reliableCommands[index], cmd, sizeof( clc.reliableCommands[index] ) );
+			return;
+		}
+	}
+	if ( CL_IsCameraOriginCommand( cmd ) && clc.reliableSequence - clc.reliableAcknowledge >= MAX_RELIABLE_COMMANDS - 1 ) {
+		return;
+	}
 
 	if ( clc.reliableSequence - clc.reliableAcknowledge > MAX_RELIABLE_COMMANDS ) {
 		// During demo playback there is no server to acknowledge commands,
 		// so the buffer fills up.  Silently drop instead of crashing.
-		if ( clc.demoplaying ) {
+		if ( clc.demoplaying || CL_IsCameraOriginCommand( cmd ) ) {
 			return;
 		}
 		Com_Error( ERR_DROP, "Client command overflow" );
@@ -3226,6 +3267,11 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 
 	Com_DPrintf( "CL packet %s: %s\n", NET_AdrToString( from ), c );
 
+	if ( !Q_stricmp( c, "srace" ) ) {
+		LS_RaceConnectionlessPacket( from );
+		return;
+	}
+
 	// challenge from the server we are connecting to
 	if ( !Q_stricmp( c, "challengeResponse" ) ) {
 		if ( cls.state != CA_CONNECTING ) {
@@ -3430,6 +3476,184 @@ void CL_CheckUserinfo( void ) {
 
 }
 
+static void CL_ReloadLoop_Stop( const char *reason ) {
+	if ( cl_reloadLoop.active ) {
+		Com_Printf( "ReloadLoop: stopped after %i cycle%s%s%s\n",
+					cl_reloadLoop.currentCycle,
+					cl_reloadLoop.currentCycle == 1 ? "" : "s",
+					reason && reason[0] ? " - " : "",
+					reason && reason[0] ? reason : "" );
+	}
+	memset( &cl_reloadLoop, 0, sizeof( cl_reloadLoop ) );
+}
+
+static const char *CL_ReloadLoop_StateName( reloadLoopState_t state ) {
+	switch ( state ) {
+	case RELOAD_LOOP_LOAD_PENDING: return "waiting to load";
+	case RELOAD_LOOP_WAIT_ACTIVE: return "waiting for map active";
+	case RELOAD_LOOP_DISCONNECT_PENDING: return "waiting to disconnect";
+	case RELOAD_LOOP_WAIT_DISCONNECTED: return "waiting for disconnect";
+	default: return "unknown";
+	}
+}
+
+static void CL_ReloadLoop_PrintMemory( const char *phase ) {
+	char label[64];
+
+	if ( !cl_reloadLoopMemInfo || !cl_reloadLoopMemInfo->integer ) {
+		return;
+	}
+	Com_sprintf( label, sizeof( label ), "ReloadLoop %s", phase ? phase : "memory" );
+	Com_PrintBriefMemoryStats( label );
+}
+
+static void CL_ReloadLoop_Status_f( void ) {
+	int waitMs;
+
+	if ( !cl_reloadLoop.active ) {
+		Com_Printf( "ReloadLoop: inactive\n" );
+		return;
+	}
+	waitMs = cl_reloadLoop.nextActionTime - cls.realtime;
+	if ( waitMs < 0 ) waitMs = 0;
+	Com_Printf( "ReloadLoop: cycle %i/%s, %s, next action in %.1fs, command: %s\n",
+				cl_reloadLoop.currentCycle,
+				cl_reloadLoop.totalCycles > 0 ? va( "%i", cl_reloadLoop.totalCycles ) : "inf",
+				CL_ReloadLoop_StateName( cl_reloadLoop.state ),
+				waitMs / 1000.0f,
+				cl_reloadLoop.loadCommand );
+	CL_ReloadLoop_PrintMemory( "status" );
+}
+
+static void CL_ReloadLoop_Stop_f( void ) {
+	CL_ReloadLoop_Stop( "manual stop" );
+}
+
+static void CL_ReloadLoop_f( void ) {
+	int argc, i;
+	int cycles, loadDelayMs, disconnectDelayMs;
+	char loadCommand[MAX_STRING_CHARS];
+
+	argc = Cmd_Argc();
+	if ( argc > 1 && !Q_stricmp( Cmd_Argv( 1 ), "stop" ) ) {
+		CL_ReloadLoop_Stop( "manual stop" );
+		return;
+	}
+	if ( argc > 1 && !Q_stricmp( Cmd_Argv( 1 ), "status" ) ) {
+		CL_ReloadLoop_Status_f();
+		return;
+	}
+	if ( argc < 2 ) {
+		Com_Printf( "usage: sp_reloadloop <cycles, 0=inf> [loadDelayMs=7000] [disconnectDelayMs=4000] [load command...]\n" );
+		Com_Printf( "example: sp_reloadloop 20 7000 4000 loadgame autosave/xlabs\n" );
+		return;
+	}
+
+	cycles = atoi( Cmd_Argv( 1 ) );
+	if ( cycles < 0 ) cycles = 0;
+	loadDelayMs = argc > 2 ? atoi( Cmd_Argv( 2 ) ) : 7000;
+	disconnectDelayMs = argc > 3 ? atoi( Cmd_Argv( 3 ) ) : 4000;
+	if ( loadDelayMs < 1000 ) loadDelayMs = 1000;
+	if ( disconnectDelayMs < 250 ) disconnectDelayMs = 250;
+	if ( loadDelayMs > 600000 ) loadDelayMs = 600000;
+	if ( disconnectDelayMs > 600000 ) disconnectDelayMs = 600000;
+
+	loadCommand[0] = '\0';
+	for ( i = 4; i < argc; ++i ) {
+		if ( loadCommand[0] ) {
+			Q_strcat( loadCommand, sizeof( loadCommand ), " " );
+		}
+		Q_strcat( loadCommand, sizeof( loadCommand ), Cmd_Argv( i ) );
+	}
+	if ( !loadCommand[0] ) {
+		Q_strncpyz( loadCommand, "loadgame autosave/xlabs", sizeof( loadCommand ) );
+	}
+
+	memset( &cl_reloadLoop, 0, sizeof( cl_reloadLoop ) );
+	cl_reloadLoop.active = qtrue;
+	cl_reloadLoop.state = RELOAD_LOOP_LOAD_PENDING;
+	cl_reloadLoop.totalCycles = cycles;
+	cl_reloadLoop.loadDelayMs = loadDelayMs;
+	cl_reloadLoop.disconnectDelayMs = disconnectDelayMs;
+	cl_reloadLoop.nextActionTime = cls.realtime;
+	cl_reloadLoop.stateStartTime = cls.realtime;
+	Q_strncpyz( cl_reloadLoop.loadCommand, loadCommand, sizeof( cl_reloadLoop.loadCommand ) );
+
+	Com_Printf( "ReloadLoop: starting %s cycle%s, loadDelay=%ims, disconnectDelay=%ims, command: %s\n",
+				cycles > 0 ? va( "%i", cycles ) : "infinite",
+				cycles == 1 ? "" : "s",
+				loadDelayMs,
+				disconnectDelayMs,
+				cl_reloadLoop.loadCommand );
+}
+
+static void CL_ReloadLoop_Frame( void ) {
+	if ( !cl_reloadLoop.active ) {
+		return;
+	}
+
+	switch ( cl_reloadLoop.state ) {
+	case RELOAD_LOOP_LOAD_PENDING:
+		if ( cls.realtime < cl_reloadLoop.nextActionTime ) {
+			return;
+		}
+		if ( cl_reloadLoop.totalCycles > 0 && cl_reloadLoop.currentCycle >= cl_reloadLoop.totalCycles ) {
+			CL_ReloadLoop_Stop( "complete" );
+			return;
+		}
+		cl_reloadLoop.currentCycle++;
+		Com_Printf( "ReloadLoop: cycle %i/%s loading: %s\n",
+					cl_reloadLoop.currentCycle,
+					cl_reloadLoop.totalCycles > 0 ? va( "%i", cl_reloadLoop.totalCycles ) : "inf",
+					cl_reloadLoop.loadCommand );
+		CL_ReloadLoop_PrintMemory( "before load" );
+		Cbuf_AddText( cl_reloadLoop.loadCommand );
+		Cbuf_AddText( "\n" );
+		cl_reloadLoop.state = RELOAD_LOOP_WAIT_ACTIVE;
+		cl_reloadLoop.stateStartTime = cls.realtime;
+		return;
+
+	case RELOAD_LOOP_WAIT_ACTIVE:
+		if ( cls.state >= CA_ACTIVE ) {
+			CL_ReloadLoop_PrintMemory( "after load" );
+			cl_reloadLoop.nextActionTime = cls.realtime + cl_reloadLoop.loadDelayMs;
+			cl_reloadLoop.state = RELOAD_LOOP_DISCONNECT_PENDING;
+			return;
+		}
+		if ( cls.realtime - cl_reloadLoop.stateStartTime > 60000 ) {
+			CL_ReloadLoop_Stop( "timed out waiting for active map" );
+		}
+		return;
+
+	case RELOAD_LOOP_DISCONNECT_PENDING:
+		if ( cls.realtime < cl_reloadLoop.nextActionTime ) {
+			return;
+		}
+		Com_Printf( "ReloadLoop: cycle %i disconnecting\n", cl_reloadLoop.currentCycle );
+		CL_ReloadLoop_PrintMemory( "before disconnect" );
+		Cbuf_AddText( "disconnect\n" );
+		cl_reloadLoop.state = RELOAD_LOOP_WAIT_DISCONNECTED;
+		cl_reloadLoop.stateStartTime = cls.realtime;
+		return;
+
+	case RELOAD_LOOP_WAIT_DISCONNECTED:
+		if ( cls.state == CA_DISCONNECTED ) {
+			CL_ReloadLoop_PrintMemory( "after disconnect" );
+			if ( cl_reloadLoop.totalCycles > 0 && cl_reloadLoop.currentCycle >= cl_reloadLoop.totalCycles ) {
+				CL_ReloadLoop_Stop( "complete" );
+				return;
+			}
+			cl_reloadLoop.nextActionTime = cls.realtime + cl_reloadLoop.disconnectDelayMs;
+			cl_reloadLoop.state = RELOAD_LOOP_LOAD_PENDING;
+			return;
+		}
+		if ( cls.realtime - cl_reloadLoop.stateStartTime > 60000 ) {
+			CL_ReloadLoop_Stop( "timed out waiting for disconnect" );
+		}
+		return;
+	}
+}
+
 /*
 ==================
 CL_Frame
@@ -3480,6 +3704,7 @@ void CL_Frame( int msec ) {
 	cls.frametime = msec;
 
 	cls.realtime += cls.frametime;
+	CL_ReloadLoop_Frame();
 
 	if ( cl_timegraph->integer ) {
 		SCR_DebugGraph( cls.realFrametime * 0.25, 0 );
@@ -3494,6 +3719,7 @@ void CL_Frame( int msec ) {
 
 	// send intentions now
 	CL_SendCmd();
+	LS_RaceFrame();
 
 	// resend a connection request if necessary
 	CL_CheckForResend();
@@ -3995,7 +4221,7 @@ void CL_Init( void ) {
 	Cvar_Get( "name", "Player", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get( "rate", "3000", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get( "snaps", "20", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get( "model", "bj2", CVAR_USERINFO | CVAR_ARCHIVE ); // temp until we have an skeletal american model
+	Cvar_Get( "model", "player", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get( "head", "default", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get( "color", "4", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get( "handicap", "100", CVAR_USERINFO | CVAR_ARCHIVE );
@@ -4012,6 +4238,10 @@ void CL_Init( void ) {
 
 	// cgame might not be initialized before menu is used
 	Cvar_Get( "cg_viewsize", "100", CVAR_ARCHIVE );
+	Cvar_Get( "cg_blackbars", "0", CVAR_ARCHIVE );
+	Cvar_Get( "cg_blackbarLeft", "0", CVAR_ARCHIVE );
+	Cvar_Get( "cg_blackbarRight", "0", CVAR_ARCHIVE );
+	Cvar_Get( "cg_blackbarColor", "0 0 0 1.00", CVAR_ARCHIVE );
 
 	cl_missionStats = Cvar_Get( "g_missionStats", "0", CVAR_ROM );
 	cl_waitForFire = Cvar_Get( "cl_waitForFire", "0", CVAR_ROM );
@@ -4019,6 +4249,7 @@ void CL_Init( void ) {
 	// NERVE - SMF - localization
 	cl_language = Cvar_Get( "cl_language", "0", CVAR_ARCHIVE );
 	cl_debugTranslation = Cvar_Get( "cl_debugTranslation", "0", 0 );
+	cl_reloadLoopMemInfo = Cvar_Get( "sp_reloadloop_meminfo", "1", 0 );
 	// -NERVE - SMF
 
 	//
@@ -4030,6 +4261,9 @@ void CL_Init( void ) {
 	Cmd_AddCommand( "snd_restart", CL_Snd_Restart_f );
 	Cmd_AddCommand( "vid_restart", CL_Vid_Restart_f );
 	Cmd_AddCommand( "disconnect", CL_Disconnect_f );
+	Cmd_AddCommand( "sp_reloadloop", CL_ReloadLoop_f );
+	Cmd_AddCommand( "sp_reloadloop_stop", CL_ReloadLoop_Stop_f );
+	Cmd_AddCommand( "sp_reloadloop_status", CL_ReloadLoop_Status_f );
 	Cmd_AddCommand( "record", CL_Record_f );
 	Cmd_AddCommand( "demo", CL_PlayDemo_f );
 	Cmd_AddCommand( "cinematic", CL_PlayCinematic_f );
@@ -4139,6 +4373,9 @@ void CL_Shutdown( void ) {
 	Cmd_RemoveCommand( "snd_restart" );
 	Cmd_RemoveCommand( "vid_restart" );
 	Cmd_RemoveCommand( "disconnect" );
+	Cmd_RemoveCommand( "sp_reloadloop" );
+	Cmd_RemoveCommand( "sp_reloadloop_stop" );
+	Cmd_RemoveCommand( "sp_reloadloop_status" );
 	Cmd_RemoveCommand( "record" );
 	Cmd_RemoveCommand( "demo" );
 	Cmd_RemoveCommand( "cinematic" );

@@ -805,6 +805,8 @@ void Hunk_SmallLog( void );
 void Hunk_Log( void );
 
 void Com_TouchMemory( void );
+void Com_PrintProcessMemoryStats( const char *label );
+void Com_PrintBriefMemoryStats( const char *label );
 
 // commandLine should not include the executable name (argv[0])
 void Com_Init( char *commandLine );
@@ -939,6 +941,15 @@ typedef struct {
 sysEvent_t  Sys_GetEvent( void );
 
 void    Sys_Init( void );
+
+typedef struct {
+	int workingSetKB;
+	int peakWorkingSetKB;
+	int pagefileKB;
+	int peakPagefileKB;
+} sysProcessMemoryStats_t;
+
+qboolean Sys_GetProcessMemoryStats( sysProcessMemoryStats_t *stats );
 
 void *Sys_InitializeCriticalSection();
 void Sys_EnterCriticalSection( void *ptr );

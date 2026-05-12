@@ -1701,7 +1701,7 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 			if ( (  key == K_ESCAPE ||
 					key == K_SPACE ||
 					key == K_ENTER ) && down ) {
-				if ( down ) {
+				if ( keys[key].repeats <= 1 ) {
 					CL_AddReliableCommand( "cameraInterrupt" );
 				}
 				return;

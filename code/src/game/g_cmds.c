@@ -108,6 +108,12 @@ qboolean    CheatsOk( gentity_t *ent ) {
 	return qtrue;
 }
 
+static void G_UpdateLocalGodmodeCvar( gentity_t *ent ) {
+	if ( ent && ent->client && ent - g_entities == 0 ) {
+		trap_Cvar_Set( "ls_godmode", ( ent->flags & FL_GODMODE ) ? "1" : "0" );
+	}
+}
+
 
 /*
 ==================
@@ -411,6 +417,7 @@ void Cmd_God_f( gentity_t *ent ) {
 	} else {
 		msg = "godmode ON\n";
 	}
+	G_UpdateLocalGodmodeCvar( ent );
 
 	trap_SendServerCommand( ent - g_entities, va( "print \"%s\"", msg ) );
 }
@@ -537,6 +544,7 @@ void Cmd_Kill_f( gentity_t *ent ) {
 	}
 
 	ent->flags &= ~FL_GODMODE;
+	G_UpdateLocalGodmodeCvar( ent );
 	ent->client->ps.stats[STAT_HEALTH] = ent->health = 0;
 	player_die( ent, ent, ent, 100000, MOD_SUICIDE );
 }
@@ -619,6 +627,7 @@ void SetTeam( gentity_t *ent, char *s ) {
 	if ( oldTeam != TEAM_SPECTATOR ) {
 		// Kill him (makes sure he loses flags, etc)
 		ent->flags &= ~FL_GODMODE;
+		G_UpdateLocalGodmodeCvar( ent );
 		ent->client->ps.stats[STAT_HEALTH] = ent->health = 0;
 		player_die( ent, ent, ent, 100000, MOD_SUICIDE );
 
@@ -1248,6 +1257,7 @@ typedef struct {
 	int          levelTime;
 	int          numConnectedClients;
 	vec3_t       playerViewangles;
+	int          playerWeapon;
 	qboolean     valid;
 } stateSnapshot_t;
 
@@ -1300,6 +1310,32 @@ static int              rwf_head = 0;
 static int              rwf_count = 0;
 static int              rwf_lastTime = 0;   /* levelTime of last full snapshot */
 
+void G_PracticeSnapshotsShutdown( void ) {
+	int i;
+
+	for ( i = 0; i < SP_MAX_SLOTS; i++ ) {
+		if ( sp_slots[i] ) {
+			free( sp_slots[i] );
+			sp_slots[i] = NULL;
+		}
+	}
+
+	for ( i = 0; i < REWIND_FULL_SIZE; i++ ) {
+		if ( rwf_buffer[i] ) {
+			free( rwf_buffer[i] );
+			rwf_buffer[i] = NULL;
+		}
+		rwf_times[i] = 0;
+	}
+
+	rw_head = 0;
+	rw_count = 0;
+	rw_lastTime = 0;
+	rwf_head = 0;
+	rwf_count = 0;
+	rwf_lastTime = 0;
+}
+
 static int SP_ParseSlot( void ) {
 	char arg[4];
 	int slot;
@@ -1350,6 +1386,25 @@ static void SP_ShiftRestoredEntityTimes( gentity_t *e, int timeDelta ) {
 	if ( e->scriptStatusCurrent.scriptStackChangeTime > 0 ) e->scriptStatusCurrent.scriptStackChangeTime += timeDelta;
 }
 
+static void SP_ApplyRestoredPlayerWeapon( gentity_t *ent, int weapon ) {
+	vmCvar_t cvar;
+
+	if ( !ent || !ent->client ) {
+		return;
+	}
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || !COM_BitCheck( ent->client->ps.weapons, weapon ) ) {
+		weapon = ent->client->ps.weapon;
+	}
+	if ( weapon < WP_NONE || weapon >= WP_NUM_WEAPONS ) {
+		return;
+	}
+	ent->client->ps.weapon = weapon;
+	ent->client->pers.cmd.weapon = weapon;
+	ent->client->pers.oldcmd.weapon = weapon;
+	trap_Cvar_Register( &cvar, "cg_loadWeaponSelect", "0", CVAR_ROM );
+	trap_Cvar_Set( "cg_loadWeaponSelect", va( "%i", weapon ) );
+}
+
 void Cmd_SavePos_f( gentity_t *ent ) {
 	int i;
 	int slot;
@@ -1392,6 +1447,7 @@ void Cmd_SavePos_f( gentity_t *ent ) {
 	/* Snapshot timing */
 	sp->levelTime = level.time;
 	VectorCopy( ent->client->ps.viewangles, sp->playerViewangles );
+	sp->playerWeapon = ent->client->ps.weapon;
 	sp->valid = qtrue;
 
 	trap_SendServerCommand( ent - g_entities, va( "print \"Slot %d saved (%.1f %.1f %.1f)\n\"", slot, ent->client->ps.origin[0], ent->client->ps.origin[1], ent->client->ps.origin[2] ) );
@@ -1497,6 +1553,7 @@ void Cmd_LoadPos_f( gentity_t *ent ) {
 	VectorCopy( ent->client->ps.origin, ent->s.origin );
 	trap_LinkEntity( ent );
 	trap_GetUsercmd( ent->client - level.clients, &ent->client->pers.cmd );
+	SP_ApplyRestoredPlayerWeapon( ent, sp->playerWeapon );
 	VectorCopy( sp->playerViewangles, ent->client->ps.viewangles );
 	SetClientViewAngle( ent, sp->playerViewangles );
 
@@ -1554,6 +1611,7 @@ static void RWF_SaveSnapshot( void ) {
 	}
 	sp->levelTime = level.time;
 	VectorCopy( g_entities[0].client->ps.viewangles, sp->playerViewangles );
+	sp->playerWeapon = g_entities[0].client->ps.weapon;
 	sp->valid = qtrue;
 
 	rwf_times[idx] = level.time;
@@ -1635,6 +1693,7 @@ static void RWF_RestoreSnapshot( gentity_t *ent, int idx ) {
 	VectorCopy( ent->client->ps.origin, ent->s.origin );
 	trap_LinkEntity( ent );
 	trap_GetUsercmd( ent->client - level.clients, &ent->client->pers.cmd );
+	SP_ApplyRestoredPlayerWeapon( ent, sp->playerWeapon );
 	VectorCopy( sp->playerViewangles, ent->client->ps.viewangles );
 	SetClientViewAngle( ent, sp->playerViewangles );
 
@@ -1654,6 +1713,10 @@ static void RWF_RestoreSnapshot( gentity_t *ent, int idx ) {
 void G_RewindRecord( void ) {
 	gentity_t *ent;
 	rewindFrame_t *frame;
+
+	if ( !g_cheats.integer ) {
+		return;
+	}
 
 	ent = &g_entities[0];
 	if ( !ent->inuse || !ent->client ) {
@@ -1794,6 +1857,7 @@ static void Cmd_Rewind_Player( gentity_t *ent, int msec ) {
 	ent->client->ps.pm_flags &= ~PMF_LIMBO;
 
 	trap_GetUsercmd( ent->client - level.clients, &ent->client->pers.cmd );
+	SP_ApplyRestoredPlayerWeapon( ent, frame->weapon );
 	SetClientViewAngle( ent, frame->viewangles );
 
 	/* toggle teleport bit so client snaps to new angles/origin */
@@ -2842,6 +2906,16 @@ void ClientCommand( int clientNum ) {
 		return;
 	}
 //----(SA)	end
+
+	if ( Q_stricmp( cmd, "sp_trigger" ) == 0 || Q_stricmp( cmd, "sp_firetrigger" ) == 0 ) {
+		G_TriggerUseByName_f( ent );
+		return;
+	}
+
+	if ( Q_stricmp( cmd, "sp_trigger_list" ) == 0 ) {
+		G_TriggerList_f();
+		return;
+	}
 
 	// ignore all other commands when at intermission
 	if ( level.intermissiontime ) {

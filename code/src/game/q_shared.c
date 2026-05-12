@@ -31,6 +31,10 @@ If you have questions concerning this license or the applicable additional terms
 // q_shared.c -- stateless support routines that are included in each code dll
 #include "q_shared.h"
 
+#ifdef GAMEDLL
+#include "g_local.h"
+#endif
+
 /*
 ============
 Com_Clamp
@@ -481,6 +485,38 @@ int COM_Compress( char *data_p ) {
 	return size;
 }
 
+#ifdef GAMEDLL
+/*
+================
+COM_Eval
+================
+*/
+qboolean COM_Eval( char *cvarname, char *condition, char *cvarvalue ) {
+	int cvar;
+	int value;
+
+	cvar = trap_Cvar_VariableIntegerValue( cvarname );
+	value = atoi( cvarvalue );
+
+	if ( !Q_strcasecmp( condition, "==" ) ) {
+		return cvar == value;
+	} else if ( !Q_strcasecmp( condition, "!=" ) ) {
+		return cvar != value;
+	} else if ( !Q_strcasecmp( condition, "<=" ) ) {
+		return cvar <= value;
+	} else if ( !Q_strcasecmp( condition, ">=" ) ) {
+		return cvar >= value;
+	} else if ( !Q_strcasecmp( condition, "<" ) ) {
+		return cvar < value;
+	} else if ( !Q_strcasecmp( condition, ">" ) ) {
+		return cvar > value;
+	}
+
+	Com_Error( ERR_DROP, "COM_Eval() Error (line %d): Unknown condition, must be ==, !=, <=, >=, < or >.\n", COM_GetCurrentParseLine() );
+	return qfalse;
+}
+#endif
+
 /*
 ================
 COM_ParseExt
@@ -490,6 +526,9 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks ) {
 	int c = 0, len;
 	qboolean hasNewLines = qfalse;
 	char *data;
+#ifdef GAMEDLL
+	qboolean ignore = qfalse;
+#endif
 
 	data = *data_p;
 	len = 0;
@@ -519,6 +558,66 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks ) {
 		}
 
 		c = *data;
+
+#ifdef GAMEDLL
+		if ( c == '#' && data[1] == 'i' && data[2] == 'f' ) {
+			char cvarname[256];
+			char condition[256];
+			char value[256];
+			int i;
+
+			data += 3;
+
+			while ( *data && *data <= ' ' ) {
+				data++;
+			}
+
+			i = 0;
+			while ( *data && *data > ' ' ) {
+				cvarname[i++] = *data;
+				data++;
+			}
+			cvarname[i] = '\0';
+
+			while ( *data && *data <= ' ' ) {
+				data++;
+			}
+
+			i = 0;
+			while ( *data && *data > ' ' ) {
+				condition[i++] = *data;
+				data++;
+			}
+			condition[i] = '\0';
+
+			while ( *data && *data <= ' ' ) {
+				data++;
+			}
+
+			i = 0;
+			while ( *data && *data > ' ' ) {
+				value[i++] = *data;
+				data++;
+			}
+			value[i] = '\0';
+
+			ignore = !COM_Eval( cvarname, condition, value );
+			continue;
+		} else if ( c == '#' && data[1] == 'e' && data[2] == 'n' && data[3] == 'd' && data[4] == 'i' && data[5] == 'f' ) {
+			data += 6;
+			ignore = qfalse;
+			continue;
+		} else if ( c == '#' && data[1] == 'e' && data[2] == 'l' && data[3] == 's' && data[4] == 'e' ) {
+			data += 5;
+			ignore = !ignore;
+			continue;
+		}
+
+		if ( ignore ) {
+			data++;
+			continue;
+		}
+#endif
 
 		// skip double slash comments
 		if ( c == '/' && data[1] == '/' ) {
