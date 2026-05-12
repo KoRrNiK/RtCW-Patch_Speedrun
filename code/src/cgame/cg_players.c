@@ -78,6 +78,9 @@ qboolean CG_IsCrouchingAnim( clientInfo_t *ci, int animNum ) {
 
 	// FIXME: make compatible with new scripting
 	animNum &= ~ANIM_TOGGLEBIT;
+	if ( !ci || !ci->modelInfo || animNum < 0 || animNum >= ci->modelInfo->numAnimations ) {
+		return qfalse;
+	}
 	//
 	anim = BG_GetAnimationForIndex( ci->clientNum, animNum );
 	//
@@ -86,6 +89,34 @@ qboolean CG_IsCrouchingAnim( clientInfo_t *ci, int animNum ) {
 	}
 	//
 	return qfalse;
+}
+
+static int CG_SanitizeAnimationNumber( clientInfo_t *ci, int animationNumber, const char *caller ) {
+	static int lastWarnClient = -1;
+	static int lastWarnAnim = -999999;
+	static int lastWarnCount = -1;
+	int animIndex;
+	int sanitized;
+
+	if ( !ci || !ci->modelInfo || ci->modelInfo->numAnimations <= 0 ) {
+		return 0;
+	}
+
+	animIndex = animationNumber & ~ANIM_TOGGLEBIT;
+	if ( animIndex >= 0 && animIndex < ci->modelInfo->numAnimations ) {
+		return animationNumber;
+	}
+
+	if ( lastWarnClient != ci->clientNum || lastWarnAnim != animIndex || lastWarnCount != ci->modelInfo->numAnimations ) {
+		CG_Printf( "%s: invalid animation %i for client %i model %s (animations: %i), using 0\n",
+			caller, animIndex, ci->clientNum, ci->modelInfo->modelname, ci->modelInfo->numAnimations );
+		lastWarnClient = ci->clientNum;
+		lastWarnAnim = animIndex;
+		lastWarnCount = ci->modelInfo->numAnimations;
+	}
+
+	sanitized = animationNumber >= 0 ? ( animationNumber & ANIM_TOGGLEBIT ) : 0;
+	return sanitized;
 }
 
 /*
@@ -139,6 +170,9 @@ static qboolean CG_ParseGibModels( const char *filename, clientInfo_t *ci ) {
 	int len;
 	int i;
 	char        *token;
+		static int lastWarnClient = -1;
+		static int lastWarnAnim = -999999;
+		static int lastWarnCount = -1;
 	char text[20000];
 	fileHandle_t f;
 
@@ -1375,9 +1409,6 @@ static qboolean CG_ScanForExistingClientInfo( clientInfo_t *ci ) {
 //----(SA) done
 
 			// this clientinfo is identical, so use it's handles
-
-			ci->deferred = qfalse;
-
 			CG_CopyClientInfoModel( match, ci );
 
 			return qtrue;
@@ -1660,13 +1691,13 @@ static void CG_SetLerpFrameAnimation( clientInfo_t *ci, lerpFrame_t *lf, int new
 	if ( !ci->modelInfo ) {
 		return;
 	}
+	if ( ci->modelInfo->numAnimations <= 0 ) {
+		return;
+	}
 
+	newAnimation = CG_SanitizeAnimationNumber( ci, newAnimation, "CG_SetLerpFrameAnimation" );
 	lf->animationNumber = newAnimation;
 	newAnimation &= ~ANIM_TOGGLEBIT;
-
-	if ( newAnimation < 0 || newAnimation >= ci->modelInfo->numAnimations ) {
-		CG_Error( "Bad animation number (CG_SLFA): %i", newAnimation );
-	}
 
 	anim = &ci->modelInfo->animations[ newAnimation ];
 
@@ -1786,6 +1817,9 @@ void CG_SetLerpFrameAnimationRate( centity_t *cent, clientInfo_t *ci, lerpFrame_
 	if ( !ci->modelInfo ) {
 		return;
 	}
+	if ( ci->modelInfo->numAnimations <= 0 ) {
+		return;
+	}
 
 	oldAnimTime = lf->animationTime;
 	oldanim = lf->animation;
@@ -1796,12 +1830,9 @@ void CG_SetLerpFrameAnimationRate( centity_t *cent, clientInfo_t *ci, lerpFrame_
 		oldanim = NULL;
 	}
 
+	newAnimation = CG_SanitizeAnimationNumber( ci, newAnimation, "CG_SetLerpFrameAnimationRate" );
 	lf->animationNumber = newAnimation;
 	newAnimation &= ~ANIM_TOGGLEBIT;
-
-	if ( newAnimation < 0 || newAnimation >= ci->modelInfo->numAnimations ) {
-		CG_Error( "Bad animation number (CG_SLFAR): %i", newAnimation );
-	}
 
 	anim = &ci->modelInfo->animations[ newAnimation ];
 
@@ -4200,6 +4231,101 @@ Adds a piece with modifications or duplications for powerups
 Also called by CG_Missile for quad rockets, but nobody can tell...
 ===============
 */
+typedef struct {
+	qboolean active;
+	int renderMode;
+	byte r, g, b, a;
+	qhandle_t translucentShader;
+	qhandle_t tintShader;
+	qhandle_t xrayShader;
+} raceGhostStyle_t;
+
+static raceGhostStyle_t raceGhostStyle;
+
+qboolean CG_RaceGhostStyleActive( void ) {
+	return raceGhostStyle.active;
+}
+
+void CG_RaceGhostStyleBegin( int renderMode, byte r, byte g, byte b, int alpha, qhandle_t translucentShader, qhandle_t tintShader, qhandle_t xrayShader ) {
+	raceGhostStyle.active = qtrue;
+	if ( renderMode == CG_RACE_GHOST_RENDER_TEXTURED ) renderMode = CG_RACE_GHOST_RENDER_PLAYER;
+	raceGhostStyle.renderMode = renderMode;
+	raceGhostStyle.r = r;
+	raceGhostStyle.g = g;
+	raceGhostStyle.b = b;
+	raceGhostStyle.a = (byte)Com_Clamp( 0.0f, 255.0f, (float)alpha );
+	raceGhostStyle.translucentShader = translucentShader;
+	raceGhostStyle.tintShader = tintShader;
+	raceGhostStyle.xrayShader = xrayShader;
+}
+
+void CG_RaceGhostStyleEnd( void ) {
+	memset( &raceGhostStyle, 0, sizeof( raceGhostStyle ) );
+}
+
+void CG_RaceGhostStyleAddRefEntity( refEntity_t *ent ) {
+	refEntity_t overlay;
+	refEntity_t glow;
+
+	if ( !raceGhostStyle.active ) {
+		trap_R_AddRefEntityToScene( ent );
+		return;
+	}
+	if ( raceGhostStyle.a == 0 ) {
+		return;
+	}
+	if ( raceGhostStyle.renderMode == CG_RACE_GHOST_RENDER_PLAYER && raceGhostStyle.a < 255 ) {
+		ent->renderfx |= RF_ENTITY_ALPHA;
+		ent->shaderRGBA[0] = 255;
+		ent->shaderRGBA[1] = 255;
+		ent->shaderRGBA[2] = 255;
+		ent->shaderRGBA[3] = raceGhostStyle.a;
+	}
+
+	if ( raceGhostStyle.renderMode != CG_RACE_GHOST_RENDER_TRANSLUCENT ) {
+		trap_R_AddRefEntityToScene( ent );
+	}
+
+	if ( raceGhostStyle.renderMode == CG_RACE_GHOST_RENDER_TEXTURED || raceGhostStyle.renderMode == CG_RACE_GHOST_RENDER_PLAYER ) {
+		return;
+	}
+
+	memcpy( &overlay, ent, sizeof( overlay ) );
+	if ( raceGhostStyle.renderMode == CG_RACE_GHOST_RENDER_TRANSLUCENT ) {
+		if ( !raceGhostStyle.translucentShader ) return;
+		overlay.customShader = raceGhostStyle.translucentShader;
+	} else if ( raceGhostStyle.renderMode == CG_RACE_GHOST_RENDER_TINTED ) {
+		if ( !raceGhostStyle.tintShader ) return;
+		overlay.customShader = raceGhostStyle.tintShader;
+	} else if ( raceGhostStyle.renderMode == CG_RACE_GHOST_RENDER_XRAY ) {
+		if ( !raceGhostStyle.xrayShader ) return;
+		overlay.customShader = raceGhostStyle.translucentShader ? raceGhostStyle.translucentShader : raceGhostStyle.xrayShader;
+	} else {
+		return;
+	}
+
+	overlay.shaderRGBA[0] = raceGhostStyle.r;
+	overlay.shaderRGBA[1] = raceGhostStyle.g;
+	overlay.shaderRGBA[2] = raceGhostStyle.b;
+	overlay.shaderRGBA[3] = raceGhostStyle.a;
+	trap_R_AddRefEntityToScene( &overlay );
+
+	if ( raceGhostStyle.renderMode == CG_RACE_GHOST_RENDER_XRAY ) {
+		memcpy( &glow, ent, sizeof( glow ) );
+		glow.customShader = raceGhostStyle.xrayShader;
+		glow.renderfx |= RF_DEPTHHACK | RF_MINLIGHT;
+		VectorScale( glow.axis[0], 1.025f, glow.axis[0] );
+		VectorScale( glow.axis[1], 1.025f, glow.axis[1] );
+		VectorScale( glow.axis[2], 1.025f, glow.axis[2] );
+		glow.nonNormalizedAxes = qtrue;
+		glow.shaderRGBA[0] = raceGhostStyle.r;
+		glow.shaderRGBA[1] = raceGhostStyle.g;
+		glow.shaderRGBA[2] = raceGhostStyle.b;
+		glow.shaderRGBA[3] = (byte)Com_Clamp( 0.0f, 255.0f, (float)raceGhostStyle.a * 1.25f );
+		trap_R_AddRefEntityToScene( &glow );
+	}
+}
+
 void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, int team, entityState_t *es, const vec3_t fireRiseDir ) {
 	centity_t *cent;
 	refEntity_t backupRefEnt; //, parentEnt;
@@ -4227,6 +4353,12 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, int team, enti
 //----(SA)	end
 
 	backupRefEnt = *ent;
+
+	if ( CG_RaceGhostStyleActive() ) {
+		CG_RaceGhostStyleAddRefEntity( ent );
+		*ent = backupRefEnt;
+		return;
+	}
 
 	if ( powerups & ( 1 << PW_INVIS ) ) {
 		ent->customShader = cgs.media.invisShader;

@@ -52,6 +52,7 @@ If you have questions concerning this license or the applicable additional terms
 #define RF_HILIGHT          ( 1 << 8 )  // more than RF_MINLIGHT.  For when an object is "Highlighted" (looked at/training identification/etc)
 #define RF_BLINK            ( 1 << 9 )  // eyes in 'blink' state
 #define RF_LEFTHAND         ( 1 << 10 ) // mirror entity for left-hand weapon view
+#define RF_ENTITY_ALPHA     ( 1 << 11 ) // apply refEntity shaderRGBA alpha without replacing the skin shader
 
 // refdef flags
 #define RDF_NOWORLDMODEL    1       // used for player configuration screen

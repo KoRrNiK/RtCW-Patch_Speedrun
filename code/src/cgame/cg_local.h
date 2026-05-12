@@ -1766,6 +1766,10 @@ extern vmCvar_t cg_drawGamemodels;
 extern vmCvar_t cg_cursorHints;
 extern vmCvar_t cg_hintFadeTime;            //----(SA)	added
 extern vmCvar_t cg_viewsize;
+extern vmCvar_t cg_blackbars;
+extern vmCvar_t cg_blackbarLeft;
+extern vmCvar_t cg_blackbarRight;
+extern vmCvar_t cg_blackbarColor;
 extern vmCvar_t cg_letterbox;           //----(SA)	added
 extern vmCvar_t cg_tracerChance;
 extern vmCvar_t cg_tracerWidth;
@@ -1847,6 +1851,39 @@ extern vmCvar_t cg_itemOpacity;
 extern vmCvar_t cg_sightOpacity;
 extern vmCvar_t cg_sightRange;
 extern vmCvar_t cg_pathLength;
+extern vmCvar_t cg_zoneTimer;
+extern vmCvar_t cg_zoneEdit;
+extern vmCvar_t cg_zoneDraw;
+extern vmCvar_t cg_zoneDrawStart;
+extern vmCvar_t cg_zoneDrawCheckpoints;
+extern vmCvar_t cg_zoneDrawFinish;
+extern vmCvar_t cg_zoneDrawRace;
+extern vmCvar_t cg_zoneRaceDebug;
+extern vmCvar_t cg_zoneDrawLabels;
+extern vmCvar_t cg_zoneDrawHandles;
+extern vmCvar_t cg_zoneRotationGizmo;
+extern vmCvar_t cg_zoneDrawActiveRouteOnly;
+extern vmCvar_t cg_zoneDrawRunTargetOnly;
+extern vmCvar_t cg_zoneDimInactive;
+extern vmCvar_t cg_zoneOpacity;
+extern vmCvar_t cg_zoneBorderAlpha;
+extern vmCvar_t cg_zoneBorderWidth;
+extern vmCvar_t cg_zoneStartColor;
+extern vmCvar_t cg_zoneColor;
+extern vmCvar_t cg_zoneFinishColor;
+extern vmCvar_t cg_zoneRaceColor;
+extern vmCvar_t cg_zoneInactiveAlpha;
+extern vmCvar_t cg_zoneHandleSize;
+extern vmCvar_t cg_zoneHandleMaxDist;
+extern vmCvar_t cg_zoneHoverPixels;
+extern vmCvar_t cg_zoneDragSpeed;
+extern vmCvar_t cg_zoneHudX;
+extern vmCvar_t cg_zoneHudY;
+extern vmCvar_t cg_zoneHudScale;
+extern vmCvar_t cg_zoneHudAlpha;
+extern vmCvar_t cg_zoneHudProgress;
+extern vmCvar_t cg_zoneStartStopMs;
+extern vmCvar_t cg_zoneAutoNames;
 extern vmCvar_t cg_drawPos;
 extern vmCvar_t cg_drawJumpStats;
 extern vmCvar_t cg_strafeGuide;
@@ -1955,9 +1992,13 @@ void CG_ZoomUp_f( void );
 void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demoPlayback );
 
 void CG_Concussive( centity_t *cent );
+#define CG_RACE_GHOST_RENDER_TRANSLUCENT 0
+#define CG_RACE_GHOST_RENDER_TEXTURED    1
+#define CG_RACE_GHOST_RENDER_TINTED      2
+#define CG_RACE_GHOST_RENDER_PLAYER      3
+#define CG_RACE_GHOST_RENDER_XRAY        4
 //
 // cg_drawtools.c
-//
 void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align, qboolean ignoreSurround );	// Knightmare changed
 float CG_Get2DScreenWidth (void);	// Knightmare added
 void CG_FillRect( float x, float y, float width, float height, const float *color, scralign_t align );	// Knightmare changed
@@ -1978,6 +2019,45 @@ void CG_DrawStringExt( int x, int y, const char *string, const float *setColor,
 void CG_DrawStringExt2( int x, int y, const char *string, const float *setColor,
 						qboolean forceColor, qboolean shadow, int charWidth, int charHeight, int maxChars, scralign_t align );	// Knightmare changed
 // END JOSEPH
+const char *CG_CharsetShaderName( void );
+void TrigVis_DrawBox( vec3_t mins, vec3_t maxs, byte fillColor[4], byte borderColor[4], qhandle_t fillShader, qhandle_t borderShader );
+void TrigVis_DrawBoxFixedBorder( vec3_t mins, vec3_t maxs, byte fillColor[4], byte borderColor[4], float borderWidth, qhandle_t fillShader, qhandle_t borderShader );
+void TrigVis_DrawOrientedBoxFixedBorder( vec3_t corners[8], byte fillColor[4], byte borderColor[4], float borderWidth, qhandle_t fillShader, qhandle_t borderShader );
+qboolean TrigVis_WorldToScreen( vec3_t worldPos, float *sx, float *sy );
+void CG_InitZones( void );
+void CG_ZoneFrame( void );
+void CG_DrawZones( void );
+void CG_DrawZoneLabels( void );
+void CG_DrawRaceGhostLabels( void );
+void CG_ZoneAdd_f( void );
+void CG_ZoneAddStart_f( void );
+void CG_ZoneAddCheckpoint_f( void );
+void CG_ZoneInsertCheckpoint_f( void );
+void CG_ZoneAddFinish_f( void );
+void CG_ZoneAddRace_f( void );
+void CG_ZoneDelete_f( void );
+void CG_ZoneClear_f( void );
+void CG_ZoneSelect_f( void );
+void CG_ZoneRoute_f( void );
+void CG_ZoneNext_f( void );
+void CG_ZonePrev_f( void );
+void CG_ZoneOrderUp_f( void );
+void CG_ZoneOrderDown_f( void );
+void CG_ZoneSetType_f( void );
+void CG_ZoneName_f( void );
+void CG_ZoneRouteName_f( void );
+void CG_ZoneGrow_f( void );
+void CG_ZoneMove_f( void );
+void CG_ZoneSetBounds_f( void );
+void CG_ZoneSetAngles_f( void );
+void CG_ZoneRotate_f( void );
+void CG_ZoneResetRun_f( void );
+void CG_ZoneResetTimes_f( void );
+void CG_ZoneEdit_f( void );
+void CG_ZoneSave_f( void );
+void CG_ZoneLoad_f( void );
+void CG_ZoneStatus_f( void );
+void CG_ZoneExportBuiltins_f( void );
 void CG_DrawBigString( int x, int y, const char *s, float alpha, scralign_t align );	// Knightmare changed
 void CG_DrawBigStringColor( int x, int y, const char *s, vec4_t color, scralign_t align );	// Knightmare changed
 void CG_DrawSmallString( int x, int y, const char *s, float alpha, scralign_t align );	// Knightmare changed
@@ -2061,6 +2141,9 @@ qboolean TrigVis_WorldToScreen( vec3_t worldPos, float *sx, float *sy );
 void TrigVis_DrawBox( vec3_t mins, vec3_t maxs, byte fillColor[4],
 					  byte borderColor[4], qhandle_t fillShader,
 					  qhandle_t borderShader );
+void TrigVis_DrawBoxFixedBorder( vec3_t mins, vec3_t maxs, byte fillColor[4],
+								 byte borderColor[4], float borderWidth,
+								 qhandle_t fillShader, qhandle_t borderShader );
 extern qhandle_t tvShader;
 extern qhandle_t tvBorderShader;
 
@@ -2094,6 +2177,10 @@ qboolean CG_EntOnFire( centity_t *cent );    // Ridah
 void CG_Player( centity_t *cent );
 void CG_ResetPlayerEntity( centity_t *cent );
 void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, int team, entityState_t *es, const vec3_t fireRiseDir );
+qboolean CG_RaceGhostStyleActive( void );
+void CG_RaceGhostStyleBegin( int renderMode, byte r, byte g, byte b, int alpha, qhandle_t translucentShader, qhandle_t tintShader, qhandle_t xrayShader );
+void CG_RaceGhostStyleEnd( void );
+void CG_RaceGhostStyleAddRefEntity( refEntity_t *ent );
 void CG_NewClientInfo( int clientNum );
 sfxHandle_t CG_CustomSound( int clientNum, const char *soundName );
 

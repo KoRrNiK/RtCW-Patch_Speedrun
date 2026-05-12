@@ -1,0 +1,27 @@
+tag_head,
+tag_footleft,
+tag_legleft,
+tag_footright,
+tag_legright,
+tag_lbelt,
+tag_torso,
+tag_bleft,
+tag_bright,
+u_body,models/players/player/body_default.tga
+u_rthand,models/players/player/body_default.tga
+u_lfthand,models/players/player/body_default.tga
+l_legs,models/players/player/body_default.tga
+l_bootrt,models/players/player/boot_default.tga
+l_bootlft,models/players/player/boot_default.tga
+
+
+ammo,models/players/player/acc/bj_eq1.tga
+ammo2,models/players/player/acc/bj_eq1.tga
+ammo3,models/players/player/acc/bj_eq1.tga
+ammo4,models/players/player/acc/bj_eq1.tga
+
+
+md3_beltr,acc/fieldgearR.md3
+md3_beltl,acc/fieldgearL.md3
+md3_beltr,acc/sidearm.md3
+md3_back, "acc/backpack.md3"

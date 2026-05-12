@@ -2204,6 +2204,11 @@ static void CG_AddWeaponWithPowerups( refEntity_t *gun, int powerups, playerStat
 		return;
 	}
 
+	if ( CG_RaceGhostStyleActive() ) {
+		CG_RaceGhostStyleAddRefEntity( gun );
+		return;
+	}
+
 	// add powerup effects
 	if ( powerups & ( 1 << PW_INVIS ) ) {
 		gun->customShader = cgs.media.invisShader;

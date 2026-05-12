@@ -2467,16 +2467,18 @@ void CG_MouseEvent( int x, int y ) {
 	cgs.cursorX += x;
 	if ( cgs.cursorX < 0 ) {
 		cgs.cursorX = 0;
-	} else if ( cgs.cursorX > 640 ) {
-		cgs.cursorX = 640;
+	} else if ( cgs.cursorX > cgs.glconfig.vidWidth ) {
+		cgs.cursorX = cgs.glconfig.vidWidth;
 	}
 
 	cgs.cursorY += y;
 	if ( cgs.cursorY < 0 ) {
 		cgs.cursorY = 0;
-	} else if ( cgs.cursorY > 480 ) {
-		cgs.cursorY = 480;
+	} else if ( cgs.cursorY > cgs.glconfig.vidHeight ) {
+		cgs.cursorY = cgs.glconfig.vidHeight;
 	}
+	cgDC.cursorx = cgs.cursorX;
+	cgDC.cursory = cgs.cursorY;
 
 	n = Display_CursorType( cgs.cursorX, cgs.cursorY );
 	cgs.activeCursor = 0;

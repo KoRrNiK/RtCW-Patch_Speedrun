@@ -71,6 +71,7 @@
       <DataExecutionPrevention />
       <ImportLibrary>.\Debug\cgamex86.lib</ImportLibrary>
       <TargetMachine>MachineX86</TargetMachine>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -110,6 +111,7 @@
     <ClCompile Include="cg_consolecmds.c" />
     <ClCompile Include="cg_draw.c" />
     <ClCompile Include="cg_triggervis.c" />
+    <ClCompile Include="cg_zones.c" />
     <ClCompile Include="cg_esp.c" />
     <ClCompile Include="cg_movement.c" />
     <ClCompile Include="cg_drawtools.c" />

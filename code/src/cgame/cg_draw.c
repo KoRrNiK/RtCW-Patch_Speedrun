@@ -1754,6 +1754,25 @@ static void CG_DrawReward( void ) {
 	trap_R_SetColor( NULL );
 }
 
+static qboolean CG_ClearProtectedVmCvar( const char *name, vmCvar_t *cvar ) {
+	if ( cvar && cvar->integer ) {
+		trap_Cvar_Set( name, "0" );
+		trap_Cvar_Update( cvar );
+		return qtrue;
+	}
+	return qfalse;
+}
+
+static qboolean CG_ClearProtectedNamedCvar( const char *name ) {
+	char value[16];
+	trap_Cvar_VariableStringBuffer( name, value, sizeof( value ) );
+	if ( atoi( value ) ) {
+		trap_Cvar_Set( name, "0" );
+		return qtrue;
+	}
+	return qfalse;
+}
+
 
 /*
 ===============================================================================
@@ -3884,6 +3903,36 @@ CG_DrawActive
 Perform all drawing needed to completely fill the screen
 =====================
 */
+static void CG_DrawBlackSidebars( void ) {
+	float color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	float r, g, b, a;
+	int rightX;
+	int rightW;
+
+	if ( !cg_blackbars.integer ) return;
+	if ( cg.zoomedScope || cg.zoomedBinoc || ( cg.snap && ( cg.snap->ps.eFlags & EF_ZOOMING ) ) ) return;
+	if ( cg_blackbarLeft.integer <= 0 && cg_blackbarRight.integer <= 0 ) return;
+
+	trap_Cvar_Update( &cg_blackbarColor );
+	if ( sscanf( cg_blackbarColor.string, "%f %f %f %f", &r, &g, &b, &a ) == 4 ) {
+		color[0] = Com_Clamp( 0.0f, 1.0f, r / 255.0f );
+		color[1] = Com_Clamp( 0.0f, 1.0f, g / 255.0f );
+		color[2] = Com_Clamp( 0.0f, 1.0f, b / 255.0f );
+		color[3] = Com_Clamp( 0.0f, 1.0f, a );
+	}
+
+	rightX = cg.refdef.x + cg.refdef.width;
+	rightW = cgs.glconfig.vidWidth - rightX;
+	trap_R_SetColor( color );
+	if ( cg.refdef.x > 0 ) {
+		trap_R_DrawStretchPic( 0, 0, cg.refdef.x, cgs.glconfig.vidHeight, 0, 0, 0, 1, cgs.media.whiteShader );
+	}
+	if ( rightW > 0 ) {
+		trap_R_DrawStretchPic( rightX, 0, rightW, cgs.glconfig.vidHeight, 0, 0, 0, 1, cgs.media.whiteShader );
+	}
+	trap_R_SetColor( NULL );
+}
+
 void CG_DrawActive( stereoFrame_t stereoView ) {
 	float separation;
 	vec3_t baseOrg;
@@ -3991,36 +4040,37 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 		}
 	}
 
-	// ---- Dev tools: keep settings, but warn when sv_cheats is 0 ----
+	// ---- Dev tools: clear protected practice settings while sv_cheats is 0 ----
 	{
 		char cheatsBuf[4];
 		static int lastCheatToolWarn = 0;
 		trap_Cvar_VariableStringBuffer( "sv_cheats", cheatsBuf, sizeof( cheatsBuf ) );
 		if ( atoi( cheatsBuf ) == 0 ) {
 			qboolean wantsCheatTool = qfalse;
-			{
-				char tmp[4];
-				if ( cg_drawTriggers.integer || cg_drawEnemies.integer || cg_drawItems.integer || cg_drawEnemySight.integer || cg_drawAIPath.integer || cg_explosiveTimers.integer ) {
-					wantsCheatTool = qtrue;
-				}
-				trap_Cvar_VariableStringBuffer( "r_drawClips", tmp, sizeof( tmp ) );
-				if ( atoi( tmp ) ) {
-					wantsCheatTool = qtrue;
-				}
-				trap_Cvar_VariableStringBuffer( "g_triggerLog", tmp, sizeof( tmp ) );
-				if ( atoi( tmp ) ) {
-					wantsCheatTool = qtrue;
-				}
-			}
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawTriggers", &cg_drawTriggers );
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawEnemies", &cg_drawEnemies );
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawItems", &cg_drawItems );
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawEnemySight", &cg_drawEnemySight );
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawAIPath", &cg_drawAIPath );
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_explosiveTimers", &cg_explosiveTimers );
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_draw", &cg_zoneDraw );
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_edit", &cg_zoneEdit );
+			wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_race_debug", &cg_zoneRaceDebug );
+			wantsCheatTool |= CG_ClearProtectedNamedCvar( "ls_godmode" );
+			wantsCheatTool |= CG_ClearProtectedNamedCvar( "r_drawClips" );
+			wantsCheatTool |= CG_ClearProtectedNamedCvar( "g_triggerLog" );
 			if ( wantsCheatTool && cg.time - lastCheatToolWarn > 3000 ) {
-				CG_CenterPrint( "Enable sv_cheats 1 to use practice/dev tools", SCREEN_HEIGHT * 0.25, SMALLCHAR_WIDTH );
+				CG_CenterPrint( "Practice/dev tools disabled: sv_cheats is 0", SCREEN_HEIGHT * 0.25, SMALLCHAR_WIDTH );
 				lastCheatToolWarn = cg.time;
 			}
 		}
 	}
 
+	CG_ZoneFrame();
+
 	// Draw trigger volume visualization (adds polys to scene)
 	CG_DrawTriggerVis();
+	CG_DrawZones();
 
 	// Draw enemy hitbox ESP (adds polys to scene, visible through walls)
 	CG_DrawEnemyESP();
@@ -4043,12 +4093,15 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 
 	// clear around the rendered view if sized down
 	CG_TileClear();     //----(SA)	moved to 2d section to avoid 2d/3d fog-state problems
+	CG_DrawBlackSidebars();
 
 	// draw status bar and other floating elements
 	CG_Draw2D();
 
 	// Trigger volume labels (2D text overlay, after render scene)
 	CG_DrawTriggerLabels();
+	CG_DrawZoneLabels();
+	CG_DrawRaceGhostLabels();
 
 	// Enemy ESP labels (2D text overlay, after render scene)
 	CG_DrawEnemyESPLabels();
@@ -4372,7 +4425,7 @@ static void CG_DrawVelocityString( int x, int y, const char *s, int font_w, int 
 		x -= text_w;
 		screenAlign = ALIGN_TOPRIGHT;
 	}
-	CG_DrawStringExt( x, y, s, color, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, screenAlign );
+	CG_DrawStringExt2( x, y, s, color, qfalse, qtrue, font_w, font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, screenAlign );
 }
 
 static void CG_drawVelocity( void ) {
@@ -4566,9 +4619,17 @@ static void CG_DrawExplosiveTimers( void ) {
 		if ( es->eType != ET_MISSILE ) continue;
 		if ( es->weapon != WP_GRENADE_LAUNCHER && es->weapon != WP_GRENADE_PINEAPPLE && es->weapon != WP_DYNAMITE ) continue;
 		if ( es->time <= cg.time ) continue;
+		if ( es->time2 > 0 && cg.time + 50 < es->time2 ) continue;
 		remaining = (float)( es->time - cg.time ) * 0.001f;
 		total = es->time2 > 0 && es->time > es->time2 ? (float)( es->time - es->time2 ) * 0.001f : ( es->weapon == WP_DYNAMITE ? 8.0f : 4.0f );
-		VectorCopy( cent->lerpOrigin, labelPos );
+		if ( total <= 0.0f || remaining > total + 0.25f ) continue;
+		if ( VectorCompare( cent->lerpOrigin, vec3_origin ) ) {
+			if ( VectorCompare( es->pos.trBase, vec3_origin ) ) continue;
+			BG_EvaluateTrajectory( &es->pos, cg.time, labelPos );
+		} else {
+			VectorCopy( cent->lerpOrigin, labelPos );
+		}
+		if ( VectorCompare( labelPos, vec3_origin ) ) continue;
 		labelPos[2] += 24.0f;
 		if ( TrigVis_WorldToScreen( labelPos, &sx, &sy ) ) {
 			CG_DrawExplosiveTimerBox( sx, sy - 18.0f, es->weapon == WP_DYNAMITE ? "dynamite" : "grenade", remaining, total, qtrue );

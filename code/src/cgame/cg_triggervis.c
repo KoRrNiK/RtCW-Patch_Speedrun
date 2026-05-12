@@ -259,6 +259,51 @@ static void TrigVis_DrawBorderedFace( vec3_t v0, vec3_t v1, vec3_t v2, vec3_t v3
 	TrigVis_DrawBoxFace( v3, v0, i0, i3, borderColor, borderShader );
 }
 
+static void TrigVis_DrawBorderedFaceFixed( vec3_t v0, vec3_t v1, vec3_t v2, vec3_t v3,
+										 byte borderColor[4], byte fillColor[4],
+										 float borderWidth, qhandle_t fillShader,
+										 qhandle_t borderShader ) {
+	vec3_t i0, i1, i2, i3;
+	vec3_t edgeU, edgeV;
+	float fracU, fracV;
+	float lenU, lenV;
+
+	VectorSubtract( v1, v0, edgeU );
+	VectorSubtract( v3, v0, edgeV );
+	lenU = VectorLength( edgeU );
+	lenV = VectorLength( edgeV );
+	if ( lenU <= 0.0f || lenV <= 0.0f || borderWidth <= 0.0f ) {
+		TrigVis_DrawBoxFace( v0, v1, v2, v3, fillColor, fillShader );
+		return;
+	}
+	fracU = borderWidth / lenU;
+	fracV = borderWidth / lenV;
+	if ( fracU > 0.45f ) fracU = 0.45f;
+	if ( fracV > 0.45f ) fracV = 0.45f;
+
+	i0[0] = v0[0] + fracU * ( v1[0] - v0[0] ) + fracV * ( v3[0] - v0[0] );
+	i0[1] = v0[1] + fracU * ( v1[1] - v0[1] ) + fracV * ( v3[1] - v0[1] );
+	i0[2] = v0[2] + fracU * ( v1[2] - v0[2] ) + fracV * ( v3[2] - v0[2] );
+
+	i1[0] = v1[0] + fracU * ( v0[0] - v1[0] ) + fracV * ( v2[0] - v1[0] );
+	i1[1] = v1[1] + fracU * ( v0[1] - v1[1] ) + fracV * ( v2[1] - v1[1] );
+	i1[2] = v1[2] + fracU * ( v0[2] - v1[2] ) + fracV * ( v2[2] - v1[2] );
+
+	i2[0] = v2[0] + fracU * ( v3[0] - v2[0] ) + fracV * ( v1[0] - v2[0] );
+	i2[1] = v2[1] + fracU * ( v3[1] - v2[1] ) + fracV * ( v1[1] - v2[1] );
+	i2[2] = v2[2] + fracU * ( v3[2] - v2[2] ) + fracV * ( v1[2] - v2[2] );
+
+	i3[0] = v3[0] + fracU * ( v2[0] - v3[0] ) + fracV * ( v0[0] - v3[0] );
+	i3[1] = v3[1] + fracU * ( v2[1] - v3[1] ) + fracV * ( v0[1] - v3[1] );
+	i3[2] = v3[2] + fracU * ( v2[2] - v3[2] ) + fracV * ( v0[2] - v3[2] );
+
+	TrigVis_DrawBoxFace( i0, i1, i2, i3, fillColor, fillShader );
+	TrigVis_DrawBoxFace( v0, v1, i1, i0, borderColor, borderShader );
+	TrigVis_DrawBoxFace( v1, v2, i2, i1, borderColor, borderShader );
+	TrigVis_DrawBoxFace( v2, v3, i3, i2, borderColor, borderShader );
+	TrigVis_DrawBoxFace( v3, v0, i0, i3, borderColor, borderShader );
+}
+
 #define BORDER_FRAC       0.015f   /* proportional border for small boxes (items) */
 #define TRIGGER_BORDER_W  2.0f     /* fixed-width border for triggers in world units */
 
@@ -301,16 +346,16 @@ Like TrigVis_DrawBox but uses a fixed-width border in world units
 instead of proportional fraction.  Keeps borders thin on large triggers.
 ==================
 */
-static void TrigVis_DrawBoxFixedBorder( vec3_t mins, vec3_t maxs,
-										byte fillColor[4], byte borderColor[4],
-										float borderWidth,
-										qhandle_t fillShader, qhandle_t borderShader ) {
+void TrigVis_DrawBoxFixedBorder( vec3_t mins, vec3_t maxs,
+								byte fillColor[4], byte borderColor[4],
+								float borderWidth,
+								qhandle_t fillShader, qhandle_t borderShader ) {
 	vec3_t c[8];
-	float sx, sy, sz, bf;
+	float width;
 
-	sx = maxs[0] - mins[0];
-	sy = maxs[1] - mins[1];
-	sz = maxs[2] - mins[2];
+	width = borderWidth;
+	if ( width < 0.25f ) width = 0.25f;
+	if ( width > 64.0f ) width = 64.0f;
 
 	// 8 corners of the AABB
 	VectorSet( c[0], mins[0], mins[1], mins[2] );
@@ -322,29 +367,33 @@ static void TrigVis_DrawBoxFixedBorder( vec3_t mins, vec3_t maxs,
 	VectorSet( c[6], maxs[0], maxs[1], maxs[2] );
 	VectorSet( c[7], mins[0], maxs[1], maxs[2] );
 
-	// Bottom (XY plane @ minZ): edges are sx and sy
-	bf = ( sx > 0 && sy > 0 ) ? borderWidth / ( ( sx < sy ? sx : sy ) * 0.5f ) : BORDER_FRAC;
-	if ( bf > 0.25f ) bf = 0.25f;
-	TrigVis_DrawBorderedFace( c[3], c[2], c[1], c[0], borderColor, fillColor, bf, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[3], c[2], c[1], c[0], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[4], c[5], c[6], c[7], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[0], c[1], c[5], c[4], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[2], c[3], c[7], c[6], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[3], c[0], c[4], c[7], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[1], c[2], c[6], c[5], borderColor, fillColor, width, fillShader, borderShader );
+}
 
-	// Top (XY plane @ maxZ)
-	TrigVis_DrawBorderedFace( c[4], c[5], c[6], c[7], borderColor, fillColor, bf, fillShader, borderShader );
+void TrigVis_DrawOrientedBoxFixedBorder( vec3_t c[8],
+									byte fillColor[4], byte borderColor[4],
+									float borderWidth,
+									qhandle_t fillShader, qhandle_t borderShader ) {
+	float width;
 
-	// Front (XZ plane @ minY): edges are sx and sz
-	bf = ( sx > 0 && sz > 0 ) ? borderWidth / ( ( sx < sz ? sx : sz ) * 0.5f ) : BORDER_FRAC;
-	if ( bf > 0.25f ) bf = 0.25f;
-	TrigVis_DrawBorderedFace( c[0], c[1], c[5], c[4], borderColor, fillColor, bf, fillShader, borderShader );
+	if ( !c ) {
+		return;
+	}
+	width = borderWidth;
+	if ( width < 0.25f ) width = 0.25f;
+	if ( width > 64.0f ) width = 64.0f;
 
-	// Back (XZ plane @ maxY)
-	TrigVis_DrawBorderedFace( c[2], c[3], c[7], c[6], borderColor, fillColor, bf, fillShader, borderShader );
-
-	// Left (YZ plane @ minX): edges are sy and sz
-	bf = ( sy > 0 && sz > 0 ) ? borderWidth / ( ( sy < sz ? sy : sz ) * 0.5f ) : BORDER_FRAC;
-	if ( bf > 0.25f ) bf = 0.25f;
-	TrigVis_DrawBorderedFace( c[3], c[0], c[4], c[7], borderColor, fillColor, bf, fillShader, borderShader );
-
-	// Right (YZ plane @ maxX)
-	TrigVis_DrawBorderedFace( c[1], c[2], c[6], c[5], borderColor, fillColor, bf, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[3], c[2], c[1], c[0], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[4], c[5], c[6], c[7], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[0], c[1], c[5], c[4], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[2], c[3], c[7], c[6], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[3], c[0], c[4], c[7], borderColor, fillColor, width, fillShader, borderShader );
+	TrigVis_DrawBorderedFaceFixed( c[1], c[2], c[6], c[5], borderColor, fillColor, width, fillShader, borderShader );
 }
 
 /*

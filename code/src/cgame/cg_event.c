@@ -1496,7 +1496,6 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 	const char      *s;
 	int clientNum;
 	clientInfo_t    *ci;
-	animModelInfo_t *modelInfo;
 	//char			tempStr[MAX_QPATH];
 
 	static int footstepcnt = 0;
@@ -1519,9 +1518,8 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		clientNum = 0;
 	}
 	ci = &cgs.clientinfo[ clientNum ];
-	modelInfo = CG_ValidatedClientModelInfo( ci );
 
-	if ( !modelInfo ) {   // not ready yet, or clientinfo still points at stale model data
+	if ( !CG_ValidatedClientModelInfo( ci ) ) {   // not ready yet, or clientinfo still points at stale model data
 		return;
 	}
 
@@ -1553,10 +1551,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 			} else if ( cent->currentState.aiChar == AICHAR_HELGA ) {
 				CG_SoundPlayIndexedScript( cgs.media.footsteps[FOOTSTEP_BEAST][0], NULL, es->number );
 			} else {
-				int fsType = ( modelInfo->footsteps >= 0
-					&& modelInfo->footsteps < FOOTSTEP_TOTAL )
-					? modelInfo->footsteps : FOOTSTEP_NORMAL;
-				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ fsType ][footstepcnt] );
+				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_NORMAL ][footstepcnt] );
 			}
 		}
 		break;

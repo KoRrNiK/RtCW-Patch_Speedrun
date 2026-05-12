@@ -1169,7 +1169,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input ) {
 			DrawMultitextured( input, stage );
 		} else
 		{
-			int fadeStart, fadeEnd;
+				int fadeStart, fadeEnd, entityAlpha;
 
 			if ( !setArraysOnce ) {
 				qglTexCoordPointer( 2, GL_FLOAT, 0, input->svars.texcoords[0] );
@@ -1195,7 +1195,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input ) {
 			// done.
 
 			//----(SA)	fading model stuff
-			fadeStart = backEnd.currentEntity->e.fadeStartTime;
+				fadeStart = backEnd.currentEntity->e.fadeStartTime;
+				entityAlpha = ( backEnd.currentEntity->e.renderfx & RF_ENTITY_ALPHA )
+					? backEnd.currentEntity->e.shaderRGBA[3] : 255;
 
 			if ( fadeStart ) {
 				fadeEnd = backEnd.currentEntity->e.fadeEndTime;
@@ -1228,7 +1230,18 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input ) {
 						tess.svars.colors[i][3] *= alphaval;
 					}
 				}
-			} else {
+				} else if ( entityAlpha < 255 ) {
+					int i;
+					unsigned int tempState;
+
+					tempState = pStage->stateBits;
+					tempState &= ~( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS | GLS_DEPTHMASK_TRUE );
+					tempState |= ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
+					GL_State( tempState );
+					for ( i = 0; i < tess.numVertexes; i++ ) {
+						tess.svars.colors[i][3] = (byte)( ( (int)tess.svars.colors[i][3] * entityAlpha ) / 255 );
+					}
+				} else {
 				GL_State( pStage->stateBits );
 			}
 			//----(SA)	end

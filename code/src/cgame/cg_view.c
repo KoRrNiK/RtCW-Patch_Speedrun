@@ -43,9 +43,42 @@ static vmCvar_t  ghost_visible;
 static vmCvar_t  ghost_x, ghost_y, ghost_z;
 static vmCvar_t  ghost_yaw;
 static vmCvar_t  ghost_speed;
+static vmCvar_t  ghost_crouch;
+static vmCvar_t  ghost_player;
 static vmCvar_t  ghost_opacity;
 static vmCvar_t  ghost_color;
+static vmCvar_t  race_active;
+static vmCvar_t  race_nametag;
+static vmCvar_t  race_nametag_stats;
+static vmCvar_t  race_nametag_icons;
+static vmCvar_t  race_nametag_scale;
+static vmCvar_t  race_nametag_opacity;
+static vmCvar_t  race_ghost_render;
+#define CG_RACE_MAX_GHOSTS 8
+static vmCvar_t  race_ghost_data[CG_RACE_MAX_GHOSTS];
 static qhandle_t ghostShader;
+static qhandle_t raceGhostTintShader;
+static qhandle_t raceGhostXrayShader;
+
+typedef struct {
+	int packedColor;
+	int alpha;
+	int crouched;
+	int health;
+	int armor;
+	int weapon;
+	int ammo;
+	int clip;
+	int legsAnim;
+	int torsoAnim;
+	int movementDir;
+	int eFlags;
+	int groundEntityNum;
+	int animMovetype;
+	float x, y, z, yaw, speed, pitch;
+	float vx, vy, vz;
+	char nick[32];
+} raceGhostInfo_t;
 
 /* Animation state for smooth frame cycling */
 typedef struct {
@@ -54,19 +87,49 @@ typedef struct {
 } ghostLerpFrame_t;
 
 static ghostLerpFrame_t ghost_legs, ghost_torso;
+static ghostLerpFrame_t race_legs[CG_RACE_MAX_GHOSTS], race_torso[CG_RACE_MAX_GHOSTS];
+static centity_t        race_player_ghosts[CG_RACE_MAX_GHOSTS];
+static qboolean         race_player_ghost_used[CG_RACE_MAX_GHOSTS];
+
+#define CG_RACE_GHOST_PLAYER_EFLAGS ( EF_DEAD | EF_CROUCHING | EF_MG42_ACTIVE | EF_FIRING | EF_TALK | EF_CONNECTION | EF_HEADSHOT | EF_HEADLOOK | EF_STAND_IDLE2 | EF_NO_TURN_ANIM | EF_ZOOMING | EF_NOSWINGANGLES | EF_RECENTLY_FIRING )
+
+static qboolean CG_ParseRaceGhost( const char *text, raceGhostInfo_t *out );
+static qboolean CG_AddRaceGhostPlayerModel( const raceGhostInfo_t *info, int ghostSlot );
+static void CG_AddRaceGhostModel( float x, float y, float z, float yaw, float speed,
+								  byte r, byte g, byte b, int alpha, qboolean crouched, int weaponNum, int legsAnimNum, int torsoAnimNum,
+								  ghostLerpFrame_t *legsLf, ghostLerpFrame_t *torsoLf );
 
 static void CG_InitGhost( void ) {
+	int i;
+	char name[32];
 	trap_Cvar_Register( &ghost_visible, "ls_ghost_visible", "0", 0 );
 	trap_Cvar_Register( &ghost_x, "ls_ghost_x", "0", 0 );
 	trap_Cvar_Register( &ghost_y, "ls_ghost_y", "0", 0 );
 	trap_Cvar_Register( &ghost_z, "ls_ghost_z", "0", 0 );
 	trap_Cvar_Register( &ghost_yaw, "ls_ghost_yaw", "0", 0 );
 	trap_Cvar_Register( &ghost_speed, "ls_ghost_speed", "0", 0 );
+	trap_Cvar_Register( &ghost_crouch, "ls_ghost_crouch", "0", 0 );
+	trap_Cvar_Register( &ghost_player, "ls_ghost_player", "", 0 );
 	trap_Cvar_Register( &ghost_opacity, "ls_ghost_opacity", "60", CVAR_ARCHIVE );
 	trap_Cvar_Register( &ghost_color, "ls_ghost_color", "0", 0 );
+	trap_Cvar_Register( &race_active, "ls_race_active", "0", 0 );
+	trap_Cvar_Register( &race_nametag, "ls_race_nametag", "1", CVAR_ARCHIVE );
+	trap_Cvar_Register( &race_nametag_stats, "ls_race_nametag_stats", "1", CVAR_ARCHIVE );
+	trap_Cvar_Register( &race_nametag_icons, "ls_race_nametag_icons", "1", CVAR_ARCHIVE );
+	trap_Cvar_Register( &race_nametag_scale, "ls_race_nametag_scale", "1.0", CVAR_ARCHIVE );
+	trap_Cvar_Register( &race_nametag_opacity, "ls_race_nametag_opacity", "1.0", CVAR_ARCHIVE );
+	trap_Cvar_Register( &race_ghost_render, "ls_race_ghost_render", "0", CVAR_ARCHIVE );
+	for ( i = 0; i < CG_RACE_MAX_GHOSTS; i++ ) {
+		Com_sprintf( name, sizeof( name ), "ls_race_ghost%d", i );
+		trap_Cvar_Register( &race_ghost_data[i], name, "", 0 );
+	}
 	ghostShader = trap_R_RegisterShader( "ghostPlayer" );
+	raceGhostTintShader = trap_R_RegisterShader( "speedrunWeaponTint" );
+	raceGhostXrayShader = trap_R_RegisterShader( "speedrunWeaponXray" );
 	memset( &ghost_legs, 0, sizeof( ghost_legs ) );
 	memset( &ghost_torso, 0, sizeof( ghost_torso ) );
+	memset( race_legs, 0, sizeof( race_legs ) );
+	memset( race_torso, 0, sizeof( race_torso ) );
 	ghost_initialized = qtrue;
 }
 
@@ -83,6 +146,72 @@ static animation_t *CG_GhostFindAnim( clientInfo_t *ci, const char *name ) {
 		}
 	}
 	return NULL;
+}
+
+static animation_t *CG_GhostFindMoveTypeAnim( clientInfo_t *ci, int moveTypeMask ) {
+	int i;
+	if ( !ci->modelInfo ) return NULL;
+	for ( i = 0; i < ci->modelInfo->numAnimations; i++ ) {
+		if ( ci->modelInfo->animations[i].movetype & moveTypeMask ) {
+			return &ci->modelInfo->animations[i];
+		}
+	}
+	return NULL;
+}
+
+static animation_t *CG_GhostFindAnimIndex( clientInfo_t *ci, int index ) {
+	index &= ~ANIM_TOGGLEBIT;
+	if ( !ci || !ci->modelInfo ) return NULL;
+	if ( index < 0 || index >= ci->modelInfo->numAnimations ) return NULL;
+	return &ci->modelInfo->animations[index];
+}
+
+static animation_t *CG_GhostFindMoveAnim( clientInfo_t *ci, scriptAnimMoveTypes_t moveType ) {
+	int index;
+	if ( !ci ) return NULL;
+	index = BG_GetAnimScriptAnimation( cg.clientNum, cg.snap ? cg.snap->ps.aiState : 0, moveType );
+	if ( index < 0 ) return NULL;
+	return CG_GhostFindAnimIndex( ci, index );
+}
+
+static animation_t *CG_GhostFindCrouchAnim( clientInfo_t *ci, qboolean moving ) {
+	animation_t *anim;
+	if ( moving ) {
+		anim = CG_GhostFindMoveAnim( ci, ANIM_MT_WALKCR );
+		if ( !anim ) anim = CG_GhostFindMoveAnim( ci, ANIM_MT_WALKCRBK );
+		if ( !anim ) anim = CG_GhostFindAnimIndex( ci, LEGS_WALKCR );
+		if ( !anim ) anim = CG_GhostFindAnimIndex( ci, LEGS_WALKCR_BACK );
+		if ( !anim ) anim = CG_GhostFindMoveTypeAnim( ci, ( 1 << ANIM_MT_WALKCR ) | ( 1 << ANIM_MT_WALKCRBK ) );
+		if ( !anim ) anim = CG_GhostFindAnim( ci, "WALKCR" );
+		if ( !anim ) anim = CG_GhostFindAnim( ci, "LEGS_WALKCR" );
+		if ( !anim ) anim = CG_GhostFindAnim( ci, "walkcr" );
+		if ( !anim ) anim = CG_GhostFindAnim( ci, "WALKCRBK" );
+		if ( !anim ) anim = CG_GhostFindAnim( ci, "LEGS_WALKCRBK" );
+		if ( !anim ) anim = CG_GhostFindAnim( ci, "LEGS_WALKCR_BACK" );
+		if ( anim ) return anim;
+	}
+	anim = CG_GhostFindMoveAnim( ci, ANIM_MT_IDLECR );
+	if ( !anim ) anim = CG_GhostFindAnimIndex( ci, LEGS_IDLECR );
+	if ( !anim ) anim = CG_GhostFindMoveTypeAnim( ci, ( 1 << ANIM_MT_IDLECR ) | ( 1 << ANIM_MT_WALKCR ) | ( 1 << ANIM_MT_WALKCRBK ) );
+	if ( !anim ) anim = CG_GhostFindAnim( ci, "IDLECR" );
+	if ( !anim ) anim = CG_GhostFindAnim( ci, "LEGS_IDLECR" );
+	if ( !anim ) anim = CG_GhostFindAnim( ci, "idlecr" );
+	return anim;
+}
+
+static void CG_GhostApplyLegScale( clientInfo_t *ci, refEntity_t *legs, qboolean crouchFallback ) {
+	float sx, sy, sz;
+	if ( !ci || !legs ) return;
+	sx = ci->playermodelScale[0] ? ci->playermodelScale[0] : 1.0f;
+	sy = ci->playermodelScale[1] ? ci->playermodelScale[1] : 1.0f;
+	sz = ci->playermodelScale[2] ? ci->playermodelScale[2] : 1.0f;
+	if ( crouchFallback ) sz *= 0.72f;
+	if ( sx != 1.0f || sy != 1.0f || sz != 1.0f ) {
+		VectorScale( legs->axis[0], sx, legs->axis[0] );
+		VectorScale( legs->axis[1], sy, legs->axis[1] );
+		VectorScale( legs->axis[2], sz, legs->axis[2] );
+		legs->nonNormalizedAxes = qtrue;
+	}
 }
 
 /*
@@ -147,14 +276,20 @@ static void CG_AddGhost( void ) {
 	vec3_t         legsAngles, torsoAngles;
 	float          yaw, speed;
 	animation_t    *legsAnim, *torsoAnim;
+	qboolean       crouchFallback = qfalse;
 	int            legsFrame, legsOldFrame, torsoFrame, torsoOldFrame;
 	float          legsBacklerp, torsoBacklerp;
 	int            alpha;
 	byte           gR, gG, gB; /* ghost tint color */
+	raceGhostInfo_t richGhost;
+	byte           r, g, b;
 
 	if ( !ghost_initialized ) {
 		CG_InitGhost();
 	}
+
+	trap_Cvar_Update( &race_active );
+	if ( race_active.integer ) return;
 
 	trap_Cvar_Update( &ghost_visible );
 	if ( !ghost_visible.integer ) return;
@@ -164,12 +299,24 @@ static void CG_AddGhost( void ) {
 	trap_Cvar_Update( &ghost_z );
 	trap_Cvar_Update( &ghost_yaw );
 	trap_Cvar_Update( &ghost_speed );
+	trap_Cvar_Update( &ghost_crouch );
+	trap_Cvar_Update( &ghost_player );
 	trap_Cvar_Update( &ghost_opacity );
 	trap_Cvar_Update( &ghost_color );
+	trap_Cvar_Update( &race_ghost_render );
 
 	alpha = ghost_opacity.integer;
 	if ( alpha < 0 )   alpha = 0;
 	if ( alpha > 255 ) alpha = 255;
+
+	if ( CG_ParseRaceGhost( ghost_player.string, &richGhost ) ) {
+		if ( CG_AddRaceGhostPlayerModel( &richGhost, 0 ) ) return;
+		r = (byte)( ( richGhost.packedColor >> 16 ) & 255 );
+		g = (byte)( ( richGhost.packedColor >> 8 ) & 255 );
+		b = (byte)( richGhost.packedColor & 255 );
+		CG_AddRaceGhostModel( richGhost.x, richGhost.y, richGhost.z, richGhost.yaw, richGhost.speed, r, g, b, richGhost.alpha, richGhost.crouched ? qtrue : qfalse, richGhost.weapon, richGhost.legsAnim, richGhost.torsoAnim, &ghost_legs, &ghost_torso );
+		return;
+	}
 
 	/* Ghost tint: 0=blue (old ghost), 1=gold (new gold this run) */
 	if ( ghost_color.integer == 1 ) {
@@ -195,7 +342,10 @@ static void CG_AddGhost( void ) {
 	/* Choose animation by name.
 	   Try short names first (MDS models: "idle","run","walk")
 	   then standard Q3 names ("legs_idle","legs_run","torso_stand"). */
-	if ( speed > 20.0f ) {
+	if ( ghost_crouch.integer ) {
+		legsAnim = CG_GhostFindCrouchAnim( ci, speed > 20.0f ? qtrue : qfalse );
+		if ( !legsAnim ) crouchFallback = qtrue;
+	} else if ( speed > 20.0f ) {
 		legsAnim = CG_GhostFindAnim( ci, "run" );
 		if ( !legsAnim ) legsAnim = CG_GhostFindAnim( ci, "trot" );
 		if ( !legsAnim ) legsAnim = CG_GhostFindAnim( ci, "legs_run" );
@@ -204,7 +354,9 @@ static void CG_AddGhost( void ) {
 		if ( !legsAnim ) legsAnim = CG_GhostFindAnim( ci, "legs_idle" );
 	}
 	/* Torso: try dedicated torso anims, otherwise reuse legs anim */
-	if ( speed > 20.0f ) {
+	if ( ghost_crouch.integer ) {
+		torsoAnim = CG_GhostFindAnim( ci, "torso_crouch" );
+	} else if ( speed > 20.0f ) {
 		torsoAnim = CG_GhostFindAnim( ci, "torso_move" );
 	} else {
 		torsoAnim = CG_GhostFindAnim( ci, "torso_stand" );
@@ -245,13 +397,7 @@ static void CG_AddGhost( void ) {
 
 	VectorSet( legsAngles, 0, yaw, 0 );
 	AnglesToAxis( legsAngles, legs.axis );
-
-	if ( ci->playermodelScale[0] ) {
-		VectorScale( legs.axis[0], ci->playermodelScale[0], legs.axis[0] );
-		VectorScale( legs.axis[1], ci->playermodelScale[1], legs.axis[1] );
-		VectorScale( legs.axis[2], ci->playermodelScale[2], legs.axis[2] );
-		legs.nonNormalizedAxes = qtrue;
-	}
+	CG_GhostApplyLegScale( ci, &legs, crouchFallback );
 
 	legs.frame    = legsFrame;
 	legs.oldframe = legsOldFrame;
@@ -307,9 +453,595 @@ static void CG_AddGhost( void ) {
 	head.shaderRGBA[2] = gB;
 	head.shaderRGBA[3] = alpha;
 	VectorCopy( lightOrigin, head.lightingOrigin );
+	AxisClear( head.axis );
 
 	CG_PositionRotatedEntityOnTag( &head, &torso, "tag_head" );
 	trap_R_AddRefEntityToScene( &head );
+}
+
+static int CG_RaceGhostRenderMode( void ) {
+	int mode = race_ghost_render.integer;
+	if ( mode < CG_RACE_GHOST_RENDER_TRANSLUCENT ) mode = CG_RACE_GHOST_RENDER_TRANSLUCENT;
+	if ( mode > CG_RACE_GHOST_RENDER_XRAY ) mode = CG_RACE_GHOST_RENDER_XRAY;
+	if ( mode == CG_RACE_GHOST_RENDER_TEXTURED ) mode = CG_RACE_GHOST_RENDER_PLAYER;
+	return mode;
+}
+
+static int CG_RaceGhostEffectiveRenderMode( int renderMode, int alpha ) {
+	if ( renderMode == CG_RACE_GHOST_RENDER_TEXTURED ) renderMode = CG_RACE_GHOST_RENDER_PLAYER;
+	return renderMode;
+}
+
+static void CG_RaceGhostSetColor( refEntity_t *ent, byte r, byte g, byte b, int alpha ) {
+	ent->shaderRGBA[0] = r;
+	ent->shaderRGBA[1] = g;
+	ent->shaderRGBA[2] = b;
+	ent->shaderRGBA[3] = (byte)Com_Clamp( 0.0f, 255.0f, (float)alpha );
+}
+
+static void CG_RaceGhostPrepareEntity( refEntity_t *ent, int renderMode, byte r, byte g, byte b, int alpha ) {
+	renderMode = CG_RaceGhostEffectiveRenderMode( renderMode, alpha );
+	if ( renderMode == CG_RACE_GHOST_RENDER_TRANSLUCENT ) {
+		ent->customShader = ghostShader;
+		CG_RaceGhostSetColor( ent, r, g, b, alpha );
+	} else if ( renderMode == CG_RACE_GHOST_RENDER_PLAYER && alpha < 255 ) {
+		ent->customShader = 0;
+		ent->renderfx |= RF_ENTITY_ALPHA;
+		CG_RaceGhostSetColor( ent, 255, 255, 255, alpha );
+	} else {
+		ent->customShader = 0;
+		ent->renderfx &= ~RF_ENTITY_ALPHA;
+		CG_RaceGhostSetColor( ent, 255, 255, 255, 255 );
+	}
+}
+
+static void CG_RaceGhostAddEntity( refEntity_t *ent, int renderMode, byte r, byte g, byte b, int alpha ) {
+	refEntity_t overlay;
+	refEntity_t glow;
+	if ( alpha <= 0 ) return;
+	renderMode = CG_RaceGhostEffectiveRenderMode( renderMode, alpha );
+	if ( renderMode != CG_RACE_GHOST_RENDER_TRANSLUCENT ) {
+		trap_R_AddRefEntityToScene( ent );
+	}
+	if ( renderMode != CG_RACE_GHOST_RENDER_TINTED && renderMode != CG_RACE_GHOST_RENDER_XRAY && renderMode != CG_RACE_GHOST_RENDER_TRANSLUCENT ) {
+		return;
+	}
+	memcpy( &overlay, ent, sizeof( overlay ) );
+	if ( renderMode == CG_RACE_GHOST_RENDER_TINTED ) {
+		if ( !raceGhostTintShader ) return;
+		overlay.customShader = raceGhostTintShader;
+	} else if ( renderMode == CG_RACE_GHOST_RENDER_XRAY ) {
+		if ( !raceGhostXrayShader ) return;
+		overlay.customShader = ghostShader ? ghostShader : raceGhostXrayShader;
+	} else {
+		if ( !ghostShader ) return;
+		overlay.customShader = ghostShader;
+	}
+	CG_RaceGhostSetColor( &overlay, r, g, b, alpha );
+	trap_R_AddRefEntityToScene( &overlay );
+	if ( renderMode == CG_RACE_GHOST_RENDER_XRAY ) {
+		memcpy( &glow, ent, sizeof( glow ) );
+		glow.customShader = raceGhostXrayShader;
+		glow.renderfx |= RF_DEPTHHACK | RF_MINLIGHT;
+		VectorScale( glow.axis[0], 1.025f, glow.axis[0] );
+		VectorScale( glow.axis[1], 1.025f, glow.axis[1] );
+		VectorScale( glow.axis[2], 1.025f, glow.axis[2] );
+		glow.nonNormalizedAxes = qtrue;
+		CG_RaceGhostSetColor( &glow, r, g, b, (int)Com_Clamp( 0.0f, 255.0f, (float)alpha * 1.25f ) );
+		trap_R_AddRefEntityToScene( &glow );
+	}
+}
+
+static void CG_AddRaceGhostWeapon( clientInfo_t *ci, const refEntity_t *torso, int weaponNum, byte r, byte g, byte b, int alpha, int renderMode ) {
+	refEntity_t gun;
+	weaponInfo_t *weapon;
+	qhandle_t model;
+	int i;
+
+	if ( !ci || !torso ) return;
+	if ( weaponNum <= WP_NONE || weaponNum >= WP_NUM_WEAPONS || weaponNum == WP_GAUNTLET ) return;
+	CG_RegisterWeapon( weaponNum );
+	weapon = &cg_weapons[weaponNum];
+	model = ( ci->isSkeletal && weapon->weaponModel[W_SKTP_MODEL] ) ? weapon->weaponModel[W_SKTP_MODEL] : weapon->weaponModel[W_TP_MODEL];
+	if ( !model ) return;
+
+	memset( &gun, 0, sizeof( gun ) );
+	gun.reType = RT_MODEL;
+	gun.hModel = model;
+	gun.renderfx = torso->renderfx;
+	gun.shadowPlane = torso->shadowPlane;
+	VectorCopy( torso->lightingOrigin, gun.lightingOrigin );
+	CG_PositionEntityOnTag( &gun, torso, "tag_weapon", 0, NULL );
+	if ( ci->playermodelScale[0] != 0 ) {
+		for ( i = 0; i < 3; i++ ) {
+			VectorScale( gun.axis[i], 1.0f / ci->playermodelScale[i], gun.axis[i] );
+		}
+	}
+	CG_RaceGhostPrepareEntity( &gun, renderMode, r, g, b, alpha );
+	CG_RaceGhostAddEntity( &gun, renderMode, r, g, b, alpha );
+}
+
+static void CG_AddRaceGhostModel( float x, float y, float z, float yaw, float speed,
+								  byte r, byte g, byte b, int alpha, qboolean crouched, int weaponNum, int legsAnimNum, int torsoAnimNum,
+								  ghostLerpFrame_t *legsLf, ghostLerpFrame_t *torsoLf ) {
+	refEntity_t legs, torso, head;
+	clientInfo_t *ci;
+	vec3_t origin, lightOrigin, legsAngles, torsoAngles;
+	animation_t *legsAnim, *torsoAnim;
+	qboolean crouchFallback = qfalse;
+	int legsFrame, legsOldFrame, torsoFrame, torsoOldFrame;
+	int renderMode;
+	float legsBacklerp, torsoBacklerp;
+
+	if ( alpha < 0 ) alpha = 0;
+	if ( alpha > 255 ) alpha = 255;
+	renderMode = CG_RaceGhostRenderMode();
+
+	ci = &cgs.clientinfo[cg.clientNum];
+	if ( !ci->legsModel || !ci->torsoModel || !ci->headModel ) return;
+	if ( !ci->modelInfo ) return;
+
+	VectorSet( origin, x, y, z );
+	VectorCopy( origin, lightOrigin );
+	lightOrigin[2] += 31.0f;
+
+	legsAnim = CG_GhostFindAnimIndex( ci, legsAnimNum );
+	if ( crouched && ( !legsAnim || !( legsAnim->movetype & ( ( 1 << ANIM_MT_IDLECR ) | ( 1 << ANIM_MT_WALKCR ) | ( 1 << ANIM_MT_WALKCRBK ) ) ) ) ) {
+		legsAnim = CG_GhostFindCrouchAnim( ci, speed > 20.0f ? qtrue : qfalse );
+		if ( !legsAnim ) crouchFallback = qtrue;
+	} else if ( !legsAnim && speed > 20.0f ) {
+		legsAnim = CG_GhostFindAnim( ci, "run" );
+		if ( !legsAnim ) legsAnim = CG_GhostFindAnim( ci, "trot" );
+		if ( !legsAnim ) legsAnim = CG_GhostFindAnim( ci, "legs_run" );
+	} else if ( !legsAnim ) {
+		legsAnim = CG_GhostFindAnim( ci, "idle" );
+		if ( !legsAnim ) legsAnim = CG_GhostFindAnim( ci, "legs_idle" );
+	}
+	torsoAnim = CG_GhostFindAnimIndex( ci, torsoAnimNum );
+	if ( !torsoAnim && crouched ) torsoAnim = CG_GhostFindAnim( ci, "torso_crouch" );
+	else if ( !torsoAnim && speed > 20.0f ) torsoAnim = CG_GhostFindAnim( ci, "torso_move" );
+	else if ( !torsoAnim ) torsoAnim = CG_GhostFindAnim( ci, "torso_stand" );
+	if ( !torsoAnim ) torsoAnim = legsAnim;
+	if ( !legsAnim ) legsAnim = CG_GhostFindAnim( ci, "idle" );
+	if ( !legsAnim && ci->modelInfo->numAnimations > 0 ) legsAnim = &ci->modelInfo->animations[0];
+	if ( !torsoAnim ) torsoAnim = legsAnim;
+
+	CG_GhostRunLerp( legsLf, legsAnim, &legsFrame, &legsOldFrame, &legsBacklerp );
+	CG_GhostRunLerp( torsoLf, torsoAnim, &torsoFrame, &torsoOldFrame, &torsoBacklerp );
+
+	memset( &legs, 0, sizeof( legs ) );
+	memset( &torso, 0, sizeof( torso ) );
+	memset( &head, 0, sizeof( head ) );
+
+	legs.reType = RT_MODEL;
+	legs.hModel = ci->legsModel;
+	legs.customSkin = ci->legsSkin;
+	legs.renderfx = RF_NOSHADOW | RF_LIGHTING_ORIGIN;
+	CG_RaceGhostPrepareEntity( &legs, renderMode, r, g, b, alpha );
+	VectorCopy( origin, legs.origin );
+	VectorCopy( legs.origin, legs.oldorigin );
+	VectorCopy( lightOrigin, legs.lightingOrigin );
+	VectorSet( legsAngles, 0, yaw, 0 );
+	AnglesToAxis( legsAngles, legs.axis );
+	CG_GhostApplyLegScale( ci, &legs, crouchFallback );
+	legs.frame = legsFrame;
+	legs.oldframe = legsOldFrame;
+	legs.backlerp = legsBacklerp;
+
+	torso.frame = torsoFrame;
+	torso.oldframe = torsoOldFrame;
+	torso.backlerp = torsoBacklerp;
+	if ( !ci->isSkeletal ) {
+		CG_RaceGhostAddEntity( &legs, renderMode, r, g, b, alpha );
+		VectorSet( torsoAngles, 0, yaw, 0 );
+		AnglesToAxis( torsoAngles, torso.axis );
+		torso.reType = RT_MODEL;
+		torso.hModel = ci->torsoModel;
+		torso.customSkin = ci->torsoSkin;
+		torso.renderfx = RF_NOSHADOW | RF_LIGHTING_ORIGIN;
+		CG_RaceGhostPrepareEntity( &torso, renderMode, r, g, b, alpha );
+		VectorCopy( lightOrigin, torso.lightingOrigin );
+		CG_PositionRotatedEntityOnTag( &torso, &legs, "tag_torso" );
+		CG_RaceGhostAddEntity( &torso, renderMode, r, g, b, alpha );
+	} else {
+		legs.torsoFrame = torsoFrame;
+		legs.oldTorsoFrame = torsoOldFrame;
+		legs.torsoBacklerp = torsoBacklerp;
+		AxisClear( legs.torsoAxis );
+		CG_RaceGhostAddEntity( &legs, renderMode, r, g, b, alpha );
+		torso = legs;
+	}
+
+	head.reType = RT_MODEL;
+	head.hModel = ci->headModel;
+	head.customSkin = ci->headSkin;
+	head.renderfx = RF_NOSHADOW | RF_LIGHTING_ORIGIN;
+	CG_RaceGhostPrepareEntity( &head, renderMode, r, g, b, alpha );
+	VectorCopy( lightOrigin, head.lightingOrigin );
+	AxisClear( head.axis );
+	CG_PositionRotatedEntityOnTag( &head, &torso, "tag_head" );
+	CG_RaceGhostAddEntity( &head, renderMode, r, g, b, alpha );
+	CG_AddRaceGhostWeapon( ci, &torso, weaponNum, r, g, b, alpha, renderMode );
+}
+
+static int CG_RaceGhostClientNum( int ghostSlot ) {
+	return MAX_CLIENTS - CG_RACE_MAX_GHOSTS + ghostSlot;
+}
+
+static int CG_RaceGhostAnimMovetype( qboolean crouched, float speed ) {
+	if ( crouched ) {
+		return ( 1 << ( speed > 20.0f ? ANIM_MT_WALKCR : ANIM_MT_IDLECR ) );
+	}
+	return ( 1 << ( speed > 20.0f ? ANIM_MT_RUN : ANIM_MT_IDLE ) );
+}
+
+static int CG_RaceGhostNormalizeMovementDir( int movementDir ) {
+	if ( movementDir > 128 && movementDir <= 255 ) movementDir -= 256;
+	if ( movementDir < -128 || movementDir > 128 ) movementDir = 0;
+	return movementDir;
+}
+
+static int CG_RaceGhostAnimMovetypeForAnim( clientInfo_t *ci, int legsAnim, qboolean crouched, float speed ) {
+	animation_t *anim;
+
+	anim = CG_GhostFindAnimIndex( ci, legsAnim );
+	if ( anim && anim->movetype ) {
+		return anim->movetype;
+	}
+	return CG_RaceGhostAnimMovetype( crouched, speed );
+}
+
+static int CG_RaceGhostFallbackAnim( clientInfo_t *ci, qboolean crouched, float speed, qboolean torso ) {
+	animation_t *anim;
+
+	if ( !ci || !ci->modelInfo || ci->modelInfo->numAnimations <= 0 ) return 0;
+	anim = NULL;
+	if ( torso ) {
+		if ( crouched ) anim = CG_GhostFindAnim( ci, "torso_crouch" );
+		if ( !anim && speed > 20.0f ) anim = CG_GhostFindAnim( ci, "torso_move" );
+		if ( !anim ) anim = CG_GhostFindAnim( ci, "torso_stand" );
+	} else {
+		if ( crouched ) anim = CG_GhostFindCrouchAnim( ci, speed > 20.0f ? qtrue : qfalse );
+		if ( !anim && speed > 20.0f ) anim = CG_GhostFindAnim( ci, "run" );
+		if ( !anim && speed > 20.0f ) anim = CG_GhostFindAnim( ci, "trot" );
+		if ( !anim ) anim = CG_GhostFindAnim( ci, "idle" );
+	}
+	if ( !anim ) anim = &ci->modelInfo->animations[0];
+	return (int)( anim - ci->modelInfo->animations );
+}
+
+static int CG_RaceGhostSanitizeAnim( clientInfo_t *ci, int anim, qboolean crouched, float speed, qboolean torso ) {
+	int animIndex;
+
+	if ( ci && ci->modelInfo ) {
+		animIndex = anim & ~ANIM_TOGGLEBIT;
+		if ( anim >= 0 && animIndex >= 0 && animIndex < ci->modelInfo->numAnimations ) {
+			return anim;
+		}
+	}
+	return CG_RaceGhostFallbackAnim( ci, crouched, speed, torso );
+}
+
+static qboolean CG_AddRaceGhostPlayerModel( const raceGhostInfo_t *info, int ghostSlot ) {
+	centity_t *cent;
+	clientInfo_t *baseCi;
+	clientInfo_t backupCi;
+	int backupClientModel;
+	int backupClientConditions[NUM_ANIM_CONDITIONS][2];
+	vec3_t origin, angles, velocity, delta;
+	int baseClientNum;
+	int ghostClientNum;
+	int weaponNum;
+	int eFlags;
+	int renderMode;
+	int legsAnim;
+	int torsoAnim;
+	byte r, g, b;
+	qboolean resetEntity;
+
+	if ( !info || !cg.snap || ghostSlot < 0 || ghostSlot >= CG_RACE_MAX_GHOSTS ) return qfalse;
+	baseClientNum = cg.clientNum;
+	if ( baseClientNum < 0 || baseClientNum >= MAX_CLIENTS ) baseClientNum = cg.snap->ps.clientNum;
+	if ( baseClientNum < 0 || baseClientNum >= MAX_CLIENTS ) return qfalse;
+	baseCi = &cgs.clientinfo[baseClientNum];
+	if ( !baseCi->infoValid || !baseCi->legsModel || !baseCi->torsoModel || !baseCi->headModel || !baseCi->modelInfo ) return qfalse;
+	if ( cgs.animScriptData.clientModels[baseClientNum] <= 0 || cgs.animScriptData.clientModels[baseClientNum] > MAX_ANIMSCRIPT_MODELS ) return qfalse;
+
+	ghostClientNum = CG_RaceGhostClientNum( ghostSlot );
+	backupCi = cgs.clientinfo[ghostClientNum];
+	backupClientModel = cgs.animScriptData.clientModels[ghostClientNum];
+	memcpy( backupClientConditions, cgs.animScriptData.clientConditions[ghostClientNum], sizeof( backupClientConditions ) );
+	cgs.clientinfo[ghostClientNum] = *baseCi;
+	cgs.clientinfo[ghostClientNum].clientNum = ghostClientNum;
+	cgs.clientinfo[ghostClientNum].health = info->health;
+	cgs.clientinfo[ghostClientNum].armor = info->armor;
+	cgs.clientinfo[ghostClientNum].curWeapon = info->weapon;
+	Q_strncpyz( cgs.clientinfo[ghostClientNum].name, info->nick, sizeof( cgs.clientinfo[ghostClientNum].name ) );
+	cgs.animScriptData.clientModels[ghostClientNum] = cgs.animScriptData.clientModels[baseClientNum];
+	memcpy( cgs.animScriptData.clientConditions[ghostClientNum], cgs.animScriptData.clientConditions[baseClientNum], sizeof( cgs.animScriptData.clientConditions[ghostClientNum] ) );
+
+	cent = &race_player_ghosts[ghostSlot];
+	VectorSet( origin, info->x, info->y, info->z );
+	VectorSet( angles, info->pitch, info->yaw, 0.0f );
+	VectorSet( velocity, info->vx, info->vy, info->vz );
+	if ( VectorLength( velocity ) <= 1.0f && info->speed > 1.0f ) {
+		vec3_t forward;
+		VectorSet( angles, 0.0f, info->yaw, 0.0f );
+		AngleVectors( angles, forward, NULL, NULL );
+		VectorScale( forward, info->speed, velocity );
+		VectorSet( angles, info->pitch, info->yaw, 0.0f );
+	}
+	weaponNum = info->weapon;
+	if ( weaponNum < WP_NONE || weaponNum >= WP_NUM_WEAPONS ) weaponNum = WP_NONE;
+	cgs.clientinfo[ghostClientNum].curWeapon = weaponNum;
+	eFlags = info->eFlags & CG_RACE_GHOST_PLAYER_EFLAGS;
+	if ( info->crouched ) eFlags |= EF_CROUCHING;
+	renderMode = CG_RaceGhostRenderMode();
+	r = (byte)( ( info->packedColor >> 16 ) & 255 );
+	g = (byte)( ( info->packedColor >> 8 ) & 255 );
+	b = (byte)( info->packedColor & 255 );
+
+	resetEntity = !race_player_ghost_used[ghostSlot];
+	if ( !resetEntity ) {
+		VectorSubtract( origin, cent->lerpOrigin, delta );
+		if ( VectorLength( delta ) > 160.0f || cent->currentState.clientNum != ghostClientNum ) resetEntity = qtrue;
+	}
+	if ( resetEntity ) {
+		memset( cent, 0, sizeof( *cent ) );
+		race_player_ghost_used[ghostSlot] = qtrue;
+	}
+
+	memset( &cent->currentState, 0, sizeof( cent->currentState ) );
+	cent->currentState.number = ghostClientNum;
+	cent->currentState.clientNum = ghostClientNum;
+	cent->currentState.eType = ET_PLAYER;
+	cent->currentState.eFlags = eFlags;
+	cent->currentState.weapon = weaponNum;
+	cent->currentState.groundEntityNum = ( info->groundEntityNum >= 0 && info->groundEntityNum <= ENTITYNUM_NONE ) ? info->groundEntityNum : ENTITYNUM_WORLD;
+	legsAnim = CG_RaceGhostSanitizeAnim( &cgs.clientinfo[ghostClientNum], info->legsAnim, info->crouched ? qtrue : qfalse, info->speed, qfalse );
+	torsoAnim = CG_RaceGhostSanitizeAnim( &cgs.clientinfo[ghostClientNum], info->torsoAnim, info->crouched ? qtrue : qfalse, info->speed, qtrue );
+	cent->currentState.legsAnim = legsAnim;
+	cent->currentState.torsoAnim = torsoAnim;
+	cent->currentState.aiChar = AICHAR_NONE;
+	cent->currentState.animMovetype = info->animMovetype ? info->animMovetype : CG_RaceGhostAnimMovetypeForAnim( &cgs.clientinfo[ghostClientNum], legsAnim, info->crouched ? qtrue : qfalse, info->speed );
+	cent->currentState.angles2[YAW] = (float)info->movementDir;
+	cent->currentState.pos.trType = TR_STATIONARY;
+	VectorCopy( origin, cent->currentState.pos.trBase );
+	VectorCopy( velocity, cent->currentState.pos.trDelta );
+	cent->currentState.apos.trType = TR_STATIONARY;
+	VectorCopy( angles, cent->currentState.apos.trBase );
+	VectorCopy( origin, cent->currentState.origin );
+	VectorCopy( angles, cent->currentState.angles );
+	cent->nextState = cent->currentState;
+	{
+		int snapMsec = 50;
+		if ( cg.snap && cg.nextSnap && cg.nextSnap->serverTime > cg.snap->serverTime ) {
+			snapMsec = cg.nextSnap->serverTime - cg.snap->serverTime;
+			if ( snapMsec < 1 ) snapMsec = 1;
+			if ( snapMsec > 200 ) snapMsec = 200;
+		}
+		VectorMA( origin, (float)snapMsec * 0.001f, velocity, cent->nextState.pos.trBase );
+		VectorCopy( cent->nextState.pos.trBase, cent->nextState.origin );
+	}
+	cent->interpolate = qfalse;
+	cent->currentValid = qtrue;
+	cent->pe.animSpeed = 1.0f;
+	VectorCopy( origin, cent->lerpOrigin );
+	VectorCopy( angles, cent->lerpAngles );
+	VectorCopy( origin, cent->rawOrigin );
+	VectorCopy( angles, cent->rawAngles );
+	if ( resetEntity ) CG_ResetPlayerEntity( cent );
+
+	CG_RaceGhostStyleBegin( renderMode, r, g, b, info->alpha, ghostShader, raceGhostTintShader, raceGhostXrayShader );
+	CG_Player( cent );
+	CG_RaceGhostStyleEnd();
+	cgs.clientinfo[ghostClientNum] = backupCi;
+	cgs.animScriptData.clientModels[ghostClientNum] = backupClientModel;
+	memcpy( cgs.animScriptData.clientConditions[ghostClientNum], backupClientConditions, sizeof( cgs.animScriptData.clientConditions[ghostClientNum] ) );
+	return qtrue;
+}
+
+static qboolean CG_ParseRaceGhost( const char *text, raceGhostInfo_t *out ) {
+	int visible;
+	int parsed;
+	raceGhostInfo_t local;
+	if ( !text || !text[0] || !out ) return qfalse;
+	memset( &local, 0, sizeof( local ) );
+	local.health = 100;
+	local.legsAnim = -1;
+	local.torsoAnim = -1;
+	local.groundEntityNum = ENTITYNUM_WORLD;
+	parsed = sscanf( text, "%d %d %d %f %f %f %f %f %d %d %d %d %d %d %d %d %31s %d %d %f %f %f %f %d %d",
+		&visible, &local.packedColor, &local.alpha,
+		&local.x, &local.y, &local.z, &local.yaw, &local.speed,
+		&local.crouched, &local.health, &local.armor, &local.weapon,
+		&local.ammo, &local.clip, &local.legsAnim, &local.torsoAnim, local.nick,
+		&local.movementDir, &local.eFlags, &local.pitch, &local.vx, &local.vy, &local.vz,
+		&local.groundEntityNum, &local.animMovetype );
+	if ( parsed < 16 ) {
+		local.legsAnim = -1;
+		local.torsoAnim = -1;
+		parsed = sscanf( text, "%d %d %d %f %f %f %f %f %d %d %d %d %d %d %31s",
+			&visible, &local.packedColor, &local.alpha,
+			&local.x, &local.y, &local.z, &local.yaw, &local.speed,
+			&local.crouched, &local.health, &local.armor, &local.weapon,
+			&local.ammo, &local.clip, local.nick );
+	}
+	if ( parsed < 14 ) {
+		parsed = sscanf( text, "%d %d %d %f %f %f %f %f %31s",
+			&visible, &local.packedColor, &local.alpha,
+			&local.x, &local.y, &local.z, &local.yaw, &local.speed, local.nick );
+	}
+	if ( parsed < 8 ) {
+		return qfalse;
+	}
+	if ( !visible ) return qfalse;
+	if ( !local.nick[0] ) Q_strncpyz( local.nick, "Runner", sizeof( local.nick ) );
+	if ( local.alpha < 0 ) local.alpha = 0;
+	if ( local.alpha > 255 ) local.alpha = 255;
+	if ( local.health < 0 ) local.health = 0;
+	local.movementDir = CG_RaceGhostNormalizeMovementDir( local.movementDir );
+	if ( local.armor < 0 ) local.armor = 0;
+	if ( local.weapon < 0 || local.weapon >= WP_NUM_WEAPONS ) local.weapon = 0;
+	if ( local.ammo < 0 ) local.ammo = 0;
+	if ( local.clip < 0 ) local.clip = 0;
+	if ( local.groundEntityNum < 0 || local.groundEntityNum > ENTITYNUM_NONE ) local.groundEntityNum = ENTITYNUM_WORLD;
+	if ( local.animMovetype < 0 ) local.animMovetype = 0;
+	*out = local;
+	return qtrue;
+}
+
+static void CG_AddRaceGhosts( void ) {
+	int i;
+	if ( !ghost_initialized ) CG_InitGhost();
+	trap_Cvar_Update( &race_active );
+	if ( !race_active.integer ) return;
+	trap_Cvar_Update( &race_ghost_render );
+	for ( i = 0; i < CG_RACE_MAX_GHOSTS; i++ ) {
+		raceGhostInfo_t info;
+		byte r, g, b;
+		trap_Cvar_Update( &race_ghost_data[i] );
+		if ( !CG_ParseRaceGhost( race_ghost_data[i].string, &info ) ) continue;
+		if ( CG_AddRaceGhostPlayerModel( &info, i ) ) continue;
+		r = (byte)( ( info.packedColor >> 16 ) & 255 );
+		g = (byte)( ( info.packedColor >> 8 ) & 255 );
+		b = (byte)( info.packedColor & 255 );
+		CG_AddRaceGhostModel( info.x, info.y, info.z, info.yaw, info.speed, r, g, b, info.alpha, info.crouched ? qtrue : qfalse, info.weapon, info.legsAnim, info.torsoAnim, &race_legs[i], &race_torso[i] );
+	}
+}
+
+static int CG_RaceNametagClampInt( int value, int minValue, int maxValue ) {
+	if ( value < minValue ) return minValue;
+	if ( value > maxValue ) return maxValue;
+	return value;
+}
+
+static float CG_RaceNametagClampFloat( float value, float minValue, float maxValue ) {
+	if ( value < minValue ) return minValue;
+	if ( value > maxValue ) return maxValue;
+	return value;
+}
+
+static float CG_RaceNametagDistanceScale( const vec3_t labelPos ) {
+	vec3_t delta;
+	float dist;
+	VectorSubtract( labelPos, cg.refdef.vieworg, delta );
+	dist = VectorLength( delta );
+	if ( dist <= 350.0f ) return 1.18f;
+	if ( dist >= 2000.0f ) return 0.58f;
+	return 1.18f - ( ( dist - 350.0f ) / 1650.0f ) * 0.60f;
+}
+
+static void CG_RaceNametagDrawMeter( float x, float y, float w, float h, const char *label, int value, int maxValue, const float *fillColor, float scale, float alphaMul ) {
+	vec4_t bg = { 0.02f, 0.025f, 0.02f, 0.68f };
+	vec4_t border = { 0.72f, 0.80f, 0.70f, 0.30f };
+	vec4_t text = { 0.94f, 0.98f, 0.92f, 0.95f };
+	vec4_t fill;
+	char line[24];
+	float frac;
+	int charW;
+	int charH;
+
+	if ( maxValue <= 0 ) maxValue = 100;
+	frac = (float)value / (float)maxValue;
+	if ( frac < 0.0f ) frac = 0.0f;
+	if ( frac > 1.0f ) frac = 1.0f;
+	Vector4Copy( fillColor, fill );
+	bg[3] *= alphaMul;
+	border[3] *= alphaMul;
+	text[3] *= alphaMul;
+	fill[3] *= alphaMul;
+	charW = CG_RaceNametagClampInt( (int)( 4.0f * scale ), 3, 8 );
+	charH = CG_RaceNametagClampInt( (int)( 6.0f * scale ), 5, 12 );
+	CG_FillRect( x, y, w, h, bg, ALIGN_STRETCH );
+	if ( frac > 0.0f ) {
+		CG_FillRect( x + 1.0f, y + 1.0f, ( w - 2.0f ) * frac, h - 2.0f, fill, ALIGN_STRETCH );
+	}
+	CG_DrawRect( x, y, w, h, 0.75f, border, ALIGN_STRETCH );
+	Com_sprintf( line, sizeof( line ), "%s %d", label, value );
+	CG_DrawStringExt( (int)( x + 3.0f * scale ), (int)( y + ( h - charH ) * 0.5f ), line, text, qtrue, qtrue, charW, charH, 0, ALIGN_STRETCH );
+}
+
+void CG_DrawRaceGhostLabels( void ) {
+	int i;
+	if ( !ghost_initialized ) CG_InitGhost();
+	trap_Cvar_Update( &race_active );
+	if ( !race_active.integer ) return;
+	trap_Cvar_Update( &race_nametag );
+	if ( !race_nametag.integer ) return;
+	trap_Cvar_Update( &race_nametag_stats );
+	trap_Cvar_Update( &race_nametag_icons );
+	trap_Cvar_Update( &race_nametag_scale );
+	trap_Cvar_Update( &race_nametag_opacity );
+	for ( i = 0; i < CG_RACE_MAX_GHOSTS; i++ ) {
+		raceGhostInfo_t info;
+		float sx, sy;
+		vec3_t labelPos;
+		vec4_t color;
+		vec4_t muted = { 0.70f, 0.76f, 0.68f, 0.92f };
+		float scale;
+		float alphaMul;
+		int nickW, nickH, statW, statH, width;
+		trap_Cvar_Update( &race_ghost_data[i] );
+		if ( !CG_ParseRaceGhost( race_ghost_data[i].string, &info ) ) continue;
+		VectorSet( labelPos, info.x, info.y, info.z + ( info.crouched ? 56.0f : 72.0f ) );
+		if ( !TrigVis_WorldToScreen( labelPos, &sx, &sy ) ) continue;
+		color[0] = ( ( info.packedColor >> 16 ) & 255 ) / 255.0f;
+		color[1] = ( ( info.packedColor >> 8 ) & 255 ) / 255.0f;
+		color[2] = ( info.packedColor & 255 ) / 255.0f;
+		alphaMul = CG_RaceNametagClampFloat( race_nametag_opacity.value, 0.15f, 1.0f );
+		color[3] = 0.95f * alphaMul;
+		muted[3] *= alphaMul;
+		scale = CG_RaceNametagClampFloat( race_nametag_scale.value, 0.45f, 1.45f );
+		scale *= CG_RaceNametagDistanceScale( labelPos );
+		scale = CG_RaceNametagClampFloat( scale, 0.48f, 1.30f );
+		nickW = CG_RaceNametagClampInt( (int)( 6.0f * scale ), 4, 13 );
+		nickH = CG_RaceNametagClampInt( (int)( 9.0f * scale ), 6, 18 );
+		statW = CG_RaceNametagClampInt( (int)( 4.5f * scale ), 3, 8 );
+		statH = CG_RaceNametagClampInt( (int)( 7.0f * scale ), 5, 12 );
+		width = (int)strlen( info.nick ) * nickW;
+		CG_DrawStringExt( (int)( sx - width * 0.5f ), (int)sy, info.nick, color, qtrue, qtrue, nickW, nickH, 0, ALIGN_STRETCH );
+		if ( race_nametag_stats.integer ) {
+			char ammoText[32];
+			int ammoTextWidth;
+			float panelW;
+			float panelX;
+			float rowY = sy + nickH + 1.0f * scale;
+			float barH;
+			float gap;
+			vec4_t panelBg = { 0.00f, 0.00f, 0.00f, 0.38f };
+			vec4_t hpFill = { 0.22f, 0.84f, 0.30f, 0.82f };
+			vec4_t hpLowFill = { 0.90f, 0.22f, 0.18f, 0.86f };
+			vec4_t armorFill = { 0.28f, 0.58f, 1.00f, 0.80f };
+			panelBg[3] *= alphaMul;
+			panelW = (float)CG_RaceNametagClampInt( (int)( 64.0f * scale ), 44, 94 );
+			panelX = sx - panelW * 0.5f;
+			barH = (float)CG_RaceNametagClampInt( (int)( 6.0f * scale ), 5, 10 );
+			gap = 2.0f * scale;
+			CG_FillRect( panelX - 2.0f * scale, rowY - 1.0f * scale, panelW + 4.0f * scale, barH * 2.0f + gap + 2.0f * scale, panelBg, ALIGN_STRETCH );
+			CG_RaceNametagDrawMeter( panelX, rowY, panelW, barH, "HP", info.health, 100, info.health <= 25 ? hpLowFill : hpFill, scale, alphaMul );
+			rowY += barH + gap;
+			CG_RaceNametagDrawMeter( panelX, rowY, panelW, barH, "AR", info.armor, 100, armorFill, scale, alphaMul );
+			Com_sprintf( ammoText, sizeof( ammoText ), "%d/%d", info.clip, info.ammo );
+			ammoTextWidth = (int)strlen( ammoText ) * statW;
+			rowY += barH + 2.0f * scale;
+			if ( race_nametag_icons.integer && info.weapon > WP_NONE && info.weapon < WP_NUM_WEAPONS ) {
+				float iconSize = 9.0f * scale;
+				qhandle_t icon;
+				CG_RegisterWeapon( info.weapon );
+				icon = cg_weapons[info.weapon].weaponIcon[0];
+				if ( icon ) {
+					float startX = sx - ( iconSize + 3.0f * scale + ammoTextWidth ) * 0.5f;
+					trap_R_SetColor( muted );
+					CG_DrawPic( startX, rowY - 1.0f * scale, iconSize, iconSize, icon, ALIGN_STRETCH );
+					trap_R_SetColor( NULL );
+					CG_DrawStringExt( (int)( startX + iconSize + 3.0f * scale ), (int)rowY, ammoText, muted, qtrue, qtrue, statW, statH, 0, ALIGN_STRETCH );
+					continue;
+				}
+			}
+			CG_DrawStringExt( (int)( sx - ammoTextWidth * 0.5f ), (int)rowY, ammoText, muted, qtrue, qtrue, statW, statH, 0, ALIGN_STRETCH );
+		}
+	}
 }
 
 /*
@@ -542,6 +1274,26 @@ static void CG_CalcVrect( void ) {
 
 	cg.refdef.x = ( cgs.glconfig.vidWidth - cg.refdef.width ) / 2;
 	cg.refdef.y = ( cgs.glconfig.vidHeight - cg.refdef.height ) / 2;
+
+	if ( cg_blackbars.integer && !cg.zoomedScope && !cg.zoomedBinoc && !( cg.snap && ( cg.snap->ps.eFlags & EF_ZOOMING ) ) ) {
+		int left = cg_blackbarLeft.integer;
+		int right = cg_blackbarRight.integer;
+		int total;
+		int maxTotal;
+
+		if ( left < 0 ) left = 0;
+		if ( right < 0 ) right = 0;
+		maxTotal = cg.refdef.width - 320;
+		if ( maxTotal < 0 ) maxTotal = 0;
+		total = left + right;
+		if ( total > maxTotal && total > 0 ) {
+			left = (int)( (float)left * (float)maxTotal / (float)total );
+			right = maxTotal - left;
+		}
+		cg.refdef.x += left;
+		cg.refdef.width -= left + right;
+		cg.refdef.width &= ~1;
+	}
 }
 
 //==============================================================================
@@ -1348,6 +2100,8 @@ Sets cg.refdef view values
 static int CG_CalcViewValues( void ) {
 	playerState_t   *ps;
 	static vec3_t oldOrigin = {0,0,0};
+	static qboolean oldOriginValid = qfalse;
+	static int oldOriginTime = 0;
 
 	memset( &cg.refdef, 0, sizeof( cg.refdef ) );
 
@@ -1364,6 +2118,8 @@ static int CG_CalcViewValues( void ) {
 		vec3_t origin, angles;
 		float fov = 90;
 		float x;
+		float originDelta;
+		qboolean sendCameraOrigin;
 
 		if ( trap_getCameraInfo( CAM_PRIMARY, cg.time, &origin, &angles, &fov ) ) {
 			VectorCopy( origin, cg.refdef.vieworg );
@@ -1389,18 +2145,20 @@ static int CG_CalcViewValues( void ) {
 			cg.refdef.fov_y = cg.refdef.fov_y * 360 / M_PI;
 			cg.refdef.fov_x = fov;
 
-			// RF, had to disable, sometimes a loadgame to a camera in the same position
-			// can cause the game to not know where the camera is, therefore snapshots
-			// dont show the correct entities
-			//if(VectorCompare(origin, oldOrigin))
-			//	return 0;
-
-			VectorCopy( origin, oldOrigin );
-			trap_SendClientCommand( va( "setCameraOrigin %f %f %f", origin[0], origin[1], origin[2] ) );
+			originDelta = oldOriginValid ? DistanceSquared( origin, oldOrigin ) : 999999.0f;
+			sendCameraOrigin = !oldOriginValid || originDelta > 4096.0f || ( originDelta > 0.25f && ( cg.time < oldOriginTime || cg.time - oldOriginTime >= 50 ) );
+			if ( sendCameraOrigin ) {
+				VectorCopy( origin, oldOrigin );
+				oldOriginValid = qtrue;
+				oldOriginTime = cg.time;
+				trap_SendClientCommand( va( "setCameraOrigin %f %f %f", origin[0], origin[1], origin[2] ) );
+			}
 			return 0;
 
 		} else {
 			cg.cameraMode = qfalse;                 // camera off in cgame
+			oldOriginValid = qfalse;
+			oldOriginTime = 0;
 			trap_Cvar_Set( "cg_letterbox", "0" );
 			trap_SendClientCommand( "stopCamera" );    // camera off in game
 			trap_stopCamera( CAM_PRIMARY );           // camera off in client
@@ -1409,6 +2167,8 @@ static int CG_CalcViewValues( void ) {
 			CG_Fade( 0, 0, 0, 0, cg.time + 200, 1500 );   // then fadeup
 		}
 	}
+	oldOriginValid = qfalse;
+	oldOriginTime = 0;
 
 	// intermission view
 	if ( ps->pm_type == PM_INTERMISSION ) {
@@ -1782,16 +2542,14 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 
 	// update cvars
 	CG_UpdateCvars();
-/*
 	// RF, if we should force a weapon, then do so
-	if( !cg.weaponSelect ) {
-		if (cg_loadWeaponSelect.integer > 0) {
+	if ( cg_loadWeaponSelect.integer > WP_NONE && cg_loadWeaponSelect.integer < WP_NUM_WEAPONS ) {
+		if ( cg.weaponSelect != cg_loadWeaponSelect.integer ) {
 			cg.weaponSelect = cg_loadWeaponSelect.integer;
 			cg.weaponSelectTime = cg.time;
-			trap_Cvar_Set( "cg_loadWeaponSelect", "0" );	// turn it off
 		}
+		trap_Cvar_Set( "cg_loadWeaponSelect", "0" );	// turn it off
 	}
-*/
 #ifdef DEBUGTIME_ENABLED
 	CG_Printf( "\n" );
 #endif
@@ -1934,6 +2692,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	if ( !cg.hyperspace ) {
 		CG_AddPacketEntities();         // adter calcViewValues, so predicted player state is correct
 		CG_AddGhost();                  // ghost replay from best split
+		CG_AddRaceGhosts();             // live remote race players
 		CG_AddMarks();
 
 		DEBUGTIME

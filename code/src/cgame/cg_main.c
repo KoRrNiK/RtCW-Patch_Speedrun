@@ -179,6 +179,10 @@ vmCvar_t cg_footsteps;
 vmCvar_t cg_markTime;
 vmCvar_t cg_brassTime;
 vmCvar_t cg_viewsize;
+vmCvar_t cg_blackbars;
+vmCvar_t cg_blackbarLeft;
+vmCvar_t cg_blackbarRight;
+vmCvar_t cg_blackbarColor;
 vmCvar_t cg_letterbox;
 vmCvar_t cg_drawGun;
 vmCvar_t cg_drawFPGun;
@@ -307,6 +311,39 @@ vmCvar_t cg_itemOpacity;
 vmCvar_t cg_sightOpacity;
 vmCvar_t cg_sightRange;
 vmCvar_t cg_pathLength;
+vmCvar_t cg_zoneTimer;
+vmCvar_t cg_zoneEdit;
+vmCvar_t cg_zoneDraw;
+vmCvar_t cg_zoneDrawStart;
+vmCvar_t cg_zoneDrawCheckpoints;
+vmCvar_t cg_zoneDrawFinish;
+vmCvar_t cg_zoneDrawRace;
+vmCvar_t cg_zoneRaceDebug;
+vmCvar_t cg_zoneDrawLabels;
+vmCvar_t cg_zoneDrawHandles;
+vmCvar_t cg_zoneRotationGizmo;
+vmCvar_t cg_zoneDrawActiveRouteOnly;
+vmCvar_t cg_zoneDrawRunTargetOnly;
+vmCvar_t cg_zoneDimInactive;
+vmCvar_t cg_zoneOpacity;
+vmCvar_t cg_zoneBorderAlpha;
+vmCvar_t cg_zoneBorderWidth;
+vmCvar_t cg_zoneStartColor;
+vmCvar_t cg_zoneColor;
+vmCvar_t cg_zoneFinishColor;
+vmCvar_t cg_zoneRaceColor;
+vmCvar_t cg_zoneInactiveAlpha;
+vmCvar_t cg_zoneHandleSize;
+vmCvar_t cg_zoneHandleMaxDist;
+vmCvar_t cg_zoneHoverPixels;
+vmCvar_t cg_zoneDragSpeed;
+vmCvar_t cg_zoneHudX;
+vmCvar_t cg_zoneHudY;
+vmCvar_t cg_zoneHudScale;
+vmCvar_t cg_zoneHudAlpha;
+vmCvar_t cg_zoneHudProgress;
+vmCvar_t cg_zoneStartStopMs;
+vmCvar_t cg_zoneAutoNames;
 vmCvar_t cg_drawPos;
 vmCvar_t cg_drawJumpStats;
 vmCvar_t cg_strafeGuide;
@@ -404,6 +441,10 @@ cvarTable_t cvarTable[] = {
 
 	{ &cg_widescreen_fov, "cg_widescreen_fov", "1", CVAR_ARCHIVE },	// Knightmare added
 	{ &cg_viewsize, "cg_viewsize", "100", CVAR_ARCHIVE },
+	{ &cg_blackbars, "cg_blackbars", "0", CVAR_ARCHIVE },
+	{ &cg_blackbarLeft, "cg_blackbarLeft", "0", CVAR_ARCHIVE },
+	{ &cg_blackbarRight, "cg_blackbarRight", "0", CVAR_ARCHIVE },
+	 { &cg_blackbarColor, "cg_blackbarColor", "0 0 0 1.00", CVAR_ARCHIVE },
 	{ &cg_letterbox, "cg_letterbox", "0", CVAR_TEMP },    //----(SA)	added
 	{ &cg_stereoSeparation, "cg_stereoSeparation", "0.4", CVAR_ARCHIVE  },
 	{ &cg_shadows, "cg_shadows", "1", CVAR_ARCHIVE  },
@@ -555,6 +596,39 @@ cvarTable_t cvarTable[] = {
 	{ &cg_sightOpacity, "cg_sightOpacity", "40", CVAR_ARCHIVE },
 	{ &cg_sightRange, "cg_sightRange", "1500", CVAR_ARCHIVE },
 	{ &cg_pathLength, "cg_pathLength", "64", CVAR_ARCHIVE },
+	{ &cg_zoneTimer, "sp_zone_timer", "0", CVAR_ARCHIVE },
+	{ &cg_zoneEdit, "sp_zone_edit", "0", CVAR_ARCHIVE },
+	{ &cg_zoneDraw, "sp_zone_draw", "0", CVAR_ARCHIVE },
+	{ &cg_zoneDrawStart, "sp_zone_draw_start", "1", CVAR_ARCHIVE },
+	{ &cg_zoneDrawCheckpoints, "sp_zone_draw_checkpoints", "1", CVAR_ARCHIVE },
+	{ &cg_zoneDrawFinish, "sp_zone_draw_finish", "1", CVAR_ARCHIVE },
+	{ &cg_zoneDrawRace, "sp_zone_draw_race", "1", CVAR_ARCHIVE },
+	{ &cg_zoneRaceDebug, "sp_zone_race_debug", "0", CVAR_ARCHIVE },
+	{ &cg_zoneDrawLabels, "sp_zone_draw_labels", "1", CVAR_ARCHIVE },
+	{ &cg_zoneDrawHandles, "sp_zone_draw_handles", "1", CVAR_ARCHIVE },
+	{ &cg_zoneRotationGizmo, "sp_zone_rotation_gizmo", "1", CVAR_ARCHIVE },
+	{ &cg_zoneDrawActiveRouteOnly, "sp_zone_draw_active_route_only", "0", CVAR_ARCHIVE },
+	{ &cg_zoneDrawRunTargetOnly, "sp_zone_draw_run_target_only", "1", CVAR_ARCHIVE },
+	{ &cg_zoneDimInactive, "sp_zone_dim_inactive", "1", CVAR_ARCHIVE },
+	{ &cg_zoneOpacity, "sp_zone_opacity", "75", CVAR_ARCHIVE },
+	{ &cg_zoneBorderAlpha, "sp_zone_border_alpha", "230", CVAR_ARCHIVE },
+	{ &cg_zoneBorderWidth, "sp_zone_border_width", "0.75", CVAR_ARCHIVE },
+	{ &cg_zoneStartColor, "sp_zone_start_color", "82 255 112 1.00", CVAR_ARCHIVE },
+	{ &cg_zoneColor, "sp_zone_color", "82 184 255 1.00", CVAR_ARCHIVE },
+	{ &cg_zoneFinishColor, "sp_zone_finish_color", "255 108 86 1.00", CVAR_ARCHIVE },
+	{ &cg_zoneRaceColor, "sp_zone_race_color", "255 210 64 1.00", CVAR_ARCHIVE },
+	{ &cg_zoneInactiveAlpha, "sp_zone_inactive_alpha", "28", CVAR_ARCHIVE },
+	{ &cg_zoneHandleSize, "sp_zone_handle_size", "6", CVAR_ARCHIVE },
+	{ &cg_zoneHandleMaxDist, "sp_zone_handle_max_dist", "1200", CVAR_ARCHIVE },
+	{ &cg_zoneHoverPixels, "sp_zone_hover_pixels", "18", CVAR_ARCHIVE },
+	{ &cg_zoneDragSpeed, "sp_zone_drag_speed", "180", CVAR_ARCHIVE },
+	{ &cg_zoneHudX, "sp_zone_hud_x", "8", CVAR_ARCHIVE },
+	{ &cg_zoneHudY, "sp_zone_hud_y", "84", CVAR_ARCHIVE },
+	{ &cg_zoneHudScale, "sp_zone_hud_scale", "1.0", CVAR_ARCHIVE },
+	{ &cg_zoneHudAlpha, "sp_zone_hud_alpha", "0.52", CVAR_ARCHIVE },
+	{ &cg_zoneHudProgress, "sp_zone_hud_progress", "1", CVAR_ARCHIVE },
+	{ &cg_zoneStartStopMs, "sp_zone_start_stop_ms", "220", CVAR_ARCHIVE },
+	{ &cg_zoneAutoNames, "sp_zone_auto_names", "1", CVAR_ARCHIVE },
 	{ &cg_drawPos, "cg_drawPos", "0", CVAR_ARCHIVE },
 	{ &cg_drawJumpStats, "cg_drawJumpStats", "0", CVAR_ARCHIVE },
 	{ &cg_strafeGuide, "cg_strafeGuide", "0", CVAR_ARCHIVE },
@@ -2494,9 +2568,9 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 
 	// load a few needed things before we do any screen updates
 	// (SA) using Nerve's text since they have foreign characters
-	cgs.media.charsetShader     = trap_R_RegisterShader( "gfx/2d/hudchars" ); //trap_R_RegisterShader( "gfx/2d/bigchars" );
+	cgs.media.charsetShader     = trap_R_RegisterShader( CG_CharsetShaderName() );
 	// JOSEPH 4-17-00
-	cgs.media.menucharsetShader = trap_R_RegisterShader( "gfx/2d/hudchars" );
+	cgs.media.menucharsetShader = trap_R_RegisterShader( CG_CharsetShaderName() );
 	// END JOSEPH
 	cgs.media.whiteShader       = trap_R_RegisterShader( "white" );
 	cgs.media.charsetProp       = trap_R_RegisterShaderNoMip( "menu/art/font1_prop.tga" );
@@ -2565,6 +2639,7 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	CG_LoadingString( "trigger volumes" );
 
 	CG_InitTriggerVis();
+	CG_InitZones();
 
 	CG_LoadingString( "enemy ESP" );
 

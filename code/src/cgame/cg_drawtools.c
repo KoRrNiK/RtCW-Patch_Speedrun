@@ -32,6 +32,43 @@ If you have questions concerning this license or the applicable additional terms
 
 extern displayContextDef_t cgDC;	// Knightmare added
 
+static qboolean CG_GetBlackbarSafeRange( float *safeLeft, float *safeRight ) {
+	int left, right, total, maxTotal;
+
+	if ( !cg_blackbars.integer ) return qfalse;
+	if ( cg.zoomedScope || cg.zoomedBinoc || ( cg.snap && ( cg.snap->ps.eFlags & EF_ZOOMING ) ) ) return qfalse;
+	left = cg_blackbarLeft.integer;
+	right = cg_blackbarRight.integer;
+	if ( left < 0 ) left = 0;
+	if ( right < 0 ) right = 0;
+	if ( left <= 0 && right <= 0 ) return qfalse;
+
+	maxTotal = cgs.glconfig.vidWidth - 320;
+	if ( maxTotal < 0 ) maxTotal = 0;
+	total = left + right;
+	if ( total > maxTotal && total > 0 ) {
+		left = (int)( (float)left * (float)maxTotal / (float)total );
+		right = maxTotal - left;
+	}
+
+	if ( safeLeft ) *safeLeft = (float)left;
+	if ( safeRight ) *safeRight = (float)( cgs.glconfig.vidWidth - right );
+	return qtrue;
+}
+
+static void CG_GetSafeTextScale( float *scale, float *bias ) {
+	float safeLeft, safeRight;
+
+	if ( CG_GetBlackbarSafeRange( &safeLeft, &safeRight ) ) {
+		if ( scale ) *scale = ( safeRight - safeLeft ) / SCREEN_WIDTH;
+		if ( bias ) *bias = safeLeft;
+		return;
+	}
+
+	if ( scale ) *scale = cgs.screenXScale;
+	if ( bias ) *bias = cgs.screenXBias;
+}
+
 
 /*
 ================
@@ -43,7 +80,8 @@ Adjusted for resolution and screen aspect ratio
 void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align, qboolean ignoreSurround ) {
 	float	xscale, lb_xscale, yscale, minscale, vertscale;		// Knightmare added
 	float	tmp_x, tmp_y, tmp_w, tmp_h, tmp_left, tmp_right;	// Knightmare added
-	float	xleft, xright;
+	float	xleft, xright, safeLeft, safeRight;
+	qboolean blackbarSafe;
 
 	int scr_surroundlayout = cgDC.getCVarValue( "scr_surroundlayout" );
 	float scr_surroundleft = cgDC.getCVarValue( "scr_surroundleft" );
@@ -75,8 +113,18 @@ void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align,
 		xright = (float)cgs.glconfig.vidWidth;
 		xscale = (float)cgs.glconfig.vidWidth / SCREEN_WIDTH;
 	}
+	blackbarSafe = CG_GetBlackbarSafeRange( &safeLeft, &safeRight );
+	if ( blackbarSafe ) {
+		if ( safeLeft > xleft ) xleft = safeLeft;
+		if ( safeRight < xright ) xright = safeRight;
+		if ( xright <= xleft ) {
+			xleft = safeLeft;
+			xright = safeRight;
+		}
+		xscale = ( xright - xleft ) / SCREEN_WIDTH;
+	}
 
-	lb_xscale = (float)cgs.glconfig.vidWidth / SCREEN_WIDTH;
+	lb_xscale = blackbarSafe ? xscale : (float)cgs.glconfig.vidWidth / SCREEN_WIDTH;
 	yscale = (float)cgs.glconfig.vidHeight / SCREEN_HEIGHT;
 	minscale = min(xscale, yscale);
 
@@ -103,7 +151,7 @@ void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align,
 	case ALIGN_CENTER:
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * cgs.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -117,7 +165,7 @@ void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align,
 	case ALIGN_SCOPE:
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * yscale + (0.5 * cgs.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * yscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -166,7 +214,7 @@ void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align,
 			*h *= minscale;
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * cgs.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y)
 			*y *= minscale;
@@ -178,7 +226,7 @@ void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align,
 			*h *= minscale;
 		if (x) {
 			tmp_x = *x;
-			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * cgs.glconfig.vidWidth);
+			*x = (tmp_x - (0.5 * SCREEN_WIDTH)) * minscale + (0.5 * ( xleft + xright ));
 		}
 		if (y) {
 			tmp_y = *y;
@@ -293,7 +341,7 @@ void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align,
 		break;
 	case ALIGN_STRETCH_ALL:
 		if (x)
-			*x *= lb_xscale;
+			*x = *x * lb_xscale + ( blackbarSafe ? xleft : 0.0f );
 		if (y) 
 			*y *= yscale;
 		if (w) 
@@ -306,7 +354,7 @@ void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align,
 			tmp_x = *x;
 			tmp_w = *w;
 			tmp_left = tmp_x * xscale + xleft;
-			tmp_right = (tmp_x + tmp_w - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(cgs.glconfig.vidWidth));
+			tmp_right = (tmp_x + tmp_w - (0.5*SCREEN_WIDTH)) * minscale + (0.5*( xleft + xright ));
 			*x = tmp_left;
 			*w = tmp_right - tmp_left;
 		}
@@ -319,7 +367,7 @@ void CG_AdjustFrom640( float *x, float *y, float *w, float *h, scralign_t align,
 		if (x && w) {
 			tmp_x = *x;
 			tmp_w = *w;
-			tmp_left = (tmp_x - (0.5*SCREEN_WIDTH)) * minscale + (0.5*(cgs.glconfig.vidWidth));
+			tmp_left = (tmp_x - (0.5*SCREEN_WIDTH)) * minscale + (0.5*( xleft + xright ));
 			tmp_right = (tmp_x + tmp_w - SCREEN_WIDTH) * xscale + xright;
 			*x = tmp_left;
 			*w = tmp_right - tmp_left;
@@ -372,8 +420,23 @@ float CG_Get2DScreenWidth (void)
 			xright = (float)cgs.glconfig.vidWidth * (2.0f / 3.0f);
 		xwidth = (xright - xleft);
 	}
-	else
+	else {
+		xleft = 0.0f;
+		xright = (float)cgs.glconfig.vidWidth;
 		xwidth = cgs.glconfig.vidWidth;
+	}
+	{
+		float safeLeft, safeRight;
+		if ( CG_GetBlackbarSafeRange( &safeLeft, &safeRight ) ) {
+			if ( scr_surroundlayout != 0 && cgs.screenAspect >= 3.6f ) {
+				if ( safeLeft > xleft ) xleft = safeLeft;
+				if ( safeRight < xright ) xright = safeRight;
+				xwidth = xright > xleft ? xright - xleft : safeRight - safeLeft;
+			} else {
+				xwidth = safeRight - safeLeft;
+			}
+		}
+	}
 	return xwidth;
 }
 
@@ -640,15 +703,25 @@ text (keystrokes, movement overlay, etc.) into solid glyph blocks.
 */
 static void CG_RefreshCharsetShaders( void ) {
 	static int lastRefreshTime = -1000;
+	static char lastShaderName[MAX_QPATH] = "";
+	const char *shaderName;
+
+	shaderName = CG_CharsetShaderName();
 
 	if ( cgs.media.charsetShader && cgs.media.menucharsetShader &&
+		 !Q_stricmp( shaderName, lastShaderName ) &&
 		 cg.time >= lastRefreshTime && cg.time - lastRefreshTime < 1000 ) {
 		return;
 	}
 
-	cgs.media.charsetShader = trap_R_RegisterShader( "gfx/2d/hudchars" );
-	cgs.media.menucharsetShader = trap_R_RegisterShader( "gfx/2d/hudchars" );
+	cgs.media.charsetShader = trap_R_RegisterShader( shaderName );
+	cgs.media.menucharsetShader = trap_R_RegisterShader( shaderName );
+	Q_strncpyz( lastShaderName, shaderName, sizeof( lastShaderName ) );
 	lastRefreshTime = cg.time;
+}
+
+const char *CG_CharsetShaderName( void ) {
+	return "gfx/2d/hudchars";
 }
 
 /*
@@ -1434,29 +1507,32 @@ static void UI_DrawBannerString2( int x, int y, const char* str, vec4_t color ) 
 	float fcol;
 	float fwidth;
 	float fheight;
+	float scale;
+	float bias;
 
 	// draw the colored text
 	trap_R_SetColor( color );
 
-	ax = x * cgs.screenXScale + cgs.screenXBias;
-	ay = y * cgs.screenXScale;
+	CG_GetSafeTextScale( &scale, &bias );
+	ax = x * scale + bias;
+	ay = y * scale;
 
 	s = str;
 	while ( *s )
 	{
 		ch = *s & 127;
 		if ( ch == ' ' ) {
-			ax += ( (float)PROPB_SPACE_WIDTH + (float)PROPB_GAP_WIDTH ) * cgs.screenXScale;
+			ax += ( (float)PROPB_SPACE_WIDTH + (float)PROPB_GAP_WIDTH ) * scale;
 		} else if ( Q_isupper( ch ) )     {
 			ch -= 'A';
 			fcol = (float)propMapB[ch][0] / 256.0f;
 			frow = (float)propMapB[ch][1] / 256.0f;
 			fwidth = (float)propMapB[ch][2] / 256.0f;
 			fheight = (float)PROPB_HEIGHT / 256.0f;
-			aw = (float)propMapB[ch][2] * cgs.screenXScale;
-			ah = (float)PROPB_HEIGHT * cgs.screenXScale;
+			aw = (float)propMapB[ch][2] * scale;
+			ah = (float)PROPB_HEIGHT * scale;
 			trap_R_DrawStretchPic( ax, ay, aw, ah, fcol, frow, fcol + fwidth, frow + fheight, cgs.media.charsetPropB );
-			ax += ( aw + (float)PROPB_GAP_WIDTH * cgs.screenXScale );
+			ax += ( aw + (float)PROPB_GAP_WIDTH * scale );
 		}
 		s++;
 	}
@@ -1541,32 +1617,35 @@ static void UI_DrawProportionalString2( int x, int y, const char* str, vec4_t co
 	float fcol;
 	float fwidth;
 	float fheight;
+	float scale;
+	float bias;
 
 	// draw the colored text
 	trap_R_SetColor( color );
 
-	ax = x * cgs.screenXScale + cgs.screenXBias;
-	ay = y * cgs.screenXScale;
+	CG_GetSafeTextScale( &scale, &bias );
+	ax = x * scale + bias;
+	ay = y * scale;
 
 	s = str;
 	while ( *s )
 	{
 		ch = *s & 127;
 		if ( ch == ' ' ) {
-			aw = (float)PROP_SPACE_WIDTH * cgs.screenXScale * sizeScale;
+			aw = (float)PROP_SPACE_WIDTH * scale * sizeScale;
 		} else if ( propMap[ch][2] != -1 ) {
 			fcol = (float)propMap[ch][0] / 256.0f;
 			frow = (float)propMap[ch][1] / 256.0f;
 			fwidth = (float)propMap[ch][2] / 256.0f;
 			fheight = (float)PROP_HEIGHT / 256.0f;
-			aw = (float)propMap[ch][2] * cgs.screenXScale * sizeScale;
-			ah = (float)PROP_HEIGHT * cgs.screenXScale * sizeScale;
+			aw = (float)propMap[ch][2] * scale * sizeScale;
+			ah = (float)PROP_HEIGHT * scale * sizeScale;
 			trap_R_DrawStretchPic( ax, ay, aw, ah, fcol, frow, fcol + fwidth, frow + fheight, charset );
 		} else {
 			aw = 0;
 		}
 
-		ax += ( aw + (float)PROP_GAP_WIDTH * cgs.screenXScale * sizeScale );
+		ax += ( aw + (float)PROP_GAP_WIDTH * scale * sizeScale );
 		s++;
 	}
 
