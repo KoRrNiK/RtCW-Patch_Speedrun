@@ -1554,7 +1554,8 @@ static int LSRND_PaintSeparator( HDC dc, int y, int w, const lsCompSettings_t *s
 static int LSRND_PaintText( HDC dc, int y, int w, const lsCompSettings_t *s ) {
 	int ph = ( s->padH >= 0 ) ? s->padH : 6;
 	int pv = ( s->padV >= 0 ) ? s->padV : 0;
-	int h = ( s->overrideHeight > 0 ) ? s->overrideHeight : 22;
+	int fntSz = ( s->fontSize > 0 ) ? s->fontSize : lswnd_layout.globalFontSize;
+	int h = ( s->overrideHeight > 0 ) ? s->overrideHeight : ( fntSz + 2 * pv + 4 );
 	HFONT fnt, old;
 	RECT rc;
 
@@ -1576,7 +1577,7 @@ static int LSRND_PaintText( HDC dc, int y, int w, const lsCompSettings_t *s ) {
 
 /* ---- Blank Space --------------------------------------------------- */
 static int LSRND_PaintBlankSpace( HDC dc, int y, int w, const lsCompSettings_t *s ) {
-	int h = ( s->overrideHeight > 0 ) ? s->overrideHeight : s->u.blankSpace.height;
+	int h = ( s->overrideHeight > 0 ) ? s->overrideHeight : ( s->u.blankSpace.height > 0 ? s->u.blankSpace.height : 24 );
 	if ( h < 1 ) h = 1;
 	if ( s->bgColor.c1 != LSCLR_INHERIT )
 		LSRND_FillBG( dc, 0, y, w, h, s->bgColor, lswnd_layout.bgColor.c1 );
@@ -1587,7 +1588,8 @@ static int LSRND_PaintBlankSpace( HDC dc, int y, int w, const lsCompSettings_t *
 static int LSRND_PaintHeader( HDC dc, int y, int w, const lsCompSettings_t *s ) {
 	int ph = ( s->padH >= 0 ) ? s->padH : 6;
 	int pv = ( s->padV >= 0 ) ? s->padV : 3;
-	int h = ( s->overrideHeight > 0 ) ? s->overrideHeight : 24;
+	int fntSz = ( s->fontSize > 0 ) ? s->fontSize : lswnd_layout.globalFontSize;
+	int h = ( s->overrideHeight > 0 ) ? s->overrideHeight : ( fntSz + 2 * pv + 4 );
 	HFONT fnt, old;
 	RECT rc;
 

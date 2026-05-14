@@ -1564,7 +1564,10 @@ static void LSSD_SavePanel( void ) {
 	h = GetDlgItem( lssd_panel, IDC_S_PADV );
 	if ( h ) s->padV = GetDlgItemInt( lssd_panel, IDC_S_PADV, NULL, TRUE );
 	h = GetDlgItem( lssd_panel, IDC_S_OVERRIDEH );
-	if ( h ) s->overrideHeight = GetDlgItemInt( lssd_panel, IDC_S_OVERRIDEH, NULL, FALSE );
+		if ( h ) {
+			s->overrideHeight = GetDlgItemInt( lssd_panel, IDC_S_OVERRIDEH, NULL, FALSE );
+			if ( s->overrideHeight < 0 ) s->overrideHeight = 0;
+		}
 	h = GetDlgItem( lssd_panel, IDC_S_ALIGN );
 	if ( h ) s->alignment = (int)SendMessageA( h, CB_GETCURSEL, 0, 0 );
 	s->bold = IsDlgButtonChecked( lssd_panel, IDC_S_BOLD ) == BST_CHECKED;
@@ -1714,6 +1717,7 @@ static void LSSD_SavePanel( void ) {
 		break;
 	case LSCOMP_SEPARATOR:
 		s->u.separator.height = GetDlgItemInt( lssd_panel, IDC_SEP_HEIGHT, NULL, FALSE );
+		if ( s->u.separator.height < 0 ) s->u.separator.height = 0;
 		break;
 	case LSCOMP_TEXT:
 		h = GetDlgItem( lssd_panel, IDC_TX_TEXT );
@@ -1721,7 +1725,10 @@ static void LSSD_SavePanel( void ) {
 		break;
 	case LSCOMP_BLANK_SPACE:
 		h = GetDlgItem( lssd_panel, IDC_BS_HEIGHT );
-		if ( h ) s->u.blankSpace.height = GetDlgItemInt( lssd_panel, IDC_BS_HEIGHT, NULL, FALSE );
+		if ( h ) {
+			s->u.blankSpace.height = GetDlgItemInt( lssd_panel, IDC_BS_HEIGHT, NULL, FALSE );
+			if ( s->u.blankSpace.height < 0 ) s->u.blankSpace.height = 0;
+		}
 		break;
 	case LSCOMP_HEADER:
 		h = GetDlgItem( lssd_panel, IDC_HD_TEXT );
@@ -1845,8 +1852,8 @@ static void LSSD_BuildPanel( void ) {
 		LSSD_Label( "(-1 = default)", LSSD_RX + LSSD_S(215), LSSD_S(100) );
 		lssd_py += LSSD_S(24);
 		if ( type != LSCOMP_SPLITS ) {
-			LSSD_Label( "Height:", LSSD_RX, LSSD_S(50) );
-			LSSD_EditNum( IDC_S_OVERRIDEH, s->overrideHeight, LSSD_RX + LSSD_S(55), LSSD_S(40) );
+			LSSD_Label( "Height (0=Auto):", LSSD_RX, LSSD_S(110) );
+			LSSD_EditNum( IDC_S_OVERRIDEH, s->overrideHeight, LSSD_RX + LSSD_S(115), LSSD_S(50) );
 			lssd_py += LSSD_S(24);
 		}
 		if ( hasAlign ) {
@@ -2199,8 +2206,8 @@ static void LSSD_BuildPanel( void ) {
 
 	case LSCOMP_SEPARATOR:
 		LSSD_GroupBegin( "Separator" );
-		LSSD_Label( "Height:", LSSD_RX, LSSD_S(50) );
-		LSSD_EditNum( IDC_SEP_HEIGHT, s->u.separator.height, LSSD_RX + LSSD_S(55), LSSD_S(40) );
+		LSSD_Label( "Height (0=Auto):", LSSD_RX, LSSD_S(110) );
+		LSSD_EditNum( IDC_SEP_HEIGHT, s->u.separator.height, LSSD_RX + LSSD_S(115), LSSD_S(50) );
 		lssd_py += LSSD_S(24);
 		LSSD_Row( "Color:", IDC_SEP_COLOR, &s->u.separator.color );
 		LSSD_GroupEnd();
@@ -2216,8 +2223,8 @@ static void LSSD_BuildPanel( void ) {
 
 	case LSCOMP_BLANK_SPACE:
 		LSSD_GroupBegin( "Blank Space" );
-		LSSD_Label( "Height (px):", LSSD_RX, LSSD_S(80) );
-		LSSD_EditNum( IDC_BS_HEIGHT, s->u.blankSpace.height, LSSD_RX + LSSD_S(85), LSSD_S(50) );
+		LSSD_Label( "Height (0=Auto):", LSSD_RX, LSSD_S(110) );
+		LSSD_EditNum( IDC_BS_HEIGHT, s->u.blankSpace.height, LSSD_RX + LSSD_S(115), LSSD_S(50) );
 		lssd_py += LSSD_S(24);
 		LSSD_GroupEnd();
 		break;
