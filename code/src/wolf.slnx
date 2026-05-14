@@ -1,6 +1,7 @@
 <Solution>
   <Configurations>
     <Platform Name="x86" />
+    <Platform Name="x64" />
   </Configurations>
   <Project Path="wolf.vcxproj" />
 </Solution>

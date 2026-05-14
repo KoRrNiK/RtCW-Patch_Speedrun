@@ -9,22 +9,32 @@ setlocal EnableExtensions
 ::    bin\<Config>\       - WolfSP.exe + DLLs (engine binaries)
 ::    bin\<Config>\Main\  - sp_speedrun.pk3   (game assets)
 ::
-::  Usage:  build.bat [Debug|Release]
+::  Usage:  build.bat [Debug|Release] [Win32|x64]
 ::          (defaults to Debug if no argument given)
 :: ================================================================
 
 for %%d in ("%~dp0..") do set "ROOT=%%~fd"
 set "SLN=%ROOT%\code\src\wolf.sln"
 set "CONFIG=%~1"
+set "PLATFORM=%~2"
 if "%CONFIG%"=="" set "CONFIG=Debug"
 if /i "%CONFIG%"=="debug" set "CONFIG=Debug"
 if /i "%CONFIG%"=="release" set "CONFIG=Release"
 if /i not "%CONFIG%"=="Debug" if /i not "%CONFIG%"=="Release" (
-    echo Usage: tools\build.bat [Debug^|Release]
+    echo Usage: tools\build.bat [Debug^|Release] [Win32^|x64]
     exit /b 1
 )
-set "PLATFORM=Win32"
-set "BIN_DIR=%ROOT%\code\src\bin\%CONFIG%"
+if "%PLATFORM%"=="" set "PLATFORM=Win32"
+if /i "%PLATFORM%"=="win32" set "PLATFORM=Win32"
+if /i "%PLATFORM%"=="x86" set "PLATFORM=Win32"
+if /i "%PLATFORM%"=="x64" set "PLATFORM=x64"
+if /i not "%PLATFORM%"=="Win32" if /i not "%PLATFORM%"=="x64" (
+    echo Usage: tools\build.bat [Debug^|Release] [Win32^|x64]
+    exit /b 1
+)
+set "BIN_CONFIG=%CONFIG%"
+if /i "%PLATFORM%"=="x64" set "BIN_CONFIG=%CONFIG%_x64"
+set "BIN_DIR=%ROOT%\code\src\bin\%BIN_CONFIG%"
 set "MAIN_DIR=%BIN_DIR%\Main"
 set "PK3_SCRIPT=%~dp0pack_pk3.bat"
 
@@ -77,7 +87,7 @@ if "%MSBUILD%"=="" (
 :: ----------------------------------------------------------------
 %PS% "Write-Host '================================' -ForegroundColor DarkCyan; Write-Host '  STEP 1: Compile Engine + DLLs  (bin\)' -ForegroundColor Cyan; Write-Host '================================' -ForegroundColor DarkCyan"
 
-"%MSBUILD%" "%SLN%" /t:wolf;cgame;game;ui /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% /nologo /v:minimal
+"%MSBUILD%" "%SLN%" /t:wolf;cgame;game;ui /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% /nologo /nr:false /v:minimal
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -92,22 +102,17 @@ if not exist "%BIN_DIR%\WolfSP.exe" (
     exit /b 1
 )
 
-:: Copy game DLLs to Main\ (engine loads them from fs_game dir)
+:: Keep Main asset-only. Game DLLs are built next to WolfSP.exe.
 if not exist "%MAIN_DIR%" mkdir "%MAIN_DIR%"
-for %%f in (cgamex86.dll qagamex86.dll uix86.dll) do (
-    if exist "%BIN_DIR%\%%f" (
-        copy /y "%BIN_DIR%\%%f" "%MAIN_DIR%\%%f" >nul
-    )
-)
 
-%PS% "Write-Host ''; Write-Host 'Compile OK -- EXE in bin\%CONFIG%\, DLLs copied to Main\' -ForegroundColor Green; Write-Host ''"
+%PS% "Write-Host ''; Write-Host 'Compile OK -- EXE/DLLs in bin\%BIN_CONFIG%\' -ForegroundColor Green; Write-Host ''"
 
 :: ----------------------------------------------------------------
 ::  3. Build LiveSplit standalone  (> bin\)
 :: ----------------------------------------------------------------
 %PS% "Write-Host '================================' -ForegroundColor DarkCyan; Write-Host '  STEP 2: Build RtCW_LiveSplit.exe' -ForegroundColor Cyan; Write-Host '================================' -ForegroundColor DarkCyan"
 
-"%MSBUILD%" "%ROOT%\code\src\livesplit_app\livesplit_app.vcxproj" /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% "/p:SolutionDir=%ROOT%\code\src\\" /nologo /v:minimal
+"%MSBUILD%" "%ROOT%\code\src\livesplit_app\livesplit_app.vcxproj" /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% "/p:SolutionDir=%ROOT%\code\src\\" /nologo /nr:false /v:minimal
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -116,14 +121,14 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-%PS% "Write-Host ''; Write-Host 'LiveSplit OK -- RtCW_LiveSplit.exe in bin\%CONFIG%\' -ForegroundColor Green; Write-Host ''"
+%PS% "Write-Host ''; Write-Host 'LiveSplit OK -- RtCW_LiveSplit.exe in bin\%BIN_CONFIG%\' -ForegroundColor Green; Write-Host ''"
 
 :: ----------------------------------------------------------------
 ::  4. Build RaceHost standalone  (> bin\)
 :: ----------------------------------------------------------------
 %PS% "Write-Host '================================' -ForegroundColor DarkCyan; Write-Host '  STEP 3: Build RtCW_RaceHost.exe' -ForegroundColor Cyan; Write-Host '================================' -ForegroundColor DarkCyan"
 
-"%MSBUILD%" "%ROOT%\code\src\race_host_app\race_host_app.vcxproj" /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% "/p:SolutionDir=%ROOT%\code\src\\" /nologo /v:minimal
+"%MSBUILD%" "%ROOT%\code\src\race_host_app\race_host_app.vcxproj" /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% "/p:SolutionDir=%ROOT%\code\src\\" /nologo /nr:false /v:minimal
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -132,7 +137,7 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-%PS% "Write-Host ''; Write-Host 'RaceHost OK -- RtCW_RaceHost.exe in bin\%CONFIG%\' -ForegroundColor Green; Write-Host ''"
+%PS% "Write-Host ''; Write-Host 'RaceHost OK -- RtCW_RaceHost.exe in bin\%BIN_CONFIG%\' -ForegroundColor Green; Write-Host ''"
 
 :: ----------------------------------------------------------------
 ::  5. Pack PK3  (> Main\)
@@ -142,7 +147,7 @@ if %ERRORLEVEL% neq 0 (
 if not exist "%MAIN_DIR%" mkdir "%MAIN_DIR%"
 
 if exist "%PK3_SCRIPT%" (
-    call "%PK3_SCRIPT%" "%CONFIG%"
+    call "%PK3_SCRIPT%" "%BIN_CONFIG%"
 ) else (
     %PS% "Write-Host 'WARNING: pack_pk3.bat not found, skipping PK3 step.' -ForegroundColor Yellow"
 )

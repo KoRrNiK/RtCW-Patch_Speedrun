@@ -7,8 +7,10 @@ set "CONFIG=%~1"
 if "%CONFIG%"=="" set "CONFIG=Debug"
 if /i "%CONFIG%"=="debug" set "CONFIG=Debug"
 if /i "%CONFIG%"=="release" set "CONFIG=Release"
-if /i not "%CONFIG%"=="Debug" if /i not "%CONFIG%"=="Release" (
-    echo Usage: tools\pack_pk3.bat [Debug^|Release]
+if /i "%CONFIG%"=="debug_x64" set "CONFIG=Debug_x64"
+if /i "%CONFIG%"=="release_x64" set "CONFIG=Release_x64"
+if /i not "%CONFIG%"=="Debug" if /i not "%CONFIG%"=="Release" if /i not "%CONFIG%"=="Debug_x64" if /i not "%CONFIG%"=="Release_x64" (
+    echo Usage: tools\pack_pk3.bat [Debug^|Release^|Debug_x64^|Release_x64]
     pause
     exit /b 1
 )
