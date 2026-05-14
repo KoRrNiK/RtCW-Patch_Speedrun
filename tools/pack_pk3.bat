@@ -3,7 +3,16 @@ setlocal EnableExtensions
 
 set "SRC=%~dp0..\assets\_speedrun_pk3"
 set "ROOT=%~dp0.."
-set "OUT=%ROOT%\code\src\bin\Debug\Main"
+set "CONFIG=%~1"
+if "%CONFIG%"=="" set "CONFIG=Debug"
+if /i "%CONFIG%"=="debug" set "CONFIG=Debug"
+if /i "%CONFIG%"=="release" set "CONFIG=Release"
+if /i not "%CONFIG%"=="Debug" if /i not "%CONFIG%"=="Release" (
+    echo Usage: tools\pack_pk3.bat [Debug^|Release]
+    pause
+    exit /b 1
+)
+set "OUT=%ROOT%\code\src\bin\%CONFIG%\Main"
 set "PK3=%OUT%\sp_speedrun.pk3"
 set "STATE=%OUT%\sp_speedrun.state"
 set "META=%OUT%\sp_speedrun.meta"
@@ -38,6 +47,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$meta = [System.IO.Path]::GetFullPath('%META%');" ^
     "" ^
     "Write-Section 'PK3 PACKER';" ^
+    "Write-Host ('Configuration : ' + '%CONFIG%') -ForegroundColor Gray;" ^
     "Write-Host ('Source folder : ' + $src) -ForegroundColor Gray;" ^
     "Write-Host ('Output file   : ' + $pk3) -ForegroundColor Gray;" ^
     "" ^

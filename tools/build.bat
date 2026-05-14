@@ -6,10 +6,10 @@ setlocal EnableExtensions
 ::  Compiles the engine and packs the PK3.
 ::
 ::  Output layout:
-::    bin\Debug\          - WolfSP.exe + DLLs (engine binaries)
-::    bin\Debug\Main\     - sp_speedrun.pk3   (game assets)
+::    bin\<Config>\       - WolfSP.exe + DLLs (engine binaries)
+::    bin\<Config>\Main\  - sp_speedrun.pk3   (game assets)
 ::
-::  Usage:  build.bat [Release]
+::  Usage:  build.bat [Debug|Release]
 ::          (defaults to Debug if no argument given)
 :: ================================================================
 
@@ -17,6 +17,12 @@ for %%d in ("%~dp0..") do set "ROOT=%%~fd"
 set "SLN=%ROOT%\code\src\wolf.sln"
 set "CONFIG=%~1"
 if "%CONFIG%"=="" set "CONFIG=Debug"
+if /i "%CONFIG%"=="debug" set "CONFIG=Debug"
+if /i "%CONFIG%"=="release" set "CONFIG=Release"
+if /i not "%CONFIG%"=="Debug" if /i not "%CONFIG%"=="Release" (
+    echo Usage: tools\build.bat [Debug^|Release]
+    exit /b 1
+)
 set "PLATFORM=Win32"
 set "BIN_DIR=%ROOT%\code\src\bin\%CONFIG%"
 set "MAIN_DIR=%BIN_DIR%\Main"
@@ -113,14 +119,30 @@ if %ERRORLEVEL% neq 0 (
 %PS% "Write-Host ''; Write-Host 'LiveSplit OK -- RtCW_LiveSplit.exe in bin\%CONFIG%\' -ForegroundColor Green; Write-Host ''"
 
 :: ----------------------------------------------------------------
-::  4. Pack PK3  (> Main\)
+::  4. Build RaceHost standalone  (> bin\)
 :: ----------------------------------------------------------------
-%PS% "Write-Host '================================' -ForegroundColor DarkCyan; Write-Host '  STEP 3: Pack PK3  (Main\)' -ForegroundColor Cyan; Write-Host '================================' -ForegroundColor DarkCyan"
+%PS% "Write-Host '================================' -ForegroundColor DarkCyan; Write-Host '  STEP 3: Build RtCW_RaceHost.exe' -ForegroundColor Cyan; Write-Host '================================' -ForegroundColor DarkCyan"
+
+"%MSBUILD%" "%ROOT%\code\src\race_host_app\race_host_app.vcxproj" /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% "/p:SolutionDir=%ROOT%\code\src\\" /nologo /v:minimal
+
+if %ERRORLEVEL% neq 0 (
+    echo.
+    %PS% "Write-Host 'RaceHost BUILD FAILED!' -ForegroundColor Red"
+    pause
+    exit /b 1
+)
+
+%PS% "Write-Host ''; Write-Host 'RaceHost OK -- RtCW_RaceHost.exe in bin\%CONFIG%\' -ForegroundColor Green; Write-Host ''"
+
+:: ----------------------------------------------------------------
+::  5. Pack PK3  (> Main\)
+:: ----------------------------------------------------------------
+%PS% "Write-Host '================================' -ForegroundColor DarkCyan; Write-Host '  STEP 4: Pack PK3  (Main\)' -ForegroundColor Cyan; Write-Host '================================' -ForegroundColor DarkCyan"
 
 if not exist "%MAIN_DIR%" mkdir "%MAIN_DIR%"
 
 if exist "%PK3_SCRIPT%" (
-    call "%PK3_SCRIPT%"
+    call "%PK3_SCRIPT%" "%CONFIG%"
 ) else (
     %PS% "Write-Host 'WARNING: pack_pk3.bat not found, skipping PK3 step.' -ForegroundColor Yellow"
 )
@@ -132,6 +154,7 @@ echo.
 %PS% "Write-Host '================================================================' -ForegroundColor Green; Write-Host '  BUILD COMPLETE' -ForegroundColor White; Write-Host '================================================================' -ForegroundColor Green"
 %PS% "Write-Host ('  EXE : %BIN_DIR%\WolfSP.exe') -ForegroundColor Gray"
 %PS% "Write-Host ('  LS  : %BIN_DIR%\RtCW_LiveSplit.exe') -ForegroundColor Gray"
+%PS% "Write-Host ('  RH  : %BIN_DIR%\RtCW_RaceHost.exe') -ForegroundColor Gray"
 %PS% "Write-Host ('  PK3 : %MAIN_DIR%\sp_speedrun.pk3') -ForegroundColor Gray"
 %PS% "Write-Host ''"
 
