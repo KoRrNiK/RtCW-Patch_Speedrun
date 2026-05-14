@@ -1015,3 +1015,7 @@ NET_Restart_f
 void NET_Restart( void ) {
 	NET_Config( networkingEnabled );
 }
+
+qboolean NET_IsIPSocketOpen( void ) {
+	return ( ip_socket && ip_socket != INVALID_SOCKET ) ? qtrue : qfalse;
+}

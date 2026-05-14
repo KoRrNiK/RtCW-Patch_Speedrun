@@ -566,6 +566,27 @@ void    NET_Shutdown( void ) {
 	}
 }
 
+void NET_Restart( void ) {
+	NET_Shutdown();
+	if ( !noudp || !noudp->integer ) {
+		NET_OpenIP();
+	}
+}
+
+void NET_Config( qboolean enableNetworking ) {
+	if ( enableNetworking ) {
+		if ( !ip_socket && ( !noudp || !noudp->integer ) ) {
+			NET_OpenIP();
+		}
+	} else {
+		NET_Shutdown();
+	}
+}
+
+qboolean NET_IsIPSocketOpen( void ) {
+	return ip_socket ? qtrue : qfalse;
+}
+
 
 /*
 ====================

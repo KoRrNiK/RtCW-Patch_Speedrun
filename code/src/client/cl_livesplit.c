@@ -72,6 +72,11 @@ Commands:
 #include <wininet.h>
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "ws2_32.lib")
+#else
+#include <errno.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #endif
 
 /* =====================================================================
@@ -158,7 +163,9 @@ lsASLState_t ls_aslState = { LS_ASL_MAGIC, LS_ASL_VER };
 #define LS_MAX_MAPNAME      64
 #define LS_MAX_DIFFICULTIES 3
 #define LS_NUM_MODES 3  /* fullgame=0, mission=1, IL=2 */
-#define LS_TOTAL_DIFF_SLOTS (LS_NUM_MODES * LS_MAX_DIFFICULTIES)  /* 9 */
+#define LS_NUM_CATEGORY_VARIANTS 4  /* any, 100%, HL1, HL1 100% */
+#define LS_DIFF_SLOTS_PER_VARIANT (LS_NUM_MODES * LS_MAX_DIFFICULTIES)
+#define LS_TOTAL_DIFF_SLOTS (LS_NUM_CATEGORY_VARIANTS * LS_DIFF_SLOTS_PER_VARIANT)  /* 36 */
 #define LS_SAVE_FILE        "livesplit_stats.dat"    /* legacy - no longer used for saving */
 #define LS_CS_MISSIONSTATS  23   /* configstring index for mission stats */
 #define LS_HISTORY_FILE     "livesplit_history.dat"  /* legacy - no longer used for saving */
@@ -273,7 +280,7 @@ typedef struct {
 	const char         *displayName;  /* human-readable full name */
 	const char         *shortName;    /* abbreviated name for narrow UI */
 
-	/* per-difficulty-per-mode persistent: [mode*3 + skill]  0-8 */
+	/* per-variant-per-mode-per-difficulty persistent data */
 	lsDiffSplitData_t   d[LS_TOTAL_DIFF_SLOTS];
 
 	/* transient current-run data */
@@ -297,6 +304,7 @@ typedef struct {
 	int attemptId;                   /* original Attempt id from .lss */
 	int difficulty;                  /* 1-3 */
 	int mode;                        /* 0/1/2 */
+	int categoryVariant;             /* 0 any, 1 100%, 2 HL1, 3 HL1 100% */
 	int missionNum;                  /* for mission mode */
 	int mapIdx;                      /* for IL mode */
 	int totalIGTMs;
@@ -315,6 +323,7 @@ typedef struct {
 	int attemptId;                   /* original Attempt id from .lss */
 	int difficulty;                  /* 1-3 (diffIdx+1) */
 	int mode;                        /* 0/1/2 */
+	int categoryVariant;
 	int missionNum;
 	int mapIdx;                      /* for IL mode */
 	time_t startTime;
@@ -333,6 +342,7 @@ typedef struct {
 	int realTimeMs;      /* RealTime in ms */
 	int mode;
 	int diffIdx;
+	int categoryVariant;
 	int missionNum;
 	int mapIdx;          /* IL: source map index; -1 for FG/Mission */
 } lsOrphanSegTime_t;
@@ -375,13 +385,13 @@ typedef struct {
 
 	/* per-category per-difficulty lifetime stats */
 	/* fullgame */
-	int         fgAttempts[LS_MAX_DIFFICULTIES];
-	int         fgCompletions[LS_MAX_DIFFICULTIES];
-	int         fgPB[LS_MAX_DIFFICULTIES];
+	int         fgAttempts[LS_TOTAL_DIFF_SLOTS];
+	int         fgCompletions[LS_TOTAL_DIFF_SLOTS];
+	int         fgPB[LS_TOTAL_DIFF_SLOTS];
 	/* mission: [group 0-4][difficulty 0-2] */
-	int         msAttempts[LS_NUM_MISSION_GROUPS][LS_MAX_DIFFICULTIES];
-	int         msCompletions[LS_NUM_MISSION_GROUPS][LS_MAX_DIFFICULTIES];
-	int         msPB[LS_NUM_MISSION_GROUPS][LS_MAX_DIFFICULTIES];
+	int         msAttempts[LS_NUM_MISSION_GROUPS][LS_TOTAL_DIFF_SLOTS];
+	int         msCompletions[LS_NUM_MISSION_GROUPS][LS_TOTAL_DIFF_SLOTS];
+	int         msPB[LS_NUM_MISSION_GROUPS][LS_TOTAL_DIFF_SLOTS];
 	/* IL: uses per-split d[di].totalAttempts/totalCompletions/bestTimeMs */
 
 	/* run history (dynamically allocated, no fixed limit) */
@@ -457,8 +467,8 @@ typedef struct {
 	int         savedPbSegMs[LS_MAX_MAPS]; /* per-split pbSegmentMs snapshot */
 
 	/* Per-category PB realtime */
-	int         fgPBRgt[LS_MAX_DIFFICULTIES];
-	int         msPBRgt[LS_NUM_MISSION_GROUPS][LS_MAX_DIFFICULTIES];
+	int         fgPBRgt[LS_TOTAL_DIFF_SLOTS];
+	int         msPBRgt[LS_NUM_MISSION_GROUPS][LS_TOTAL_DIFF_SLOTS];
 
 	/* Map-load freeze: set on real map transition (changelevel), cleared
 	   when the player clicks 'continue' on the pregame screen (ls_loading
@@ -586,7 +596,7 @@ static void LS_DemoWriteUpdate( void ); /* forward declaration */
 
 /* Find the highest attemptId across all history entries and reset attempts
    for a given mode/difficulty/mission. Returns 0 if none exist. */
-static int LS_MaxAttemptId( int mode, int diffIdx, int missionNum, int mapIdx ) {
+static int LS_MaxAttemptId( int mode, int diffIdx, int missionNum, int mapIdx, int categoryVariant ) {
 	int maxId = 0, i, baseDiffIdx;
 	baseDiffIdx = diffIdx;
 	if ( baseDiffIdx >= LS_MAX_DIFFICULTIES ) {
@@ -595,6 +605,7 @@ static int LS_MaxAttemptId( int mode, int diffIdx, int missionNum, int mapIdx ) 
 	for ( i = 0; i < ls.numHistoryRuns; i++ ) {
 		lsRunHistory_t *r = &ls.history[i];
 		if ( r->mode != mode ) continue;
+		if ( r->categoryVariant != categoryVariant ) continue;
 		if ( LS_DiffIdx( r->difficulty ) != baseDiffIdx ) continue;
 		if ( mode == LS_MODE_MISSION && r->missionNum != missionNum ) continue;
 		if ( mode == LS_MODE_IL && mapIdx >= 0 && r->mapIdx != mapIdx ) continue;
@@ -603,6 +614,7 @@ static int LS_MaxAttemptId( int mode, int diffIdx, int missionNum, int mapIdx ) 
 	for ( i = 0; i < ls.numResetAttempts; i++ ) {
 		lsResetAttempt_t *ra = &ls.resetAttempts[i];
 		if ( ra->mode != mode ) continue;
+		if ( ra->categoryVariant != categoryVariant ) continue;
 		if ( LS_DiffIdx( ra->difficulty ) != baseDiffIdx ) continue;
 		if ( mode == LS_MODE_MISSION && ra->missionNum != missionNum ) continue;
 		if ( mode == LS_MODE_IL && mapIdx >= 0 && ra->mapIdx != mapIdx ) continue;
@@ -611,12 +623,13 @@ static int LS_MaxAttemptId( int mode, int diffIdx, int missionNum, int mapIdx ) 
 	return maxId;
 }
 
-static qboolean LS_HasAttemptId( int mode, int diffIdx, int missionNum, int mapIdx, int attemptId ) {
+static qboolean LS_HasAttemptId( int mode, int diffIdx, int missionNum, int mapIdx, int categoryVariant, int attemptId ) {
 	int i;
 	for ( i = 0; i < ls.numHistoryRuns; i++ ) {
 		lsRunHistory_t *r = &ls.history[i];
 		if ( r->attemptId != attemptId ) continue;
 		if ( r->mode != mode ) continue;
+		if ( r->categoryVariant != categoryVariant ) continue;
 		if ( LS_DiffIdx( r->difficulty ) != diffIdx ) continue;
 		if ( mode == LS_MODE_MISSION && r->missionNum != missionNum ) continue;
 		if ( mode == LS_MODE_IL && r->mapIdx != mapIdx ) continue;
@@ -626,6 +639,7 @@ static qboolean LS_HasAttemptId( int mode, int diffIdx, int missionNum, int mapI
 		lsResetAttempt_t *ra = &ls.resetAttempts[i];
 		if ( ra->attemptId != attemptId ) continue;
 		if ( ra->mode != mode ) continue;
+		if ( ra->categoryVariant != categoryVariant ) continue;
 		if ( LS_DiffIdx( ra->difficulty ) != diffIdx ) continue;
 		if ( mode == LS_MODE_MISSION && ra->missionNum != missionNum ) continue;
 		if ( mode == LS_MODE_IL && ra->mapIdx != mapIdx ) continue;
@@ -634,12 +648,13 @@ static qboolean LS_HasAttemptId( int mode, int diffIdx, int missionNum, int mapI
 	return qfalse;
 }
 
-static qboolean LS_HasOrphanSegTime( int mode, int diffIdx, int missionNum, int mapIdx, int attemptId, int segIdx ) {
+static qboolean LS_HasOrphanSegTime( int mode, int diffIdx, int missionNum, int mapIdx, int categoryVariant, int attemptId, int segIdx ) {
 	int i;
 	for ( i = 0; i < ls.numOrphanSegTimes; i++ ) {
 		lsOrphanSegTime_t *o = &ls.orphanSegTimes[i];
 		if ( o->attemptId != attemptId || o->segIdx != segIdx ) continue;
 		if ( o->mode != mode || o->diffIdx != diffIdx ) continue;
+		if ( o->categoryVariant != categoryVariant ) continue;
 		if ( mode == LS_MODE_MISSION && o->missionNum != missionNum ) continue;
 		if ( mode == LS_MODE_IL && o->mapIdx != mapIdx ) continue;
 		return qtrue;
@@ -700,12 +715,38 @@ static qboolean LS_HL1ModeActive( void ) {
 	return Cvar_VariableIntegerValue( "bh_movement" ) ? qtrue : qfalse;
 }
 
+static int LS_CategoryVariant( qboolean pct100, qboolean hl1 ) {
+	return ( pct100 ? 1 : 0 ) | ( hl1 ? 2 : 0 );
+}
+
+static int LS_CurCategoryVariant( void ) {
+	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	return LS_CategoryVariant( p100, LS_HL1ModeActive() );
+}
+
+static int LS_DiffSlotFor( int mode, int diffIdx, qboolean pct100, qboolean hl1 ) {
+	int variant = LS_CategoryVariant( pct100, hl1 );
+	if ( mode < 0 ) mode = 0;
+	if ( mode >= LS_NUM_MODES ) mode = LS_NUM_MODES - 1;
+	if ( diffIdx < 0 ) diffIdx = 0;
+	if ( diffIdx >= LS_MAX_DIFFICULTIES ) diffIdx = LS_MAX_DIFFICULTIES - 1;
+	return variant * LS_DIFF_SLOTS_PER_VARIANT + mode * LS_MAX_DIFFICULTIES + diffIdx;
+}
+
+static const char *LS_HL1ModeNameSuffixFor( qboolean hl1 ) {
+	return hl1 ? " HL1" : "";
+}
+
 static const char *LS_HL1ModeNameSuffix( void ) {
-	return LS_HL1ModeActive() ? " HL1" : "";
+	return LS_HL1ModeNameSuffixFor( LS_HL1ModeActive() );
+}
+
+static const char *LS_HL1ModeFileSuffixFor( qboolean hl1 ) {
+	return hl1 ? "_hl1" : "";
 }
 
 static const char *LS_HL1ModeFileSuffix( void ) {
-	return LS_HL1ModeActive() ? "_hl1" : "";
+	return LS_HL1ModeFileSuffixFor( LS_HL1ModeActive() );
 }
 
 /* Color customization cvars (format: "R G B A", RGB 0-255, Alpha 0.0-1.0) */
@@ -1087,9 +1128,8 @@ static int LS_DiffIdx( int skill ) {
 static int LS_CurDiffIdx( void ) {
 	int base = LS_DiffIdx( ls.currentDifficulty );
 	int mode = ls.runMode;
-	if ( mode < 0 ) mode = 0;
-	if ( mode >= LS_NUM_MODES ) mode = LS_NUM_MODES - 1;
-	return mode * LS_MAX_DIFFICULTIES + base;
+	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	return LS_DiffSlotFor( mode, base, p100, LS_HL1ModeActive() );
 }
 
 /* ---- Per-category stat accessors ---- */
@@ -2429,6 +2469,7 @@ static void LS_WindowUpdate( void ) {
 static void LS_WindowUpdateMenu( void ) {
 	volatile lsWndState_t *st = &lswnd_state;
 	int di, i, vi, bsi;
+	int igtMs, rtMs, timerMs, segMs;
 	int pbCum, bestCum;
 	qboolean pbComplete, bestComplete;
 
@@ -2452,9 +2493,33 @@ static void LS_WindowUpdateMenu( void ) {
 	Q_strncpyz( (char *)st->compareLabel, "Personal Best", sizeof( st->compareLabel ) );
 	Q_strncpyz( (char *)st->prevSegLabel, "Previous Segment", sizeof( st->prevSegLabel ) );
 	Q_strncpyz( (char *)st->prevSegValue, "-", sizeof( st->prevSegValue ) );
-	LS_FormatTime( 0, (char *)st->timerText, sizeof( st->timerText ) );
-	LS_FormatTime( 0, (char *)st->rtTimerText, sizeof( st->rtTimerText ) );
-	LS_FormatTime( 0, (char *)st->segTimerText, sizeof( st->segTimerText ) );
+	if ( ls.runFinished ) {
+		igtMs = ls.runTotalIGTMs;
+	} else if ( ls.active ) {
+		igtMs = LS_CumulativeTime( ls.modeLastIdx );
+	} else {
+		igtMs = 0;
+	}
+	if ( ls.active && !ls.runFinished && ls.runStartRealMs > 0 ) {
+		rtMs = Sys_Milliseconds() - ls.runStartRealMs;
+	} else {
+		rtMs = ls.runSavedRealMs;
+	}
+	if ( igtMs < 0 ) igtMs = 0;
+	if ( rtMs < 0 ) rtMs = 0;
+	timerMs = ( ls_timingCvar && ls_timingCvar->integer == LS_TIMING_REALTIME ) ? rtMs : igtMs;
+	LS_FormatTime( timerMs, (char *)st->timerText, sizeof( st->timerText ) );
+	LS_FormatTime( rtMs, (char *)st->rtTimerText, sizeof( st->rtTimerText ) );
+	segMs = 0;
+	if ( ls.currentMapIndex >= 0 && ls.currentMapIndex < ls.numMaps ) {
+		if ( !ls.splits[ls.currentMapIndex].cutscene ) {
+			segMs = ls.splits[ls.currentMapIndex].currentTimeMs;
+		} else {
+			int realIdx = LS_ActiveRealSplit();
+			if ( realIdx >= 0 ) segMs = ls.splits[realIdx].currentTimeMs;
+		}
+	}
+	LS_FormatTime( segMs, (char *)st->segTimerText, sizeof( st->segTimerText ) );
 
 	di = LS_CurDiffIdx();
 	pbCum = 0;
@@ -2549,6 +2614,9 @@ static void LS_WindowUpdateMenu( void ) {
 		st->pctSecretsTotal += ls.splits[i].secretsTotal;
 		st->pctTreasureTotal += ls.splits[i].treasureTotal;
 	}
+	st->active = ls.active ? 1 : 0;
+	st->finished = ls.runFinished ? 1 : 0;
+	st->paused = ls.manualPause ? 1 : 0;
 
 	LS_ShmUpdate();
 }
@@ -2669,9 +2737,9 @@ static time_t LS_ParseLssDate( const char *str ) {
 
 /* --- LSS file path helpers --- */
 
-static void LS_GetLssPath( char *out, int outSize, int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100 ) {
+static void LS_GetLssPath( char *out, int outSize, int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100, qboolean hl1 ) {
 	const char *suffix = pct100 ? "_100" : "";
-	const char *moveSuffix = LS_HL1ModeFileSuffix();
+	const char *moveSuffix = LS_HL1ModeFileSuffixFor( hl1 );
 	if ( diffIdx < 0 ) diffIdx = 0;
 	if ( diffIdx >= LS_MAX_DIFFICULTIES ) diffIdx = LS_MAX_DIFFICULTIES - 1;
 
@@ -2701,24 +2769,25 @@ static void LS_GetLssPath( char *out, int outSize, int mode, int diffIdx, int mi
 static void LS_GetCurrentLssPath( char *out, int outSize ) {
 	int di = LS_DiffIdx( ls.currentDifficulty );
 	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	qboolean hl1 = LS_HL1ModeActive();
 	switch ( ls.runMode ) {
 	case LS_MODE_MISSION:
-		LS_GetLssPath( out, outSize, LS_MODE_MISSION, di, ls.runMission - 1, -1, p100 );
+		LS_GetLssPath( out, outSize, LS_MODE_MISSION, di, ls.runMission - 1, -1, p100, hl1 );
 		break;
 	case LS_MODE_IL:
-		LS_GetLssPath( out, outSize, LS_MODE_IL, di, -1, ls.modeFirstIdx, p100 );
+		LS_GetLssPath( out, outSize, LS_MODE_IL, di, -1, ls.modeFirstIdx, p100, hl1 );
 		break;
 	default:
-		LS_GetLssPath( out, outSize, LS_MODE_FULLGAME, di, -1, -1, p100 );
+		LS_GetLssPath( out, outSize, LS_MODE_FULLGAME, di, -1, -1, p100, hl1 );
 		break;
 	}
 }
 
 /* Build category display name for the .lss CategoryName field */
-static void LS_GetCategoryDisplayName( char *out, int outSize, int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100 ) {
+static void LS_GetCategoryDisplayName( char *out, int outSize, int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100, qboolean hl1 ) {
 	const char *diff = ls_diffDisplayNames[diffIdx];
 	const char *pctTag = pct100 ? " 100%" : " Any%";
-	const char *moveTag = LS_HL1ModeNameSuffix();
+	const char *moveTag = LS_HL1ModeNameSuffixFor( hl1 );
 	switch ( mode ) {
 	case LS_MODE_FULLGAME:
 		Com_sprintf( out, outSize, "Full Game%s%s - %s", pctTag, moveTag, diff );
@@ -2856,28 +2925,29 @@ static void LS_GetSegmentRange( int mode, int missionGroup, int mapIdx,
 /* =====================================================================
    LS_WriteLss - write a single .lss file for one category+difficulty
    ===================================================================== */
-static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100 ) {
+static void LS_WriteLssEx( int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100, qboolean hl1, qboolean forceWrite ) {
 	fileHandle_t f;
 	char path[256], catName[256], buf[1024], timeBuf[64];
-	int i, n, firstIdx, lastIdx, slot;
+	int i, n, firstIdx, lastIdx, slot, variant;
 	int attemptCount;
 	int numFilteredRuns;
 	int *filteredIndices;
 
-	LS_GetLssPath( path, sizeof( path ), mode, diffIdx, missionGroup, mapIdx, pct100 );
-	LS_GetCategoryDisplayName( catName, sizeof( catName ), mode, diffIdx, missionGroup, mapIdx, pct100 );
+	LS_GetLssPath( path, sizeof( path ), mode, diffIdx, missionGroup, mapIdx, pct100, hl1 );
+	LS_GetCategoryDisplayName( catName, sizeof( catName ), mode, diffIdx, missionGroup, mapIdx, pct100, hl1 );
 
-	slot = mode * LS_MAX_DIFFICULTIES + diffIdx;
+	variant = LS_CategoryVariant( pct100, hl1 );
+	slot = LS_DiffSlotFor( mode, diffIdx, pct100, hl1 );
 	LS_GetSegmentRange( mode, missionGroup, mapIdx, &firstIdx, &lastIdx );
 	if ( firstIdx < 0 || lastIdx < 0 ) return;
 
 	/* Determine attempt count from the appropriate counter */
 	switch ( mode ) {
 	case LS_MODE_FULLGAME:
-		attemptCount = ls.fgAttempts[diffIdx];
+		attemptCount = ls.fgAttempts[slot];
 		break;
 	case LS_MODE_MISSION:
-		attemptCount = ls.msAttempts[missionGroup][diffIdx];
+		attemptCount = ls.msAttempts[missionGroup][slot];
 		break;
 	case LS_MODE_IL:
 		attemptCount = ls.splits[mapIdx].d[slot].totalAttempts;
@@ -2901,7 +2971,7 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 				}
 			}
 		}
-		if ( !hasData ) return; /* skip empty categories */
+		if ( !hasData && !forceWrite ) return; /* skip empty categories */
 	}
 
 	/* Filter history runs matching this category */
@@ -2910,6 +2980,7 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 	for ( i = 0; i < ls.numHistoryRuns; i++ ) {
 		lsRunHistory_t *r = &ls.history[i];
 		if ( r->mode != mode ) continue;
+		if ( r->categoryVariant != variant ) continue;
 		if ( LS_DiffIdx( r->difficulty ) != diffIdx ) continue;
 		if ( mode == LS_MODE_MISSION && r->missionNum != missionGroup + 1 ) continue;
 		if ( mode == LS_MODE_IL && r->mapIdx != mapIdx ) continue;
@@ -2975,6 +3046,7 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 			for ( n = 0; n < ls.numResetAttempts; n++ ) {
 				lsResetAttempt_t *ra = &ls.resetAttempts[n];
 				if ( ra->mode != mode ) continue;
+				if ( ra->categoryVariant != variant ) continue;
 				if ( LS_DiffIdx( ra->difficulty ) != diffIdx ) continue;
 				if ( mode == LS_MODE_MISSION && ra->missionNum != missionGroup + 1 ) continue;
 				if ( mode == LS_MODE_IL && ra->mapIdx != mapIdx ) continue;
@@ -3148,6 +3220,7 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 					lsOrphanSegTime_t *o = &ls.orphanSegTimes[oi];
 					if ( o->mode != mode ) continue;
 					if ( o->diffIdx != diffIdx ) continue;
+					if ( o->categoryVariant != variant ) continue;
 					if ( mode == LS_MODE_MISSION && o->missionNum != missionGroup + 1 ) continue;
 					if ( mode == LS_MODE_IL && o->mapIdx != mapIdx ) continue;
 					if ( o->segIdx != segN ) continue;
@@ -3182,6 +3255,10 @@ static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qb
 	LS_WBufFlush( f );
 	FS_FCloseFile( f );
 	Z_Free( filteredIndices );
+}
+
+static void LS_WriteLss( int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100, qboolean hl1 ) {
+	LS_WriteLssEx( mode, diffIdx, missionGroup, mapIdx, pct100, hl1, qfalse );
 }
 
 /* =====================================================================
@@ -3238,16 +3315,17 @@ static qboolean LS_XmlAttr( const char *tagStr, const char *attr, char *out, int
 	return qtrue;
 }
 
-static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100 ) {
+static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qboolean pct100, qboolean hl1 ) {
 	fileHandle_t fh;
 	int fileLen;
 	char *bigbuf;
 	char path[256], valBuf[256];
-	int slot, firstIdx, lastIdx;
+	int slot, firstIdx, lastIdx, variant;
 	const char *pos, *segPos, *attemptEnd;
 
-	LS_GetLssPath( path, sizeof( path ), mode, diffIdx, missionGroup, mapIdx, pct100 );
-	slot = mode * LS_MAX_DIFFICULTIES + diffIdx;
+	LS_GetLssPath( path, sizeof( path ), mode, diffIdx, missionGroup, mapIdx, pct100, hl1 );
+	variant = LS_CategoryVariant( pct100, hl1 );
+	slot = LS_DiffSlotFor( mode, diffIdx, pct100, hl1 );
 	LS_GetSegmentRange( mode, missionGroup, mapIdx, &firstIdx, &lastIdx );
 	if ( firstIdx < 0 || lastIdx < 0 ) return;
 
@@ -3284,10 +3362,10 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 		int att = atoi( valBuf );
 		switch ( mode ) {
 		case LS_MODE_FULLGAME:
-			ls.fgAttempts[diffIdx] = att;
+			ls.fgAttempts[slot] = att;
 			break;
 		case LS_MODE_MISSION:
-			ls.msAttempts[missionGroup][diffIdx] = att;
+			ls.msAttempts[missionGroup][slot] = att;
 			break;
 		case LS_MODE_IL:
 			ls.splits[mapIdx].d[slot].totalAttempts = att;
@@ -3338,13 +3416,14 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 					/* Self-closing attempt (no completion data) - store as reset */
 
 					/* Preserve this reset attempt for round-trip */
-					if ( !LS_HasAttemptId( mode, diffIdx, ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0, ( mode == LS_MODE_IL ) ? mapIdx : -1, attId ) ) {
+					if ( !LS_HasAttemptId( mode, diffIdx, ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0, ( mode == LS_MODE_IL ) ? mapIdx : -1, variant, attId ) ) {
 						LS_ResetAttemptsEnsure( ls.numResetAttempts + 1 );
 						{
 							lsResetAttempt_t *ra = &ls.resetAttempts[ls.numResetAttempts];
 							ra->attemptId  = attId;
 							ra->difficulty = diffIdx + 1;
 							ra->mode       = mode;
+							ra->categoryVariant = variant;
 							ra->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
 							ra->mapIdx     = ( mode == LS_MODE_IL ) ? mapIdx : -1;
 							startStr[0] = '\0'; endStr[0] = '\0';
@@ -3387,7 +3466,7 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 						bestRGT = rgtMs;
 
 					/* Add to history array (dynamic, no fixed limit) */
-					if ( !LS_HasAttemptId( mode, diffIdx, ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0, ( mode == LS_MODE_IL ) ? mapIdx : -1, attId ) ) {
+					if ( !LS_HasAttemptId( mode, diffIdx, ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0, ( mode == LS_MODE_IL ) ? mapIdx : -1, variant, attId ) ) {
 						LS_HistoryEnsure( ls.numHistoryRuns + 1 );
 						{
 						lsRunHistory_t *r = &ls.history[ls.numHistoryRuns];
@@ -3395,6 +3474,7 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 						r->attemptId  = attId;
 						r->difficulty = diffIdx + 1;
 						r->mode       = mode;
+						r->categoryVariant = variant;
 						r->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
 						r->mapIdx     = ( mode == LS_MODE_IL ) ? mapIdx : -1;
 						r->totalIGTMs = igtMs;
@@ -3424,13 +3504,14 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 					LS_XmlTagContentBounded( attStart, attClose, "PauseTime", ptStr, sizeof( ptStr ) );
 					ptMs = LS_ParseLssTime( ptStr );
 
-					if ( !LS_HasAttemptId( mode, diffIdx, ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0, ( mode == LS_MODE_IL ) ? mapIdx : -1, attId ) ) {
+					if ( !LS_HasAttemptId( mode, diffIdx, ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0, ( mode == LS_MODE_IL ) ? mapIdx : -1, variant, attId ) ) {
 						LS_ResetAttemptsEnsure( ls.numResetAttempts + 1 );
 						{
 						lsResetAttempt_t *ra = &ls.resetAttempts[ls.numResetAttempts];
 						ra->attemptId  = attId;
 						ra->difficulty = diffIdx + 1;
 						ra->mode       = mode;
+						ra->categoryVariant = variant;
 						ra->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
 						ra->mapIdx     = ( mode == LS_MODE_IL ) ? mapIdx : -1;
 						startStr[0] = '\0'; endStr[0] = '\0';
@@ -3453,14 +3534,14 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 		/* Store completions and PB */
 		switch ( mode ) {
 		case LS_MODE_FULLGAME:
-			ls.fgCompletions[diffIdx] = completions;
-			ls.fgPB[diffIdx]    = bestIGT;
-			ls.fgPBRgt[diffIdx] = bestRGT;
+			ls.fgCompletions[slot] = completions;
+			ls.fgPB[slot]    = bestIGT;
+			ls.fgPBRgt[slot] = bestRGT;
 			break;
 		case LS_MODE_MISSION:
-			ls.msCompletions[missionGroup][diffIdx] = completions;
-			ls.msPB[missionGroup][diffIdx]    = bestIGT;
-			ls.msPBRgt[missionGroup][diffIdx] = bestRGT;
+			ls.msCompletions[missionGroup][slot] = completions;
+			ls.msPB[missionGroup][slot]    = bestIGT;
+			ls.msPBRgt[missionGroup][slot] = bestRGT;
 			break;
 		case LS_MODE_IL:
 			ls.splits[mapIdx].d[slot].totalCompletions = completions;
@@ -3489,6 +3570,7 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 			int k, maxId = 0;
 			for ( k = 0; k < ls.numHistoryRuns; k++ ) {
 				if ( ls.history[k].mode != mode ) continue;
+				if ( ls.history[k].categoryVariant != variant ) continue;
 				if ( LS_DiffIdx( ls.history[k].difficulty ) != diffIdx ) continue;
 				if ( mode == LS_MODE_MISSION && ls.history[k].missionNum != missionGroup + 1 ) continue;
 				if ( mode == LS_MODE_IL && ls.history[k].mapIdx != mapIdx ) continue;
@@ -3502,6 +3584,7 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 				for ( k = 0; k < ls.numHistoryRuns; k++ ) {
 					int aid = ls.history[k].attemptId;
 					if ( ls.history[k].mode != mode ) continue;
+					if ( ls.history[k].categoryVariant != variant ) continue;
 					if ( LS_DiffIdx( ls.history[k].difficulty ) != diffIdx ) continue;
 					if ( mode == LS_MODE_MISSION && ls.history[k].missionNum != missionGroup + 1 ) continue;
 					if ( mode == LS_MODE_IL && ls.history[k].mapIdx != mapIdx ) continue;
@@ -3615,6 +3698,7 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 								int k;
 								for ( k = 0; k < ls.numHistoryRuns; k++ ) {
 									if ( ls.history[k].mode != mode ) continue;
+									if ( ls.history[k].categoryVariant != variant ) continue;
 									if ( LS_DiffIdx( ls.history[k].difficulty ) != diffIdx ) continue;
 									if ( mode == LS_MODE_MISSION && ls.history[k].missionNum != missionGroup + 1 ) continue;
 									if ( mode == LS_MODE_IL && ls.history[k].mapIdx != mapIdx ) continue;
@@ -3636,7 +3720,7 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 								/* Orphan: id matches a reset attempt (partial run).
 								   Store for round-trip preservation. */
 								if ( ( hasGT && gtMs > 0 ) || ( hasRT && rtMs > 0 ) ) {
-									if ( LS_HasOrphanSegTime( mode, diffIdx, ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0, ( mode == LS_MODE_IL ) ? mapIdx : -1, timeId, segN ) ) {
+									if ( LS_HasOrphanSegTime( mode, diffIdx, ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0, ( mode == LS_MODE_IL ) ? mapIdx : -1, variant, timeId, segN ) ) {
 										tp = timeEnd + 7;
 										continue;
 									}
@@ -3649,6 +3733,7 @@ static void LS_ReadLss( int mode, int diffIdx, int missionGroup, int mapIdx, qbo
 										o->realTimeMs = hasRT ? rtMs : 0;
 										o->mode       = mode;
 										o->diffIdx    = diffIdx;
+										o->categoryVariant = variant;
 										o->missionNum = ( mode == LS_MODE_MISSION ) ? missionGroup + 1 : 0;
 										o->mapIdx     = ( mode == LS_MODE_IL ) ? mapIdx : -1;
 										ls.numOrphanSegTimes++;
@@ -3802,17 +3887,18 @@ static void LS_LoadState( void ) {
 static void LS_Save( void ) {
 	int di = LS_DiffIdx( ls.currentDifficulty );
 	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	qboolean hl1 = LS_HL1ModeActive();
 
 	/* Save the .lss for the current category */
 	switch ( ls.runMode ) {
 	case LS_MODE_FULLGAME:
-		LS_WriteLss( LS_MODE_FULLGAME, di, -1, -1, p100 );
+		LS_WriteLss( LS_MODE_FULLGAME, di, -1, -1, p100, hl1 );
 		break;
 	case LS_MODE_MISSION:
-		LS_WriteLss( LS_MODE_MISSION, di, ls.runMission - 1, -1, p100 );
+		LS_WriteLss( LS_MODE_MISSION, di, ls.runMission - 1, -1, p100, hl1 );
 		break;
 	case LS_MODE_IL:
-		LS_WriteLss( LS_MODE_IL, di, -1, ls.modeFirstIdx, p100 );
+		LS_WriteLss( LS_MODE_IL, di, -1, ls.modeFirstIdx, p100, hl1 );
 		break;
 	}
 
@@ -3822,26 +3908,31 @@ static void LS_Save( void ) {
 
 /* Save ALL categories that have data (for reset-bests, shutdown, etc.) */
 static void LS_SaveAll( void ) {
-	int di, gi, mi;
-	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	int di, gi, mi, variant;
+	qboolean p100, hl1;
 
-	/* Fullgame: 3 difficulties */
-	for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-		LS_WriteLss( LS_MODE_FULLGAME, di, -1, -1, p100 );
-	}
+	for ( variant = 0; variant < LS_NUM_CATEGORY_VARIANTS; variant++ ) {
+		p100 = ( variant & 1 ) ? qtrue : qfalse;
+		hl1 = ( variant & 2 ) ? qtrue : qfalse;
 
-	/* Mission: 5 groups x 3 difficulties */
-	for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
+		/* Fullgame: 3 difficulties */
 		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-			LS_WriteLss( LS_MODE_MISSION, di, gi, -1, p100 );
+			LS_WriteLss( LS_MODE_FULLGAME, di, -1, -1, p100, hl1 );
 		}
-	}
 
-	/* IL: each non-cutscene map x 3 difficulties */
-	for ( mi = 0; mi < ls.numMaps; mi++ ) {
-		if ( ls.splits[mi].cutscene ) continue;
-		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-			LS_WriteLss( LS_MODE_IL, di, -1, mi, p100 );
+		/* Mission: 5 groups x 3 difficulties */
+		for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
+			for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+				LS_WriteLss( LS_MODE_MISSION, di, gi, -1, p100, hl1 );
+			}
+		}
+
+		/* IL: each non-cutscene map x 3 difficulties */
+		for ( mi = 0; mi < ls.numMaps; mi++ ) {
+			if ( ls.splits[mi].cutscene ) continue;
+			for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+				LS_WriteLss( LS_MODE_IL, di, -1, mi, p100, hl1 );
+			}
 		}
 	}
 
@@ -3858,50 +3949,55 @@ static void LS_SaveHistory( void ) {
    other modes are loaded on demand when the user switches to them.
    This avoids a 30+ second freeze when many large .lss files exist.
    ================================================================= */
-static qboolean lssLoadedFg = qfalse;   /* fullgame files loaded */
-static qboolean lssLoadedMs = qfalse;   /* mission files loaded */
-static qboolean lssLoadedIl = qfalse;   /* IL files loaded */
+static qboolean lssLoadedFg[LS_NUM_CATEGORY_VARIANTS];   /* fullgame files loaded */
+static qboolean lssLoadedMs[LS_NUM_CATEGORY_VARIANTS];   /* mission files loaded */
+static qboolean lssLoadedIl[LS_NUM_CATEGORY_VARIANTS];   /* IL files loaded */
 
 /* Load .lss files for a specific mode (if not already loaded). */
-static void LS_LoadMode( int mode ) {
+static void LS_LoadModeVariant( int mode, qboolean p100, qboolean hl1 ) {
 	int di, gi, mi;
-	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	int variant = LS_CategoryVariant( p100, hl1 );
 
 	switch ( mode ) {
 	case LS_MODE_FULLGAME:
-		if ( lssLoadedFg ) return;
+		if ( lssLoadedFg[variant] ) return;
 		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-			LS_ReadLss( LS_MODE_FULLGAME, di, -1, -1, p100 );
+			LS_ReadLss( LS_MODE_FULLGAME, di, -1, -1, p100, hl1 );
 		}
-		lssLoadedFg = qtrue;
+		lssLoadedFg[variant] = qtrue;
 		break;
 	case LS_MODE_MISSION:
-		if ( lssLoadedMs ) return;
+		if ( lssLoadedMs[variant] ) return;
 		for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
 			for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-				LS_ReadLss( LS_MODE_MISSION, di, gi, -1, p100 );
+				LS_ReadLss( LS_MODE_MISSION, di, gi, -1, p100, hl1 );
 			}
 		}
-		lssLoadedMs = qtrue;
+		lssLoadedMs[variant] = qtrue;
 		break;
 	case LS_MODE_IL:
-		if ( lssLoadedIl ) return;
+		if ( lssLoadedIl[variant] ) return;
 		for ( mi = 0; mi < ls.numMaps; mi++ ) {
 			if ( ls.splits[mi].cutscene ) continue;
 			for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
-				LS_ReadLss( LS_MODE_IL, di, -1, mi, p100 );
+				LS_ReadLss( LS_MODE_IL, di, -1, mi, p100, hl1 );
 			}
 		}
-		lssLoadedIl = qtrue;
+		lssLoadedIl[variant] = qtrue;
 		break;
 	}
 }
 
+static void LS_LoadMode( int mode ) {
+	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	LS_LoadModeVariant( mode, p100, LS_HL1ModeActive() );
+}
+
 /* Reset lazy-loading flags (on 100% toggle or full reload). */
 static void LS_ResetLoadedFlags( void ) {
-	lssLoadedFg = qfalse;
-	lssLoadedMs = qfalse;
-	lssLoadedIl = qfalse;
+	memset( lssLoadedFg, 0, sizeof( lssLoadedFg ) );
+	memset( lssLoadedMs, 0, sizeof( lssLoadedMs ) );
+	memset( lssLoadedIl, 0, sizeof( lssLoadedIl ) );
 }
 
 /* Load state + active mode's .lss files (lazy: others on demand). */
@@ -4217,17 +4313,18 @@ static void LS_DoResetSaveEx( qboolean fromExternal ) {
 
 	/* Record as a reset attempt if a run was active but not finished. */
 	if ( ls.active && !ls.runFinished ) {
-		int di = LS_CurDiffIdx();
+		int variant = LS_CurCategoryVariant();
 		LS_ResetAttemptsEnsure( ls.numResetAttempts + 1 );
 		{
 			lsResetAttempt_t *ra = &ls.resetAttempts[ls.numResetAttempts];
 			ra->mode       = ls.runMode;
 			ra->difficulty = ls.currentDifficulty;
+			ra->categoryVariant = variant;
 			ra->missionNum = ls.runMission;
 			ra->mapIdx     = ( ls.runMode == LS_MODE_IL ) ? ls.modeFirstIdx : -1;
 			ra->endTime    = time( NULL );
 			ra->startTime  = ra->endTime - ( ( Sys_Milliseconds() - ls.runStartRealMs ) / 1000 );
-			ra->attemptId  = LS_MaxAttemptId( ls.runMode, di, ls.runMission, ra->mapIdx ) + 1;
+			ra->attemptId  = LS_MaxAttemptId( ls.runMode, LS_DiffIdx( ls.currentDifficulty ), ls.runMission, ra->mapIdx, variant ) + 1;
 			ra->isStartedSynced = qtrue;
 			ra->isEndedSynced   = qtrue;
 			ra->pauseTimeMs     = 0;
@@ -4711,9 +4808,11 @@ static void LS_ResetBests_f( void ) {
 	Com_Printf( "^2LiveSplit: All stats & bests reset\n" );
 
 	for ( i = 0; i < ls.numMaps; i++ ) {
-		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+		for ( di = 0; di < LS_TOTAL_DIFF_SLOTS; di++ ) {
 			ls.splits[i].d[di].bestTimeMs       = 0;
+			ls.splits[i].d[di].bestRealTimeMs   = 0;
 			ls.splits[i].d[di].pbSegmentMs      = 0;
+			ls.splits[i].d[di].pbRealSegmentMs  = 0;
 			ls.splits[i].d[di].totalAttempts     = 0;
 			ls.splits[i].d[di].totalCompletions  = 0;
 		}
@@ -4724,7 +4823,7 @@ static void LS_ResetBests_f( void ) {
 		ls.splits[i].goldFlashMs   = 0;
 	}
 
-	for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+	for ( di = 0; di < LS_TOTAL_DIFF_SLOTS; di++ ) {
 		ls.fgAttempts[di]    = 0;
 		ls.fgCompletions[di] = 0;
 		ls.fgPB[di]          = 0;
@@ -4732,7 +4831,7 @@ static void LS_ResetBests_f( void ) {
 	}
 
 	for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
-		for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+		for ( di = 0; di < LS_TOTAL_DIFF_SLOTS; di++ ) {
 			ls.msAttempts[gi][di]    = 0;
 			ls.msCompletions[gi][di] = 0;
 			ls.msPB[gi][di]          = 0;
@@ -5699,7 +5798,7 @@ static void LS_GhostOnGoldSplit( const char *mapname ) {
    switch mode/difficulty/mission/page and reset individual golds.
    ===================================================================== */
 
-#define SV_ROWS_PER_PAGE 15
+#define SV_ROWS_PER_PAGE LS_MAX_MAPS
 
 /* Maps each visible display row -> split index in ls.splits[] */
 static int  sv_rowMap[SV_ROWS_PER_PAGE];
@@ -5707,18 +5806,132 @@ static int  sv_numRows;           /* rows populated on current page */
 static int  sv_viewMode   = 0;    /* LS_MODE_FULLGAME/MISSION/IL */
 static int  sv_viewDiff   = 2;    /* g_gameskill 1-3 */
 static int  sv_viewMs     = 1;    /* mission group 1-5 */
+static int  sv_viewVariant = 0;   /* bit 0 = 100%, bit 1 = HL1 */
 static int  sv_curPage    = 0;
 static int  sv_totalPages = 1;
 
-/* Compute diff slot: mode * 3 + (skill-1) */
+static qboolean SV_ViewPct100( void ) {
+	return ( sv_viewVariant & 1 ) ? qtrue : qfalse;
+}
+
+static qboolean SV_ViewHL1( void ) {
+	return ( sv_viewVariant & 2 ) ? qtrue : qfalse;
+}
+
+static const char *SV_ViewVariantName( void ) {
+	switch ( sv_viewVariant & 3 ) {
+	case 1: return "100%";
+	case 2: return "HL1 Any%";
+	case 3: return "HL1 100%";
+	default: return "Any%";
+	}
+}
+
+/* Compute variant-aware diff slot */
 static int SV_DiffSlot( void ) {
 	int skill = sv_viewDiff;
 	int mode  = sv_viewMode;
-	if ( skill < 1 ) skill = 1;
-	if ( skill > 3 ) skill = 3;
-	if ( mode < 0 )  mode  = 0;
-	if ( mode >= LS_NUM_MODES ) mode = LS_NUM_MODES - 1;
-	return mode * LS_MAX_DIFFICULTIES + ( skill - 1 );
+	return LS_DiffSlotFor( mode, skill - 1, SV_ViewPct100(), SV_ViewHL1() );
+}
+
+#define SV_PB_CHART_MAX_POINTS 24
+
+typedef struct {
+	int attemptId;
+	int timeMs;
+} svPbChartRun_t;
+
+static int SV_PbChartCompareRuns( const void *a, const void *b ) {
+	const svPbChartRun_t *ra = (const svPbChartRun_t *)a;
+	const svPbChartRun_t *rb = (const svPbChartRun_t *)b;
+	if ( ra->attemptId < rb->attemptId ) return -1;
+	if ( ra->attemptId > rb->attemptId ) return 1;
+	if ( ra->timeMs < rb->timeMs ) return -1;
+	if ( ra->timeMs > rb->timeMs ) return 1;
+	return 0;
+}
+
+static qboolean SV_HistoryRunMatchesView( const lsRunHistory_t *r ) {
+	int viewDiff = sv_viewDiff - 1;
+	if ( !r ) return qfalse;
+	if ( viewDiff < 0 ) viewDiff = 0;
+	if ( viewDiff >= LS_MAX_DIFFICULTIES ) viewDiff = LS_MAX_DIFFICULTIES - 1;
+	if ( r->mode != sv_viewMode ) return qfalse;
+	if ( r->categoryVariant != ( sv_viewVariant & 3 ) ) return qfalse;
+	if ( LS_DiffIdx( r->difficulty ) != viewDiff ) return qfalse;
+	if ( sv_viewMode == LS_MODE_MISSION && r->missionNum != sv_viewMs ) return qfalse;
+	return qtrue;
+}
+
+static void SV_BuildPbChart( void ) {
+	svPbChartRun_t *runs;
+	int *pbs;
+	int runCount = 0;
+	int pbCount = 0;
+	int i, bestMs, outCount;
+	char chart[256];
+	int len = 0;
+
+	Cvar_Set( "ls_sv_pb_chart", "" );
+	Cvar_SetValue( "ls_sv_pb_chart_count", 0 );
+
+	if ( ls.numHistoryRuns <= 0 || !ls.history ) return;
+
+	runs = (svPbChartRun_t *)Z_Malloc( sizeof( *runs ) * ls.numHistoryRuns );
+	pbs = (int *)Z_Malloc( sizeof( *pbs ) * ls.numHistoryRuns );
+	if ( !runs || !pbs ) {
+		if ( runs ) Z_Free( runs );
+		if ( pbs ) Z_Free( pbs );
+		return;
+	}
+
+	for ( i = 0; i < ls.numHistoryRuns; i++ ) {
+		const lsRunHistory_t *r = &ls.history[i];
+		if ( !SV_HistoryRunMatchesView( r ) ) continue;
+		if ( r->totalIGTMs <= 0 ) continue;
+		runs[runCount].attemptId = r->attemptId;
+		runs[runCount].timeMs = r->totalIGTMs;
+		runCount++;
+	}
+
+	if ( runCount <= 0 ) {
+		Z_Free( runs );
+		Z_Free( pbs );
+		return;
+	}
+
+	qsort( runs, runCount, sizeof( runs[0] ), SV_PbChartCompareRuns );
+	bestMs = 0;
+	for ( i = 0; i < runCount; i++ ) {
+		if ( bestMs <= 0 || runs[i].timeMs < bestMs ) {
+			bestMs = runs[i].timeMs;
+			pbs[pbCount++] = bestMs;
+		}
+	}
+
+	if ( pbCount <= 0 ) {
+		Z_Free( runs );
+		Z_Free( pbs );
+		return;
+	}
+
+	chart[0] = '\0';
+	outCount = pbCount < SV_PB_CHART_MAX_POINTS ? pbCount : SV_PB_CHART_MAX_POINTS;
+	for ( i = 0; i < outCount; i++ ) {
+		int src = ( pbCount <= SV_PB_CHART_MAX_POINTS ) ? i : ( i * ( pbCount - 1 ) ) / ( SV_PB_CHART_MAX_POINTS - 1 );
+		char entry[16];
+		int entryLen;
+		Com_sprintf( entry, sizeof( entry ), "%s%d", i > 0 ? "," : "", pbs[src] );
+		entryLen = (int)strlen( entry );
+		if ( len + entryLen >= (int)sizeof( chart ) - 1 ) break;
+		Q_strcat( chart, sizeof( chart ), entry );
+		len += entryLen;
+	}
+
+	Cvar_Set( "ls_sv_pb_chart", chart );
+	Cvar_SetValue( "ls_sv_pb_chart_count", outCount );
+	Z_Free( runs );
+	Z_Free( pbs );
 }
 
 /* Gather visible (non-cutscene) split indices for the viewed category */
@@ -5771,21 +5984,18 @@ static void SV_Refresh( void ) {
 
 	if ( !ls.initialized ) return;
 
-	/* Ensure the viewed mode's .lss files are loaded (lazy) */
-	LS_LoadMode( sv_viewMode );
+	/* Ensure the viewed mode/category variant's .lss files are loaded (lazy) */
+	LS_LoadModeVariant( sv_viewMode, SV_ViewPct100(), SV_ViewHL1() );
 
 	di = SV_DiffSlot();
 
 	SV_GatherVisible();
 
-	/* Pagination */
-	sv_totalPages = ( sv_allVisN + SV_ROWS_PER_PAGE - 1 ) / SV_ROWS_PER_PAGE;
-	if ( sv_totalPages < 1 ) sv_totalPages = 1;
-	if ( sv_curPage >= sv_totalPages ) sv_curPage = sv_totalPages - 1;
-	if ( sv_curPage < 0 ) sv_curPage = 0;
-
-	pageStart = sv_curPage * SV_ROWS_PER_PAGE;
-	pageEnd   = pageStart + SV_ROWS_PER_PAGE;
+	/* Show the whole viewed category; the ImGui page scrolls as one surface. */
+	sv_totalPages = 1;
+	sv_curPage = 0;
+	pageStart = 0;
+	pageEnd   = sv_allVisN;
 	if ( pageEnd > sv_allVisN ) pageEnd = sv_allVisN;
 
 	/* Title */
@@ -5807,42 +6017,54 @@ static void SV_Refresh( void ) {
 	default: diffName = "Bring 'em on!"; break;
 	}
 
-	Com_sprintf( buf, sizeof( buf ), "%s - %s", modeName, diffName );
+	Com_sprintf( buf, sizeof( buf ), "%s - %s - %s", modeName, SV_ViewVariantName(), diffName );
 	Cvar_Set( "ls_sv_title", buf );
 
 	/* Category stats */
 	{
-		int att = 0, comp = 0, pb = 0, pbRgt = 0;
-		char pbBuf[32], rgtBuf[32];
+		int att = 0, comp = 0, pb = 0, pbRgt = 0, goldCount = 0;
+		char pbBuf[32], rgtBuf[32], sobBuf[32], rateBuf[32];
+		int sobMs = 0;
+		qboolean hasSob = qfalse;
 
 		switch ( sv_viewMode ) {
 		case LS_MODE_MISSION: {
 			int gi = sv_viewMs - 1;
-			int dbase = sv_viewDiff - 1;
 			if ( gi < 0 ) gi = 0;
 			if ( gi >= LS_NUM_MISSION_GROUPS ) gi = LS_NUM_MISSION_GROUPS - 1;
-			if ( dbase < 0 ) dbase = 0;
-			if ( dbase >= LS_MAX_DIFFICULTIES ) dbase = LS_MAX_DIFFICULTIES - 1;
-			att  = ls.msAttempts[gi][dbase];
-			comp = ls.msCompletions[gi][dbase];
-			pb   = ls.msPB[gi][dbase];
-			pbRgt = ls.msPBRgt[gi][dbase];
+			att  = ls.msAttempts[gi][di];
+			comp = ls.msCompletions[gi][di];
+			pb   = ls.msPB[gi][di];
+			pbRgt = ls.msPBRgt[gi][di];
 			break;
 		}
 		case LS_MODE_IL:
-			/* IL PB is per-split; show aggregate attempts */
 			att = 0; comp = 0; pb = 0; pbRgt = 0;
+			for ( i = 0; i < sv_allVisN; i++ ) {
+				int si = sv_allVis[i];
+				att += ls.splits[si].d[di].totalAttempts;
+				comp += ls.splits[si].d[di].totalCompletions;
+			}
 			break;
 		default: {
-			int dbase = sv_viewDiff - 1;
-			if ( dbase < 0 ) dbase = 0;
-			if ( dbase >= LS_MAX_DIFFICULTIES ) dbase = LS_MAX_DIFFICULTIES - 1;
-			att   = ls.fgAttempts[dbase];
-			comp  = ls.fgCompletions[dbase];
-			pb    = ls.fgPB[dbase];
-			pbRgt = ls.fgPBRgt[dbase];
+			att   = ls.fgAttempts[di];
+			comp  = ls.fgCompletions[di];
+			pb    = ls.fgPB[di];
+			pbRgt = ls.fgPBRgt[di];
 			break;
 		}
+		}
+
+		hasSob = qtrue;
+		for ( i = 0; i < sv_allVisN; i++ ) {
+			int si = sv_allVis[i];
+			int g = ls.splits[si].d[di].bestTimeMs;
+			if ( g > 0 ) {
+				sobMs += g;
+				goldCount++;
+			} else {
+				hasSob = qfalse;
+			}
 		}
 
 		if ( pb > 0 ) LS_FormatTime( pb, pbBuf, sizeof( pbBuf ) );
@@ -5851,59 +6073,32 @@ static void SV_Refresh( void ) {
 		if ( pbRgt > 0 ) LS_FormatTime( pbRgt, rgtBuf, sizeof( rgtBuf ) );
 		else Q_strncpyz( rgtBuf, "---", sizeof( rgtBuf ) );
 
-		if ( sv_viewMode == LS_MODE_IL ) {
-			Com_sprintf( buf, sizeof( buf ), "Per-split PBs shown below" );
+		if ( hasSob && sobMs > 0 ) LS_FormatTime( sobMs, sobBuf, sizeof( sobBuf ) );
+		else Q_strncpyz( sobBuf, "---", sizeof( sobBuf ) );
+
+		if ( att > 0 ) {
+			Com_sprintf( rateBuf, sizeof( rateBuf ), "%d%%", ( comp * 100 ) / att );
 		} else {
-			int sobMs = 0;
-			qboolean hasSob = qfalse;
-			char sobBuf[32];
-
-			/* Calculate Sum of Best for the viewed category */
-			{
-				int si, first = 0, last = ls.numMaps - 1;
-				hasSob = qtrue;
-				switch ( sv_viewMode ) {
-				case LS_MODE_MISSION: {
-					int ms = sv_viewMs;
-					if ( ms < 1 ) ms = 1;
-					if ( ms > LS_NUM_MISSION_GROUPS ) ms = LS_NUM_MISSION_GROUPS;
-					for ( si = 0; si < ls.numMaps; si++ ) {
-						int grpFirst = ls_missionGroups[ms - 1].firstMission;
-						int grpLast  = ls_missionGroups[ms - 1].lastMission;
-						if ( ls.splits[si].mission >= grpFirst &&
-							 ls.splits[si].mission <= grpLast &&
-							 !ls.splits[si].cutscene ) {
-							int g = ls.splits[si].d[di].bestTimeMs;
-							if ( g > 0 ) sobMs += g;
-							else hasSob = qfalse;
-						}
-					}
-					break;
-				}
-				default:
-					for ( si = first; si <= last && si < ls.numMaps; si++ ) {
-						if ( !ls.splits[si].cutscene ) {
-							int g = ls.splits[si].d[di].bestTimeMs;
-							if ( g > 0 ) sobMs += g;
-							else hasSob = qfalse;
-						}
-					}
-					break;
-				}
-			}
-
-			if ( hasSob && sobMs > 0 ) LS_FormatTime( sobMs, sobBuf, sizeof( sobBuf ) );
-			else Q_strncpyz( sobBuf, "---", sizeof( sobBuf ) );
-
-			Com_sprintf( buf, sizeof( buf ),
-				"PB: %s  SOB: %s  Att: %d  Comp: %d",
-				pbBuf, sobBuf, att, comp );
+			Q_strncpyz( rateBuf, "---", sizeof( rateBuf ) );
 		}
-		Cvar_Set( "ls_sv_stats", buf );
-	}
 
-	/* Page indicator */
-	Com_sprintf( buf, sizeof( buf ), "Page %d / %d", sv_curPage + 1, sv_totalPages );
+		Com_sprintf( buf, sizeof( buf ),
+			"PB: %s  RGT PB: %s  SOB: %s  Att: %d  Comp: %d  Rate: %s  Golds: %d/%d",
+			pbBuf, rgtBuf, sobBuf, att, comp, rateBuf, goldCount, sv_allVisN );
+		Cvar_Set( "ls_sv_stats", buf );
+		Cvar_Set( "ls_sv_pb", pbBuf );
+		Cvar_Set( "ls_sv_rgt_pb", rgtBuf );
+		Cvar_Set( "ls_sv_sob", sobBuf );
+		Cvar_SetValue( "ls_sv_attempts", att );
+		Cvar_SetValue( "ls_sv_completions", comp );
+		Cvar_Set( "ls_sv_completion_rate", rateBuf );
+		Cvar_SetValue( "ls_sv_golds", goldCount );
+		Cvar_SetValue( "ls_sv_total_rows", sv_allVisN );
+	}
+	SV_BuildPbChart();
+
+	/* Row indicator */
+	Com_sprintf( buf, sizeof( buf ), "%d rows", sv_allVisN );
 	Cvar_Set( "ls_sv_pages", buf );
 
 	/* Populate rows */
@@ -5928,7 +6123,7 @@ static void SV_Refresh( void ) {
 			if ( pbseg > 0 ) LS_FormatTime( pbseg, pbBuf, sizeof( pbBuf ) );
 			else Q_strncpyz( pbBuf, "---", sizeof( pbBuf ) );
 
-			Com_sprintf( buf, sizeof( buf ), "%-11s %-10s %-10s %3d/%-3d",
+			Com_sprintf( buf, sizeof( buf ), "%s|%s|%s|%d|%d",
 				name, goldBuf, pbBuf, att, comp );
 			Cvar_Set( rowCvar, buf );
 			sv_rowMap[row] = si;
@@ -5959,6 +6154,7 @@ static void LS_SvDiff_f( void ) {
 	sv_viewDiff = atoi( Cmd_Argv( 1 ) );
 	if ( sv_viewDiff < 1 ) sv_viewDiff = 1;
 	if ( sv_viewDiff > 3 ) sv_viewDiff = 3;
+	Cvar_SetValue( "ls_sv_diff", sv_viewDiff );
 	sv_curPage = 0;
 	SV_Refresh();
 }
@@ -5972,32 +6168,91 @@ static void LS_SvMission_f( void ) {
 	SV_Refresh();
 }
 
+static void LS_SvVariant_f( void ) {
+	if ( Cmd_Argc() < 2 ) return;
+	sv_viewVariant = atoi( Cmd_Argv( 1 ) ) & 3;
+	Cvar_SetValue( "ls_sv_variant", sv_viewVariant );
+	sv_curPage = 0;
+	SV_Refresh();
+}
+
 static void LS_SvPageNext_f( void ) {
-	if ( sv_curPage < sv_totalPages - 1 ) {
-		sv_curPage++;
-		SV_Refresh();
-	}
+	SV_Refresh();
 }
 
 static void LS_SvPagePrev_f( void ) {
-	if ( sv_curPage > 0 ) {
-		sv_curPage--;
-		SV_Refresh();
-	}
+	SV_Refresh();
 }
 
 /* Build .lss path for the currently viewed SV category and back it up */
-static void SV_BackupCurrentLss( void ) {
+static void SV_BackupCurrentLss( int rowMapIdx ) {
 	char lssPath[256];
 	int  diffIdx = sv_viewDiff - 1;
 	int  msGroup = sv_viewMs - 1;
-	qboolean p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	qboolean p100 = SV_ViewPct100();
+	qboolean hl1 = SV_ViewHL1();
+	int mapIdx = ( sv_viewMode == LS_MODE_IL ) ? rowMapIdx : -1;
 	if ( diffIdx < 0 ) diffIdx = 0;
 	if ( diffIdx >= LS_MAX_DIFFICULTIES ) diffIdx = LS_MAX_DIFFICULTIES - 1;
 	if ( msGroup < 0 ) msGroup = 0;
 	if ( msGroup >= LS_NUM_MISSION_GROUPS ) msGroup = LS_NUM_MISSION_GROUPS - 1;
-	LS_GetLssPath( lssPath, sizeof( lssPath ), sv_viewMode, diffIdx, msGroup, -1, p100 );
+	LS_GetLssPath( lssPath, sizeof( lssPath ), sv_viewMode, diffIdx, msGroup, mapIdx, p100, hl1 );
 	LS_BackupFile( lssPath );
+}
+
+static void SV_SaveCurrentLss( int rowMapIdx ) {
+	int diffIdx = sv_viewDiff - 1;
+	int msGroup = sv_viewMs - 1;
+	int mapIdx = ( sv_viewMode == LS_MODE_IL ) ? rowMapIdx : -1;
+	if ( diffIdx < 0 ) diffIdx = 0;
+	if ( diffIdx >= LS_MAX_DIFFICULTIES ) diffIdx = LS_MAX_DIFFICULTIES - 1;
+	if ( msGroup < 0 ) msGroup = 0;
+	if ( msGroup >= LS_NUM_MISSION_GROUPS ) msGroup = LS_NUM_MISSION_GROUPS - 1;
+	LS_WriteLssEx( sv_viewMode, diffIdx, msGroup, mapIdx, SV_ViewPct100(), SV_ViewHL1(), qtrue );
+	LS_SaveState();
+}
+
+static qboolean SV_MatchesCurrentCategory( int mode, int diffIdx, int missionNum, int mapIdx, int variant ) {
+	int viewDiff = sv_viewDiff - 1;
+	if ( viewDiff < 0 ) viewDiff = 0;
+	if ( viewDiff >= LS_MAX_DIFFICULTIES ) viewDiff = LS_MAX_DIFFICULTIES - 1;
+	if ( mode != sv_viewMode ) return qfalse;
+	if ( diffIdx != viewDiff ) return qfalse;
+	if ( variant != ( sv_viewVariant & 3 ) ) return qfalse;
+	if ( sv_viewMode == LS_MODE_MISSION && missionNum != sv_viewMs ) return qfalse;
+	if ( sv_viewMode == LS_MODE_IL && mapIdx < 0 ) return qfalse;
+	return qtrue;
+}
+
+static void SV_PurgeCurrentCategoryHistory( void ) {
+	int i, out;
+
+	out = 0;
+	for ( i = 0; i < ls.numHistoryRuns; i++ ) {
+		lsRunHistory_t *r = &ls.history[i];
+		if ( SV_MatchesCurrentCategory( r->mode, LS_DiffIdx( r->difficulty ), r->missionNum, r->mapIdx, r->categoryVariant ) ) continue;
+		if ( out != i ) ls.history[out] = ls.history[i];
+		out++;
+	}
+	ls.numHistoryRuns = out;
+
+	out = 0;
+	for ( i = 0; i < ls.numResetAttempts; i++ ) {
+		lsResetAttempt_t *ra = &ls.resetAttempts[i];
+		if ( SV_MatchesCurrentCategory( ra->mode, LS_DiffIdx( ra->difficulty ), ra->missionNum, ra->mapIdx, ra->categoryVariant ) ) continue;
+		if ( out != i ) ls.resetAttempts[out] = ls.resetAttempts[i];
+		out++;
+	}
+	ls.numResetAttempts = out;
+
+	out = 0;
+	for ( i = 0; i < ls.numOrphanSegTimes; i++ ) {
+		lsOrphanSegTime_t *o = &ls.orphanSegTimes[i];
+		if ( SV_MatchesCurrentCategory( o->mode, o->diffIdx, o->missionNum, o->mapIdx, o->categoryVariant ) ) continue;
+		if ( out != i ) ls.orphanSegTimes[out] = ls.orphanSegTimes[i];
+		out++;
+	}
+	ls.numOrphanSegTimes = out;
 }
 
 static void LS_SvResetGold_f( void ) {
@@ -6015,11 +6270,12 @@ static void LS_SvResetGold_f( void ) {
 	if ( si < 0 || si >= ls.numMaps ) return;
 	di = SV_DiffSlot();
 
-	SV_BackupCurrentLss();
+	SV_BackupCurrentLss( si );
 	ls.splits[si].d[di].bestTimeMs = 0;
+	ls.splits[si].d[di].bestRealTimeMs = 0;
 	Com_Printf( "^2LiveSplit: Gold reset for '%s'\n",
 		ls.splits[si].displayName ? ls.splits[si].displayName : ls.splits[si].mapname );
-	LS_Save();
+	SV_SaveCurrentLss( si );
 	SV_Refresh();
 }
 
@@ -6038,11 +6294,12 @@ static void LS_SvResetPBSeg_f( void ) {
 	if ( si < 0 || si >= ls.numMaps ) return;
 	di = SV_DiffSlot();
 
-	SV_BackupCurrentLss();
+	SV_BackupCurrentLss( si );
 	ls.splits[si].d[di].pbSegmentMs = 0;
+	ls.splits[si].d[di].pbRealSegmentMs = 0;
 	Com_Printf( "^2LiveSplit: PB segment reset for '%s'\n",
 		ls.splits[si].displayName ? ls.splits[si].displayName : ls.splits[si].mapname );
-	LS_Save();
+	SV_SaveCurrentLss( si );
 	SV_Refresh();
 }
 
@@ -6061,31 +6318,38 @@ static void LS_SvResetSplitAll_f( void ) {
 	if ( si < 0 || si >= ls.numMaps ) return;
 	di = SV_DiffSlot();
 
-	SV_BackupCurrentLss();
+	SV_BackupCurrentLss( si );
 	ls.splits[si].d[di].bestTimeMs      = 0;
+	ls.splits[si].d[di].bestRealTimeMs  = 0;
 	ls.splits[si].d[di].pbSegmentMs     = 0;
+	ls.splits[si].d[di].pbRealSegmentMs = 0;
 	ls.splits[si].d[di].totalAttempts   = 0;
 	ls.splits[si].d[di].totalCompletions = 0;
 	Com_Printf( "^2LiveSplit: All stats reset for '%s'\n",
 		ls.splits[si].displayName ? ls.splits[si].displayName : ls.splits[si].mapname );
-	LS_Save();
+	SV_SaveCurrentLss( si );
 	SV_Refresh();
 }
 
 static void LS_SvResetCat_f( void ) {
-	int di, dbase, i;
-	SV_BackupCurrentLss();
+	int di, i;
 	di    = SV_DiffSlot();
-	dbase = sv_viewDiff - 1;
-	if ( dbase < 0 ) dbase = 0;
-	if ( dbase >= LS_MAX_DIFFICULTIES ) dbase = LS_MAX_DIFFICULTIES - 1;
 
 	/* Clear per-split data for all visible splits in this category */
 	SV_GatherVisible();
+	if ( sv_viewMode == LS_MODE_IL ) {
+		for ( i = 0; i < sv_allVisN; i++ ) {
+			SV_BackupCurrentLss( sv_allVis[i] );
+		}
+	} else {
+		SV_BackupCurrentLss( -1 );
+	}
 	for ( i = 0; i < sv_allVisN; i++ ) {
 		int si = sv_allVis[i];
 		ls.splits[si].d[di].bestTimeMs      = 0;
+		ls.splits[si].d[di].bestRealTimeMs  = 0;
 		ls.splits[si].d[di].pbSegmentMs     = 0;
+		ls.splits[si].d[di].pbRealSegmentMs = 0;
 		ls.splits[si].d[di].totalAttempts   = 0;
 		ls.splits[si].d[di].totalCompletions = 0;
 	}
@@ -6096,25 +6360,32 @@ static void LS_SvResetCat_f( void ) {
 		int gi = sv_viewMs - 1;
 		if ( gi < 0 ) gi = 0;
 		if ( gi >= LS_NUM_MISSION_GROUPS ) gi = LS_NUM_MISSION_GROUPS - 1;
-		ls.msAttempts[gi][dbase]    = 0;
-		ls.msCompletions[gi][dbase] = 0;
-		ls.msPB[gi][dbase]          = 0;
-		ls.msPBRgt[gi][dbase]       = 0;
+		ls.msAttempts[gi][di]    = 0;
+		ls.msCompletions[gi][di] = 0;
+		ls.msPB[gi][di]          = 0;
+		ls.msPBRgt[gi][di]       = 0;
 		break;
 	}
 	case LS_MODE_IL:
 		/* IL has no category-level stats beyond per-split */
 		break;
 	default:
-		ls.fgAttempts[dbase]    = 0;
-		ls.fgCompletions[dbase] = 0;
-		ls.fgPB[dbase]          = 0;
-		ls.fgPBRgt[dbase]       = 0;
+		ls.fgAttempts[di]    = 0;
+		ls.fgCompletions[di] = 0;
+		ls.fgPB[di]          = 0;
+		ls.fgPBRgt[di]       = 0;
 		break;
 	}
+	SV_PurgeCurrentCategoryHistory();
 
 	Com_Printf( "^2LiveSplit: Category stats reset\n" );
-	LS_Save();
+	if ( sv_viewMode == LS_MODE_IL ) {
+		for ( i = 0; i < sv_allVisN; i++ ) {
+			SV_SaveCurrentLss( sv_allVis[i] );
+		}
+	} else {
+		SV_SaveCurrentLss( -1 );
+	}
 	SV_Refresh();
 }
 
@@ -6177,9 +6448,26 @@ static void LS_Debug_f( void ) {
 static void SV_InitCvars( void ) {
 	int i;
 	char name[32];
+	cvar_t *diffCvar;
 	Cvar_Get( "ls_sv_title", "", 0 );
 	Cvar_Get( "ls_sv_stats", "", 0 );
 	Cvar_Get( "ls_sv_pages", "", 0 );
+	diffCvar = Cvar_Get( "ls_sv_diff", "3", CVAR_ARCHIVE );
+	sv_viewDiff = diffCvar ? diffCvar->integer : 3;
+	if ( sv_viewDiff < 1 ) sv_viewDiff = 1;
+	if ( sv_viewDiff > 3 ) sv_viewDiff = 3;
+	Cvar_SetValue( "ls_sv_diff", sv_viewDiff );
+	sv_viewVariant = Cvar_Get( "ls_sv_variant", "0", CVAR_ARCHIVE )->integer & 3;
+	Cvar_Get( "ls_sv_pb", "---", 0 );
+	Cvar_Get( "ls_sv_rgt_pb", "---", 0 );
+	Cvar_Get( "ls_sv_sob", "---", 0 );
+	Cvar_Get( "ls_sv_attempts", "0", 0 );
+	Cvar_Get( "ls_sv_completions", "0", 0 );
+	Cvar_Get( "ls_sv_completion_rate", "---", 0 );
+	Cvar_Get( "ls_sv_golds", "0", 0 );
+	Cvar_Get( "ls_sv_total_rows", "0", 0 );
+	Cvar_Get( "ls_sv_pb_chart", "", 0 );
+	Cvar_Get( "ls_sv_pb_chart_count", "0", 0 );
 	for ( i = 0; i < SV_ROWS_PER_PAGE; i++ ) {
 		Com_sprintf( name, sizeof( name ), "ls_sv_r%d", i );
 		Cvar_Get( name, "", 0 );
@@ -6191,6 +6479,7 @@ static void SV_InitCommands( void ) {
 	Cmd_AddCommand( "livesplit_sv_mode",       LS_SvMode_f );
 	Cmd_AddCommand( "livesplit_sv_diff",       LS_SvDiff_f );
 	Cmd_AddCommand( "livesplit_sv_mission",    LS_SvMission_f );
+	Cmd_AddCommand( "livesplit_sv_variant",    LS_SvVariant_f );
 	Cmd_AddCommand( "livesplit_sv_pgup",       LS_SvPagePrev_f );
 	Cmd_AddCommand( "livesplit_sv_pgdn",       LS_SvPageNext_f );
 	Cmd_AddCommand( "livesplit_sv_reset_gold", LS_SvResetGold_f );
@@ -6205,7 +6494,7 @@ static void SV_InitCommands( void ) {
 #define LS_RACE_MAX_PLAYERS       8
 #define LS_RACE_PROTO_VERSION     2
 #define LS_RACE_PACKET_MS         33
-#define LS_RACE_ROSTER_MS         250
+#define LS_RACE_ROSTER_MS         500
 #define LS_RACE_TIMEOUT_MS        30000
 #define LS_RACE_LOAD_TIMEOUT_MS   60000
 #define LS_RACE_LOAD_RESEND_MS    500
@@ -6215,6 +6504,9 @@ static void SV_InitCommands( void ) {
 #define LS_RACE_START_RESEND_MS   250
 #define LS_RACE_START_RESEND_WINDOW_MS 5000
 #define LS_RACE_GHOST_ALPHA       120
+#define LS_RACE_GHOST_SNAP_DIST   256.0f
+#define LS_RACE_GHOST_EXTRAPOLATE_MS 100
+#define LS_RACE_GHOST_PUBLISH_MS  16
 #define LS_RACE_CHAT_LINES        6
 #define LS_RACE_CHAT_TEXT         128
 #define LS_RACE_FOUND_MAX         4
@@ -6278,6 +6570,11 @@ typedef struct {
 	int      zoneTotal;
 	float    x, y, z, yaw, speed, pitch;
 	float    vx, vy, vz;
+	float    renderX, renderY, renderZ, renderYaw, renderSpeed, renderPitch;
+	float    smoothStartX, smoothStartY, smoothStartZ, smoothStartYaw, smoothStartSpeed, smoothStartPitch;
+	int      smoothStartMs;
+	int      smoothEndMs;
+	int      lastSampleMs;
 	int      lastHeardMs;
 } lsRacePlayer_t;
 
@@ -6302,6 +6599,8 @@ typedef struct {
 	int      hl1Movement;
 	int      autoJump;
 	int      antiCheat;
+	int      privateLobby;
+	int      queueCount;
 	int      lastHeardMs;
 	char     nick[32];
 	char     ilMap[LS_MAX_MAPNAME];
@@ -6322,9 +6621,12 @@ typedef struct {
 	int lastLoadBroadcastMs;
 	int lastCountdownBroadcastMs;
 	int lastStartBroadcastMs;
+	int lastGhostPublishMs;
 	int countdownStartMs;
 	int countdownMs;
 	int raceStartMs;
+	qboolean playerStartIssued;
+	qboolean playerStartProcessed;
 	int antiCheat;
 	int lastNoclipDisableMs;
 	qboolean startIssued;
@@ -6345,7 +6647,9 @@ typedef struct {
 	lsRaceFoundLobby_t found[LS_RACE_FOUND_MAX];
 	cvar_t *nickCvar;
 	cvar_t *ipCvar;
+	cvar_t *hostIpCvar;
 	cvar_t *portCvar;
+	cvar_t *passwordCvar;
 	cvar_t *hideIpCvar;
 	cvar_t *colorCvar;
 	cvar_t *overlayCvar;
@@ -6400,6 +6704,32 @@ static void LS_RaceLoadedCounts( int *loaded, int *total );
 static int LS_RaceCountdownRemaining( int now );
 static int LS_RaceAdrPort( netadr_t adr );
 static void LS_RaceFormatCountdown( int remainMs, char *out, int outSize );
+static void LS_RaceSendEventToHostScan( const char *kind, const char *detail );
+
+static void LS_RaceFormatRejectReason( const char *reason, char *out, int outSize ) {
+	int i;
+	if ( !out || outSize <= 0 ) return;
+	Q_strncpyz( out, reason && reason[0] ? reason : "Rejected", outSize );
+	for ( i = 0; out[i]; ++i ) {
+		if ( out[i] == '_' ) out[i] = ' ';
+	}
+}
+
+static void LS_RaceSetCvarString( cvar_t *cv, const char *value ) {
+	const char *safeValue = value ? value : "";
+	if ( !cv ) return;
+	if ( !cv->string || strcmp( cv->string, safeValue ) ) {
+		Cvar_Set( cv->name, safeValue );
+	}
+}
+
+static void LS_RaceSetCvarInt( cvar_t *cv, int value ) {
+	char text[32];
+	if ( !cv ) return;
+	if ( cv->integer == value ) return;
+	Com_sprintf( text, sizeof( text ), "%d", value );
+	Cvar_Set( cv->name, text );
+}
 
 static void LS_RaceInitPlayerDefaults( lsRacePlayer_t *p ) {
 	if ( !p ) return;
@@ -6444,6 +6774,21 @@ static void LS_RaceSanitizeToken( const char *in, char *out, int outSize ) {
 	}
 	out[o] = '\0';
 	if ( !out[0] ) Q_strncpyz( out, "Player", outSize );
+}
+
+static void LS_RaceSanitizeOptionalToken( const char *in, char *out, int outSize ) {
+	int i, o = 0;
+	if ( outSize <= 0 ) return;
+	if ( !in ) in = "";
+	for ( i = 0; in[i] && o < outSize - 1; i++ ) {
+		unsigned char ch = (unsigned char)in[i];
+		if ( ch <= ' ' || ch == '|' || ch == '\\' || ch == '"' || ch == ';' ) {
+			out[o++] = '_';
+		} else if ( ch >= 33 && ch <= 126 ) {
+			out[o++] = (char)ch;
+		}
+	}
+	out[o] = '\0';
 }
 
 static void LS_RaceReadColorCvar( int color[3] ) {
@@ -6510,10 +6855,11 @@ static void LS_RaceUpdateFoundCvars( void ) {
 	char display[128];
 	char address[64];
 	char category[64];
+	char access[32];
 
 	for ( i = 0; i < LS_RACE_FOUND_MAX; i++ ) {
 		if ( !ls_race.found[i].used ) {
-			if ( ls_race.foundCvars[i] ) Cvar_Set( ls_race.foundCvars[i]->name, "" );
+			LS_RaceSetCvarString( ls_race.foundCvars[i], "" );
 			continue;
 		}
 		count++;
@@ -6521,37 +6867,39 @@ static void LS_RaceUpdateFoundCvars( void ) {
 		LS_RaceBuildCategoryLabelFor( ls_race.found[i].mode, ls_race.found[i].mission, ls_race.found[i].percent100,
 			ls_race.found[i].difficulty, ls_race.found[i].hl1Movement, ls_race.found[i].autoJump,
 			ls_race.found[i].ilMap, category, sizeof( category ) );
+		Com_sprintf( access, sizeof( access ), "%s%s%d/%d",
+			ls_race.found[i].privateLobby ? "private | " : "",
+			ls_race.found[i].queueCount > 0 ? va( "+%dq | ", ls_race.found[i].queueCount ) : "",
+			ls_race.found[i].players, ls_race.found[i].maxPlayers );
 		if ( hideIp ) {
-			Com_sprintf( display, sizeof( display ), "%d. Address hidden | %s | %s | %d/%d", i + 1,
+			Com_sprintf( display, sizeof( display ), "%d. Address hidden | %s | %s | %s", i + 1,
 				ls_race.found[i].nick[0] ? ls_race.found[i].nick : "Host",
 				category,
-				ls_race.found[i].players, ls_race.found[i].maxPlayers );
+				access );
 		} else {
-			Com_sprintf( display, sizeof( display ), "%d. %s:%d | %s | %s | %d/%d", i + 1, address, LS_RaceAdrPort( ls_race.found[i].adr ),
+			Com_sprintf( display, sizeof( display ), "%d. %s:%d | %s | %s | %s", i + 1, address, LS_RaceAdrPort( ls_race.found[i].adr ),
 				ls_race.found[i].nick[0] ? ls_race.found[i].nick : "Host",
 				category,
-				ls_race.found[i].players, ls_race.found[i].maxPlayers );
+				access );
 		}
-		if ( ls_race.foundCvars[i] ) Cvar_Set( ls_race.foundCvars[i]->name, display );
+		LS_RaceSetCvarString( ls_race.foundCvars[i], display );
 	}
-	if ( ls_race.foundCountCvar ) Cvar_SetValue( ls_race.foundCountCvar->name, count );
+	LS_RaceSetCvarInt( ls_race.foundCountCvar, count );
 	if ( ls_race.foundStatusCvar ) {
-		if ( count > 0 ) Cvar_Set( ls_race.foundStatusCvar->name, va( "Found %d Race lobby%s", count, count == 1 ? "" : "s" ) );
-		else Cvar_Set( ls_race.foundStatusCvar->name, "No Race lobbies found yet" );
+		if ( count > 0 ) LS_RaceSetCvarString( ls_race.foundStatusCvar, va( "Found %d Race lobby%s", count, count == 1 ? "" : "s" ) );
+		else LS_RaceSetCvarString( ls_race.foundStatusCvar, "No Race lobbies found yet" );
 	}
 }
 
 static void LS_RaceClearFoundLobbies( const char *status ) {
 	memset( ls_race.found, 0, sizeof( ls_race.found ) );
 	LS_RaceUpdateFoundCvars();
-	if ( status && ls_race.foundStatusCvar ) Cvar_Set( ls_race.foundStatusCvar->name, status );
+	if ( status ) LS_RaceSetCvarString( ls_race.foundStatusCvar, status );
 }
 
 static void LS_RaceSetStatus( const char *status ) {
 	Q_strncpyz( ls_race.status, status ? status : "", sizeof( ls_race.status ) );
-	if ( ls_race.statusCvar ) {
-		Cvar_Set( ls_race.statusCvar->name, ls_race.status );
-	}
+	LS_RaceSetCvarString( ls_race.statusCvar, ls_race.status );
 }
 
 static int LS_RaceLocalCheatFlags( void ) {
@@ -6560,6 +6908,15 @@ static int LS_RaceLocalCheatFlags( void ) {
 	if ( Cvar_VariableIntegerValue( "ls_godmode" ) ) flags |= LS_RACE_CHEAT_GOD;
 	if ( cls.state >= CA_ACTIVE && cl.snap.ps.pm_type == PM_NOCLIP ) flags |= LS_RACE_CHEAT_NOCLIP;
 	return flags;
+}
+
+static void LS_RaceCheatFlagsText( int flags, char *out, int outSize ) {
+	if ( !out || outSize <= 0 ) return;
+	out[0] = '\0';
+	if ( flags & LS_RACE_CHEAT_SV_CHEATS ) { if ( out[0] ) Q_strcat( out, outSize, "," ); Q_strcat( out, outSize, "sv_cheats" ); }
+	if ( flags & LS_RACE_CHEAT_GOD ) { if ( out[0] ) Q_strcat( out, outSize, "," ); Q_strcat( out, outSize, "god" ); }
+	if ( flags & LS_RACE_CHEAT_NOCLIP ) { if ( out[0] ) Q_strcat( out, outSize, "," ); Q_strcat( out, outSize, "noclip" ); }
+	if ( !out[0] ) Q_strncpyz( out, "none", outSize );
 }
 
 static void LS_RaceBuildFlags( char *out, int outSize ) {
@@ -6579,16 +6936,50 @@ static void LS_RaceSetZeroIfEnabled( const char *name ) {
 	}
 }
 
+static void LS_RaceSetNamedCvarString( const char *name, const char *value ) {
+	char current[MAX_CVAR_VALUE_STRING];
+	const char *safeValue = value ? value : "";
+	if ( !name || !name[0] ) return;
+	Cvar_VariableStringBuffer( name, current, sizeof( current ) );
+	if ( strcmp( current, safeValue ) ) {
+		Cvar_Set( name, safeValue );
+	}
+}
+
+static void LS_RaceRestoreGameplayRenderCvars( void ) {
+	LS_RaceSetNamedCvarString( "cl_freecamActive", "0" );
+	LS_RaceSetNamedCvarString( "cg_thirdPerson", "0" );
+	LS_RaceSetNamedCvarString( "r_drawworld", "1" );
+	LS_RaceSetNamedCvarString( "r_novis", "0" );
+	LS_RaceSetNamedCvarString( "r_zfar", "0" );
+	LS_RaceSetNamedCvarString( "r_wolffog", "1" );
+}
+
 static void LS_RaceDisableProtectedOptions( void ) {
 	static const char *protectedCvars[] = {
 		"cg_drawTriggers", "cg_drawEnemies", "cg_drawItems", "cg_drawEnemySight", "cg_drawAIPath",
 		"cg_explosiveTimers", "r_drawClips", "g_triggerLog", "sp_zone_draw", "sp_zone_edit", "sp_zone_race_debug",
 		"ls_godmode"
 	};
-	int i;
+	static int lastReportedFlags = 0;
+	static int lastReportMs = 0;
+	int i, now, flags, newlyFlagged;
+	char cheatText[64];
 	if ( !ls_race.antiCheat ) {
 		ls_race.lastNoclipDisableMs = 0;
+		lastReportedFlags = 0;
 		return;
+	}
+	now = Sys_Milliseconds();
+	flags = LS_RaceLocalCheatFlags();
+	newlyFlagged = flags & ~lastReportedFlags;
+	if ( flags && ( newlyFlagged || now - lastReportMs > 5000 ) ) {
+		LS_RaceCheatFlagsText( flags, cheatText, sizeof( cheatText ) );
+		LS_RaceSendEventToHostScan( "cheat", cheatText );
+		lastReportedFlags = flags;
+		lastReportMs = now;
+	} else if ( !flags ) {
+		lastReportedFlags = 0;
 	}
 	if ( cls.state >= CA_ACTIVE && cl.snap.ps.pm_type == PM_NOCLIP ) {
 		if ( !ls_race.lastNoclipDisableMs ) {
@@ -6601,6 +6992,7 @@ static void LS_RaceDisableProtectedOptions( void ) {
 	for ( i = 0; i < (int)( sizeof( protectedCvars ) / sizeof( protectedCvars[0] ) ); i++ ) {
 		LS_RaceSetZeroIfEnabled( protectedCvars[i] );
 	}
+	LS_RaceRestoreGameplayRenderCvars();
 	LS_RaceSetZeroIfEnabled( "sv_cheats" );
 }
 
@@ -6728,11 +7120,96 @@ static int LS_RacePacketIntervalMs( void ) {
 }
 
 static int LS_RaceRosterIntervalMs( void ) {
-	return LS_RaceClampedCvarInt( ls_race.rosterMsCvar, LS_RACE_ROSTER_MS, 100, 1000 );
+	return LS_RaceClampedCvarInt( ls_race.rosterMsCvar, LS_RACE_ROSTER_MS, 33, 1000 );
 }
 
 static int LS_RaceGhostAlpha( void ) {
 	return LS_RaceClampedCvarInt( ls_race.ghostAlphaCvar, LS_RACE_GHOST_ALPHA, 0, 255 );
+}
+
+static float LS_RaceClampFloat( float value, float minValue, float maxValue ) {
+	if ( value < minValue ) return minValue;
+	if ( value > maxValue ) return maxValue;
+	return value;
+}
+
+static float LS_RaceAngleDelta( float from, float to ) {
+	float delta = to - from;
+	while ( delta > 180.0f ) delta -= 360.0f;
+	while ( delta < -180.0f ) delta += 360.0f;
+	return delta;
+}
+
+static void LS_RaceSnapPlayerRender( lsRacePlayer_t *p, int now ) {
+	if ( !p ) return;
+	p->renderX = p->smoothStartX = p->x;
+	p->renderY = p->smoothStartY = p->y;
+	p->renderZ = p->smoothStartZ = p->z;
+	p->renderYaw = p->smoothStartYaw = p->yaw;
+	p->renderPitch = p->smoothStartPitch = p->pitch;
+	p->renderSpeed = p->smoothStartSpeed = p->speed;
+	p->smoothStartMs = now;
+	p->smoothEndMs = now;
+	p->lastSampleMs = now;
+}
+
+static void LS_RaceUpdatePlayerRender( lsRacePlayer_t *p, int now ) {
+	float frac;
+	int duration;
+	if ( !p ) return;
+	if ( p->local || !p->lastSampleMs || p->smoothEndMs <= p->smoothStartMs ) {
+		p->renderX = p->x;
+		p->renderY = p->y;
+		p->renderZ = p->z;
+		p->renderYaw = p->yaw;
+		p->renderPitch = p->pitch;
+		p->renderSpeed = p->speed;
+		return;
+	}
+	duration = p->smoothEndMs - p->smoothStartMs;
+	frac = (float)( now - p->smoothStartMs ) / (float)duration;
+	frac = LS_RaceClampFloat( frac, 0.0f, 1.0f );
+	p->renderX = p->smoothStartX + ( p->x - p->smoothStartX ) * frac;
+	p->renderY = p->smoothStartY + ( p->y - p->smoothStartY ) * frac;
+	p->renderZ = p->smoothStartZ + ( p->z - p->smoothStartZ ) * frac;
+	p->renderYaw = p->smoothStartYaw + LS_RaceAngleDelta( p->smoothStartYaw, p->yaw ) * frac;
+	p->renderPitch = p->smoothStartPitch + LS_RaceAngleDelta( p->smoothStartPitch, p->pitch ) * frac;
+	p->renderSpeed = p->smoothStartSpeed + ( p->speed - p->smoothStartSpeed ) * frac;
+	if ( now > p->smoothEndMs && now - p->smoothEndMs <= LS_RACE_GHOST_EXTRAPOLATE_MS ) {
+		float extra = (float)( now - p->smoothEndMs ) * 0.001f;
+		p->renderX += p->vx * extra;
+		p->renderY += p->vy * extra;
+		p->renderZ += p->vz * extra;
+	}
+}
+
+static void LS_RaceStartPlayerSmooth( lsRacePlayer_t *p, int now ) {
+	float dx, dy, dz;
+	int interval;
+	if ( !p || p->local ) return;
+	if ( !p->lastSampleMs ) {
+		LS_RaceSnapPlayerRender( p, now );
+		return;
+	}
+	dx = p->x - p->renderX;
+	dy = p->y - p->renderY;
+	dz = p->z - p->renderZ;
+	if ( dx * dx + dy * dy + dz * dz > LS_RACE_GHOST_SNAP_DIST * LS_RACE_GHOST_SNAP_DIST ) {
+		LS_RaceSnapPlayerRender( p, now );
+		return;
+	}
+	interval = now - p->lastSampleMs;
+	if ( interval < 33 ) interval = 33;
+	if ( interval > 200 ) interval = 200;
+	p->smoothStartX = p->renderX;
+	p->smoothStartY = p->renderY;
+	p->smoothStartZ = p->renderZ;
+	p->smoothStartYaw = p->renderYaw;
+	p->smoothStartPitch = p->renderPitch;
+	p->smoothStartSpeed = p->renderSpeed;
+	p->smoothStartMs = now;
+	p->smoothEndMs = now + interval;
+	p->lastSampleMs = now;
 }
 
 static int LS_RaceSafePlayerStat( const int *values, int index ) {
@@ -6954,25 +7431,25 @@ static void LS_RaceUpdateRuntimeCvars( void ) {
 	char status[128];
 	char flags[96];
 	if ( !ls_race.initialized ) return;
-	if ( ls_race.activeCvar ) Cvar_Set( ls_race.activeCvar->name, ls_race.role == LS_RACE_ROLE_NONE ? "0" : "1" );
-	if ( ls_race.roleCvar ) Cvar_Set( ls_race.roleCvar->name, LS_RaceRoleName( ls_race.role ) );
-	if ( ls_race.stateCvar ) Cvar_Set( ls_race.stateCvar->name, LS_RaceStateName( ls_race.state ) );
+	LS_RaceSetCvarString( ls_race.activeCvar, ls_race.role == LS_RACE_ROLE_NONE ? "0" : "1" );
+	LS_RaceSetCvarString( ls_race.roleCvar, LS_RaceRoleName( ls_race.role ) );
+	LS_RaceSetCvarString( ls_race.stateCvar, LS_RaceStateName( ls_race.state ) );
 	LS_RaceBuildFlags( flags, sizeof( flags ) );
-	if ( ls_race.flagsCvar ) Cvar_Set( ls_race.flagsCvar->name, flags );
+	LS_RaceSetCvarString( ls_race.flagsCvar, flags );
 	LS_RaceBuildSortedPlayers( sorted, &count );
-	if ( ls_race.playersCvar ) Cvar_SetValue( ls_race.playersCvar->name, count );
+	LS_RaceSetCvarInt( ls_race.playersCvar, count );
 	if ( ls_race.countdownTextCvar ) {
 		char countdownText[32];
 		countdownText[0] = '\0';
 		if ( ls_race.state == LS_RACE_STATE_COUNTDOWN ) {
 			LS_RaceFormatCountdown( LS_RaceCountdownRemaining( Sys_Milliseconds() ), countdownText, sizeof( countdownText ) );
 		}
-		Cvar_Set( ls_race.countdownTextCvar->name, countdownText );
+		LS_RaceSetCvarString( ls_race.countdownTextCvar, countdownText );
 	}
 	if ( ls_race.statusCvar ) {
 		if ( ls_race.status[0] ) Q_strncpyz( status, ls_race.status, sizeof( status ) );
 		else Com_sprintf( status, sizeof( status ), "%s / %s", LS_RaceRoleName( ls_race.role ), LS_RaceStateName( ls_race.state ) );
-		Cvar_Set( ls_race.statusCvar->name, status );
+		LS_RaceSetCvarString( ls_race.statusCvar, status );
 	}
 	{
 		lsRacePlayer_t *local = LS_RaceFindPlayerBySlot( ls_race.localSlot );
@@ -6981,20 +7458,20 @@ static void LS_RaceUpdateRuntimeCvars( void ) {
 		LS_RaceLoadedCounts( &loaded, &total );
 		if ( ls_race.readyCvar ) {
 			Com_sprintf( value, sizeof( value ), "%d/%d", loaded, total );
-			Cvar_Set( ls_race.readyCvar->name, value );
+			LS_RaceSetCvarString( ls_race.readyCvar, value );
 		}
 		if ( local ) {
 			if ( local->timeMs > 0 ) LS_FormatTime( local->timeMs, value, sizeof( value ) );
 			else Q_strncpyz( value, "0.00", sizeof( value ) );
-			if ( ls_race.timerCvar ) Cvar_Set( ls_race.timerCvar->name, value );
-			if ( ls_race.stageCvar ) Cvar_Set( ls_race.stageCvar->name, local->stageName[0] ? local->stageName : "-" );
+			LS_RaceSetCvarString( ls_race.timerCvar, value );
+			LS_RaceSetCvarString( ls_race.stageCvar, local->stageName[0] ? local->stageName : "-" );
 			if ( local->stageTimeMs > 0 ) LS_FormatTime( local->stageTimeMs, value, sizeof( value ) );
 			else Q_strncpyz( value, "--", sizeof( value ) );
-			if ( ls_race.stageIgtCvar ) Cvar_Set( ls_race.stageIgtCvar->name, value );
+			LS_RaceSetCvarString( ls_race.stageIgtCvar, value );
 		} else {
-			if ( ls_race.timerCvar ) Cvar_Set( ls_race.timerCvar->name, "0.00" );
-			if ( ls_race.stageCvar ) Cvar_Set( ls_race.stageCvar->name, "-" );
-			if ( ls_race.stageIgtCvar ) Cvar_Set( ls_race.stageIgtCvar->name, "--" );
+			LS_RaceSetCvarString( ls_race.timerCvar, "0.00" );
+			LS_RaceSetCvarString( ls_race.stageCvar, "-" );
+			LS_RaceSetCvarString( ls_race.stageIgtCvar, "--" );
 		}
 	}
 }
@@ -7087,7 +7564,7 @@ void LS_RaceBuildSnapshot( lsRaceUiSnapshot_t *out ) {
 static void LS_RaceClearGhostCvars( void ) {
 	int i;
 	for ( i = 0; i < LS_RACE_MAX_PLAYERS; i++ ) {
-		if ( ls_race.ghostCvars[i] ) Cvar_Set( ls_race.ghostCvars[i]->name, "" );
+		LS_RaceSetCvarString( ls_race.ghostCvars[i], "" );
 	}
 }
 
@@ -7097,8 +7574,11 @@ static void LS_RacePublishGhostCvars( void ) {
 	char value[512];
 	if ( ls_race.role == LS_RACE_ROLE_NONE || ( ls_race.ghostsCvar && !ls_race.ghostsCvar->integer ) ) {
 		LS_RaceClearGhostCvars();
+		ls_race.lastGhostPublishMs = 0;
 		return;
 	}
+	if ( ls_race.lastGhostPublishMs && now - ls_race.lastGhostPublishMs < LS_RACE_GHOST_PUBLISH_MS ) return;
+	ls_race.lastGhostPublishMs = now;
 	localMap[0] = '\0';
 	if ( cl.mapname[0] ) LS_ExtractMapname( cl.mapname, localMap, sizeof( localMap ) );
 	for ( i = 0; i < LS_RACE_MAX_PLAYERS && ghostSlot < LS_RACE_MAX_PLAYERS; i++ ) {
@@ -7106,17 +7586,18 @@ static void LS_RacePublishGhostCvars( void ) {
 		if ( !p->used || p->local || !p->started || p->finished ) continue;
 		if ( now - p->lastHeardMs > 2500 ) continue;
 		if ( localMap[0] && p->map[0] && Q_stricmp( localMap, p->map ) ) continue;
+		LS_RaceUpdatePlayerRender( p, now );
 		Com_sprintf( value, sizeof( value ), "1 %d %d %.1f %.1f %.1f %.1f %.1f %d %d %d %d %d %d %d %d %s %d %d %.1f %.1f %.1f %.1f %d %d",
 			( p->color[0] << 16 ) | ( p->color[1] << 8 ) | p->color[2],
-			LS_RaceGhostAlpha(), p->x, p->y, p->z, p->yaw, p->speed,
+			LS_RaceGhostAlpha(), p->renderX, p->renderY, p->renderZ, p->renderYaw, p->renderSpeed,
 			p->crouched, p->health, p->armor, p->weapon, p->ammo, p->clip,
 			p->legsAnim, p->torsoAnim, p->nick, p->movementDir, p->eFlags,
-			p->pitch, p->vx, p->vy, p->vz, p->groundEntityNum, p->animMovetype );
-		Cvar_Set( ls_race.ghostCvars[ghostSlot]->name, value );
+			p->renderPitch, p->vx, p->vy, p->vz, p->groundEntityNum, p->animMovetype );
+		LS_RaceSetCvarString( ls_race.ghostCvars[ghostSlot], value );
 		ghostSlot++;
 	}
 	for ( ; ghostSlot < LS_RACE_MAX_PLAYERS; ghostSlot++ ) {
-		Cvar_Set( ls_race.ghostCvars[ghostSlot]->name, "" );
+		LS_RaceSetCvarString( ls_race.ghostCvars[ghostSlot], "" );
 	}
 }
 
@@ -7517,10 +7998,12 @@ static qboolean LS_RacePlayerAdrMatches( lsRacePlayer_t *p, netadr_t from ) {
 
 static void LS_RaceSendHelloTo( netadr_t to ) {
 	char nick[32];
+	char pass[32];
 	int color[3];
 	LS_RaceGetLocalIdentity( nick, sizeof( nick ), color );
-	NET_OutOfBandPrint( NS_CLIENT, to, "srace hello %d %s %d %d %d %d %d",
-		LS_RACE_PROTO_VERSION, nick, color[0], color[1], color[2], ls_race.session, ls_race.localSlot );
+	LS_RaceSanitizeOptionalToken( ls_race.passwordCvar ? ls_race.passwordCvar->string : "", pass, sizeof( pass ) );
+	NET_OutOfBandPrint( NS_CLIENT, to, "srace hello %d %s %d %d %d %d %d %s",
+		LS_RACE_PROTO_VERSION, nick, color[0], color[1], color[2], ls_race.session, ls_race.localSlot, pass );
 }
 
 static void LS_RaceSendHello( void ) {
@@ -7541,7 +8024,171 @@ static void LS_RaceSendHello( void ) {
 	LS_RaceSendHelloTo( ls_race.hostAdr );
 }
 
-static void LS_RaceAddFoundLobby( netadr_t adr, int session, const char *nick, int state, int players, int maxPlayers, int mode, int mission, int percent100, int difficulty, int hl1Movement, int autoJump, int antiCheat, const char *ilMap ) {
+static const char *LS_RaceHostBindIp( void ) {
+	const char *bindIp = ls_race.hostIpCvar ? ls_race.hostIpCvar->string : "localhost";
+	return bindIp && bindIp[0] ? bindIp : "localhost";
+}
+
+static qboolean LS_RaceValidateBindIp( const char *bindIp ) {
+	netadr_t adr;
+	if ( !bindIp || !bindIp[0] ) return qtrue;
+	if ( !Q_stricmp( bindIp, "localhost" ) || !Q_stricmp( bindIp, "0.0.0.0" ) || !Q_stricmp( bindIp, "*" ) ) return qtrue;
+	if ( strchr( bindIp, ':' ) ) return qfalse;
+	if ( !NET_StringToAdr( bindIp, &adr ) || adr.type != NA_IP ) {
+		return qfalse;
+	}
+	return qtrue;
+}
+
+static void LS_RaceHostSocketAddress( const char *socketIp, int port, struct sockaddr_in *address ) {
+	netadr_t adr;
+	memset( address, 0, sizeof( *address ) );
+	address->sin_family = AF_INET;
+	address->sin_port = htons( (short)port );
+	if ( !socketIp || !socketIp[0] || !Q_stricmp( socketIp, "localhost" ) || !Q_stricmp( socketIp, "0.0.0.0" ) ) {
+		address->sin_addr.s_addr = INADDR_ANY;
+		return;
+	}
+	if ( NET_StringToAdr( socketIp, &adr ) && adr.type == NA_IP ) {
+		*(int *)&address->sin_addr = *(int *)&adr.ip;
+	}
+}
+
+static qboolean LS_RaceCanBindHostSocket( const char *socketIp, int port, char *error, int errorSize ) {
+	struct sockaddr_in address;
+	int yes = 1;
+#ifdef _WIN32
+	SOCKET testSocket;
+	int err;
+#else
+	int testSocket;
+	int err;
+#endif
+	if ( error && errorSize > 0 ) error[0] = '\0';
+	LS_RaceHostSocketAddress( socketIp, port, &address );
+#ifdef _WIN32
+	testSocket = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+	if ( testSocket == INVALID_SOCKET ) {
+		err = WSAGetLastError();
+		if ( error && errorSize > 0 ) Com_sprintf( error, errorSize, "socket error %d", err );
+		return qfalse;
+	}
+	setsockopt( testSocket, SOL_SOCKET, SO_BROADCAST, (char *)&yes, sizeof( yes ) );
+	if ( bind( testSocket, (struct sockaddr *)&address, sizeof( address ) ) == SOCKET_ERROR ) {
+		err = WSAGetLastError();
+		if ( error && errorSize > 0 ) Com_sprintf( error, errorSize, "bind error %d", err );
+		closesocket( testSocket );
+		return qfalse;
+	}
+	closesocket( testSocket );
+#else
+	testSocket = socket( PF_INET, SOCK_DGRAM, IPPROTO_UDP );
+	if ( testSocket < 0 ) {
+		err = errno;
+		if ( error && errorSize > 0 ) Com_sprintf( error, errorSize, "socket error %d", err );
+		return qfalse;
+	}
+	setsockopt( testSocket, SOL_SOCKET, SO_BROADCAST, (char *)&yes, sizeof( yes ) );
+	if ( bind( testSocket, (struct sockaddr *)&address, sizeof( address ) ) < 0 ) {
+		err = errno;
+		if ( error && errorSize > 0 ) Com_sprintf( error, errorSize, "bind error %d", err );
+		close( testSocket );
+		return qfalse;
+	}
+	close( testSocket );
+#endif
+	return qtrue;
+}
+
+static void LS_RaceRestoreHostNetwork( const char *oldIp, int oldPort ) {
+	Cvar_Set( "net_ip", oldIp && oldIp[0] ? oldIp : "localhost" );
+	Cvar_SetValue( "net_port", oldPort > 0 ? oldPort : 27960 );
+	NET_Config( qfalse );
+	NET_Config( qtrue );
+}
+
+static qboolean LS_RaceApplyHostNetwork( int *actualPortOut ) {
+	char currentIp[128];
+	char bindError[64];
+	const char *bindIp = LS_RaceHostBindIp();
+	const char *socketIp;
+	int requestedPort, currentPort, actualPort;
+	qboolean restartNeeded;
+	if ( !LS_RaceValidateBindIp( bindIp ) ) {
+		LS_RaceSetStatus( "Invalid host bind IP" );
+		Com_Printf( "^1Race: invalid host bind IP '%s'\n", bindIp );
+		return qfalse;
+	}
+	socketIp = !Q_stricmp( bindIp, "*" ) ? "localhost" : bindIp;
+	requestedPort = ls_race.portCvar ? ls_race.portCvar->integer : Cvar_VariableIntegerValue( "net_port" );
+	if ( requestedPort < 1 || requestedPort > 65535 ) {
+		LS_RaceSetStatus( "Invalid host UDP port" );
+		Com_Printf( "^1Race: invalid host UDP port %d\n", requestedPort );
+		return qfalse;
+	}
+	Cvar_VariableStringBuffer( "net_ip", currentIp, sizeof( currentIp ) );
+	currentPort = Cvar_VariableIntegerValue( "net_port" );
+	if ( !LS_RaceCanBindHostSocket( socketIp, 0, bindError, sizeof( bindError ) ) ) {
+		LS_RaceSetStatus( va( "Cannot bind host IP %s (%s)", socketIp, bindError[0] ? bindError : "not local" ) );
+		Com_Printf( "^1Race: cannot bind host IP '%s': %s\n", socketIp, bindError[0] ? bindError : "not local" );
+		return qfalse;
+	}
+	if ( requestedPort != currentPort && !LS_RaceCanBindHostSocket( socketIp, requestedPort, bindError, sizeof( bindError ) ) ) {
+		LS_RaceSetStatus( va( "Cannot use UDP port %d (%s)", requestedPort, bindError[0] ? bindError : "busy" ) );
+		Com_Printf( "^1Race: cannot bind %s:%d: %s\n", socketIp, requestedPort, bindError[0] ? bindError : "busy" );
+		return qfalse;
+	}
+	restartNeeded = ( Q_stricmp( currentIp, socketIp ) || currentPort != requestedPort ) ? qtrue : qfalse;
+	Cvar_Set( "net_ip", socketIp );
+	Cvar_SetValue( "net_port", requestedPort );
+	if ( restartNeeded ) {
+		Com_Printf( "^3Race: binding host socket to %s:%d\n", socketIp, requestedPort );
+		NET_Config( qfalse );
+		NET_Config( qtrue );
+	}
+	if ( !NET_IsIPSocketOpen() ) {
+		LS_RaceSetStatus( va( "Cannot open UDP socket on %s:%d", socketIp, requestedPort ) );
+		Com_Printf( "^1Race: failed to open UDP socket on %s:%d\n", socketIp, requestedPort );
+		LS_RaceRestoreHostNetwork( currentIp, currentPort );
+		return qfalse;
+	}
+	actualPort = Cvar_VariableIntegerValue( "net_port" );
+	if ( actualPort != requestedPort ) {
+		LS_RaceSetStatus( va( "UDP port %d is unavailable", requestedPort ) );
+		Com_Printf( "^1Race: requested UDP port %d unavailable, engine opened %d instead\n", requestedPort, actualPort );
+		LS_RaceRestoreHostNetwork( currentIp, currentPort );
+		return qfalse;
+	}
+	if ( actualPortOut ) *actualPortOut = actualPort;
+	if ( ls_race.hostIpCvar && Q_stricmp( ls_race.hostIpCvar->string, socketIp ) ) Cvar_Set( ls_race.hostIpCvar->name, socketIp );
+	if ( ls_race.portCvar ) Cvar_SetValue( ls_race.portCvar->name, actualPort );
+	return qtrue;
+}
+
+static qboolean LS_RaceResolveHostAddress( const char *ip, int port, netadr_t *out ) {
+	char addrText[128];
+	if ( !ip || !ip[0] || !out ) return qfalse;
+	if ( port <= 0 ) port = 27960;
+	Com_sprintf( addrText, sizeof( addrText ), "%s:%d", ip, port );
+	if ( !NET_StringToAdr( addrText, out ) ) {
+		return qfalse;
+	}
+	return out->type == NA_IP ? qtrue : qfalse;
+}
+
+static qboolean LS_RaceSendDiscoverScanTo( const char *ip, int basePort ) {
+	netadr_t baseAdr, probeAdr;
+	int scanPort;
+	if ( !LS_RaceResolveHostAddress( ip, basePort, &baseAdr ) ) return qfalse;
+	for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
+		probeAdr = baseAdr;
+		LS_RaceSetAdrPort( &probeAdr, scanPort );
+		NET_OutOfBandPrint( NS_CLIENT, probeAdr, "srace discover %d", LS_RACE_PROTO_VERSION );
+	}
+	return qtrue;
+}
+
+static void LS_RaceAddFoundLobby( netadr_t adr, int session, const char *nick, int state, int players, int maxPlayers, int mode, int mission, int percent100, int difficulty, int hl1Movement, int autoJump, int antiCheat, const char *ilMap, int privateLobby, int queueCount ) {
 	int i, slot = -1;
 	char safeIlMap[LS_MAX_MAPNAME];
 	Q_strncpyz( safeIlMap, ilMap && ilMap[0] ? ilMap : "escape1", sizeof( safeIlMap ) );
@@ -7567,6 +8214,8 @@ static void LS_RaceAddFoundLobby( netadr_t adr, int session, const char *nick, i
 	ls_race.found[slot].hl1Movement = hl1Movement;
 	ls_race.found[slot].autoJump = autoJump;
 	ls_race.found[slot].antiCheat = antiCheat ? 1 : 0;
+	ls_race.found[slot].privateLobby = privateLobby ? 1 : 0;
+	ls_race.found[slot].queueCount = queueCount < 0 ? 0 : queueCount;
 	ls_race.found[slot].lastHeardMs = Sys_Milliseconds();
 	LS_RaceSanitizeToken( nick && nick[0] ? nick : "Host", ls_race.found[slot].nick, sizeof( ls_race.found[slot].nick ) );
 	Q_strncpyz( ls_race.found[slot].ilMap, safeIlMap, sizeof( ls_race.found[slot].ilMap ) );
@@ -7574,11 +8223,21 @@ static void LS_RaceAddFoundLobby( netadr_t adr, int session, const char *nick, i
 }
 
 static void LS_RaceRefresh_f( void ) {
-	int basePort, scanPort;
+	int basePort, directBasePort, scanPort;
 	netadr_t to;
-	LS_RaceClearFoundLobbies( "Scanning local network..." );
+	const char *ip;
+	qboolean directScan;
 	basePort = ls_race.portCvar ? ls_race.portCvar->integer : 27960;
 	if ( basePort <= 0 ) basePort = 27960;
+	ip = ls_race.ipCvar ? ls_race.ipCvar->string : "127.0.0.1";
+	directScan = LS_RaceResolveHostAddress( ip, basePort, &to );
+	directBasePort = directScan ? LS_RaceAdrPort( to ) : basePort;
+	if ( directBasePort <= 0 ) directBasePort = basePort;
+	LS_RaceClearFoundLobbies( directScan ? "Scanning LAN and host IP..." : "Scanning local network..." );
+	if ( directScan ) {
+		LS_RaceSendDiscoverScanTo( ip, directBasePort );
+		Com_Printf( "^3Race: scanning host %s on UDP ports %d-%d\n", ip, directBasePort, directBasePort + LS_RACE_PORT_SCAN_SPAN - 1 );
+	}
 	Com_Printf( "^3Race: scanning local network on UDP ports %d-%d\n", basePort, basePort + LS_RACE_PORT_SCAN_SPAN - 1 );
 	for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
 		memset( &to, 0, sizeof( to ) );
@@ -7624,7 +8283,7 @@ static void LS_RaceHandleDiscover( netadr_t from ) {
 }
 
 static void LS_RaceHandleFound( netadr_t from ) {
-	int version, session, port, state, players, maxPlayers, mode, mission, percent100, difficulty, hl1Movement, autoJump, antiCheat;
+	int version, session, port, state, players, maxPlayers, mode, mission, percent100, difficulty, hl1Movement, autoJump, antiCheat, privateLobby, queueCount;
 	char nick[32];
 	if ( Cmd_Argc() < 16 ) return;
 	version = atoi( Cmd_Argv( 2 ) );
@@ -7642,14 +8301,27 @@ static void LS_RaceHandleFound( netadr_t from ) {
 	hl1Movement = atoi( Cmd_Argv( 13 ) );
 	autoJump = atoi( Cmd_Argv( 14 ) );
 	antiCheat = Cmd_Argc() > 16 ? atoi( Cmd_Argv( 16 ) ) : 1;
-	if ( port > 0 ) LS_RaceSetAdrPort( &from, port );
-	LS_RaceAddFoundLobby( from, session, nick, state, players, maxPlayers, mode, mission, percent100, difficulty, hl1Movement, autoJump, antiCheat, Cmd_Argv( 15 ) );
+	privateLobby = Cmd_Argc() > 17 ? atoi( Cmd_Argv( 17 ) ) : 0;
+	queueCount = Cmd_Argc() > 18 ? atoi( Cmd_Argv( 18 ) ) : 0;
+	if ( port > 0 && from.type != NA_IP ) LS_RaceSetAdrPort( &from, port );
+	LS_RaceAddFoundLobby( from, session, nick, state, players, maxPlayers, mode, mission, percent100, difficulty, hl1Movement, autoJump, antiCheat, Cmd_Argv( 15 ), privateLobby, queueCount );
+}
+
+static void LS_RaceHandleQueued( netadr_t from ) {
+	int position = Cmd_Argc() > 2 ? atoi( Cmd_Argv( 2 ) ) : 0;
+	int hostState = Cmd_Argc() > 3 ? atoi( Cmd_Argv( 3 ) ) : LS_RACE_STATE_RACING;
+	if ( ls_race.role != LS_RACE_ROLE_CLIENT ) return;
+	if ( !LS_RaceHostAdrMatches( from ) ) return;
+	ls_race.lastHostPacketMs = Sys_Milliseconds();
+	if ( position < 1 ) position = 1;
+	LS_RaceSetStatus( va( "Queued #%d - %s in progress", position, LS_RaceStateName( (lsRaceState_t)hostState ) ) );
+	Com_Printf( "^3Race: queued for next lobby at %s (position %d)\n", NET_AdrToString( from ), position );
 }
 
 static void LS_RaceSendStateToHostAdr( netadr_t to, lsRacePlayer_t *p ) {
 	if ( !p ) return;
 	NET_OutOfBandPrint( NS_CLIENT, to,
-		"srace state %d %d %s %d %d %d %s %d %d %d %d %.1f %.1f %.1f %.1f %.1f %d %d %d %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+		"srace state %d %d %s %d %d %d %s %d %d %d %d %.1f %.1f %.1f %.1f %.1f %d %d %d %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %.1f %.1f %.1f %.1f %d %d",
 		ls_race.session, p->slot, p->nick, p->color[0], p->color[1], p->color[2],
 		p->map[0] ? p->map : "-", p->loaded ? 1 : 0, p->started ? 1 : 0,
 		p->finished ? 1 : 0, p->timeMs, p->x, p->y, p->z, p->yaw, p->speed,
@@ -7657,7 +8329,8 @@ static void LS_RaceSendStateToHostAdr( netadr_t to, lsRacePlayer_t *p ) {
 		p->crouched, p->health, p->armor, p->weapon, p->ammo, p->clip,
 		p->objectivesFound, p->objectivesTotal, p->zoneProgress, p->zoneTotal, p->paused ? 1 : 0,
 		p->cheatFlags, p->inMenu ? 1 : 0, p->left ? 1 : 0, p->timedOut ? 1 : 0,
-		p->legsAnim, p->torsoAnim, p->movementDir, p->eFlags );
+		p->legsAnim, p->torsoAnim, p->movementDir, p->eFlags,
+		p->pitch, p->vx, p->vy, p->vz, p->groundEntityNum, p->animMovetype );
 }
 
 static void LS_RaceSendStateToHost( void ) {
@@ -7723,6 +8396,35 @@ static void LS_RaceSendChatToHostScan( const char *text ) {
 		probeAdr = ls_race.hostAdr;
 		LS_RaceSetAdrPort( &probeAdr, scanPort );
 		LS_RaceSendChatTo( probeAdr, p->slot, p->nick, text );
+	}
+}
+
+static void LS_RaceSendEventTo( netadr_t to, int slot, const char *kind, const char *detail ) {
+	char cleanKind[32];
+	char cleanDetail[LS_RACE_CHAT_TEXT];
+	if ( ls_race.role != LS_RACE_ROLE_CLIENT || !ls_race.session ) return;
+	LS_RaceSanitizeToken( kind && kind[0] ? kind : "event", cleanKind, sizeof( cleanKind ) );
+	LS_RaceSanitizeChatText( detail && detail[0] ? detail : "none", cleanDetail, sizeof( cleanDetail ) );
+	if ( !cleanDetail[0] ) Q_strncpyz( cleanDetail, "none", sizeof( cleanDetail ) );
+	NET_OutOfBandPrint( NS_CLIENT, to, "srace event %d %d %s %s", ls_race.session, slot, cleanKind, cleanDetail );
+}
+
+static void LS_RaceSendEventToHostScan( const char *kind, const char *detail ) {
+	lsRacePlayer_t *p;
+	int basePort, scanPort, exactPort;
+	netadr_t probeAdr;
+	if ( ls_race.role != LS_RACE_ROLE_CLIENT ) return;
+	p = LS_RaceFindPlayerBySlot( ls_race.localSlot );
+	if ( !p ) return;
+	LS_RaceSendEventTo( ls_race.hostAdr, p->slot, kind, detail );
+	if ( !LS_RaceShouldScanHostPorts() ) return;
+	exactPort = LS_RaceAdrPort( ls_race.hostAdr );
+	basePort = LS_RacePortScanBase( ls_race.hostAdr, ls_race.hostBasePort );
+	for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
+		if ( scanPort == exactPort ) continue;
+		probeAdr = ls_race.hostAdr;
+		LS_RaceSetAdrPort( &probeAdr, scanPort );
+		LS_RaceSendEventTo( probeAdr, p->slot, kind, detail );
 	}
 }
 
@@ -7818,6 +8520,15 @@ static qboolean LS_RaceStartMapLoad( qboolean force ) {
 	Cvar_Set( "savegame_filename", "" );
 	Cvar_Set( "g_reloading", "0" );
 	Cvar_Set( "cl_paused", "0" );
+	Cvar_Set( "g_playerstart", "0" );
+	LS_RaceRestoreGameplayRenderCvars();
+	ls_race.playerStartIssued = qfalse;
+	ls_race.playerStartProcessed = qfalse;
+	/* If a previous mission ended these cvars stick at non-default values
+	   and CG_DrawActive / cg_view skip world rendering entirely, leaving
+	   the joiner staring at an empty map with no walls. */
+	Cvar_Set( "g_missionStats", "0" );
+	Cvar_Set( "cg_norender", "0" );
 	Com_sprintf( cmd, sizeof( cmd ), "spmap %s\n", ls_race.targetMap );
 	Cbuf_AddText( cmd );
 	ls_race.loadIssued = qtrue;
@@ -7841,9 +8552,34 @@ static qboolean LS_RaceUserInterfaceActive( void ) {
 }
 
 static void LS_RaceReleaseGate( void ) {
-	if ( !LS_RaceUserInterfaceActive() ) {
-		Cvar_Set( "cl_paused", "0" );
+	if ( CL_SpeedrunImGui_IsOpen() ) {
+		CL_SpeedrunImGui_CloseAllForGameplay();
 	}
+	if ( cls.keyCatchers & KEYCATCH_UI ) {
+		Key_SetCatcher( cls.keyCatchers & ~KEYCATCH_UI );
+	}
+	Cvar_Set( "cl_paused", "0" );
+}
+
+static qboolean LS_RaceEnsurePlayerStart( void ) {
+	if ( ls_race.playerStartProcessed ) return qtrue;
+
+	if ( ls_race.playerStartIssued ) {
+		if ( Cvar_VariableIntegerValue( "g_playerstart" ) == 0 ) {
+			ls_race.playerStartProcessed = qtrue;
+			return qtrue;
+		}
+		return qfalse;
+	}
+
+	/* Race bypasses the stock pregame menu, so manually fire the same
+	   playerstart hook that the Start button would trigger. This lets
+	   SP scripts/cameras leave their pregame state before countdown GO. */
+	Cbuf_AddText( "fade 0 0 0 0 3\n" );
+	Cvar_Set( "g_playerstart", "1" );
+	Cvar_Set( "ls_loading", "0" );
+	ls_race.playerStartIssued = qtrue;
+	return qfalse;
 }
 
 static void LS_RaceBeginRun( void ) {
@@ -7858,6 +8594,11 @@ static void LS_RaceBeginRun( void ) {
 	ls_race.startIssued = qtrue;
 	ls_race.state = LS_RACE_STATE_RACING;
 	ls_race.raceStartMs = Sys_Milliseconds();
+	/* Re-clear any pregame render blockers right at GO. The stock SP flow
+	   would already have done this via the pregame Start button. */
+	Cvar_Set( "cg_norender", "0" );
+	Cvar_Set( "g_missionStats", "0" );
+	LS_RaceRestoreGameplayRenderCvars();
 	LS_RaceReleaseGate();
 	ls_raceForceStart = qtrue;
 	LS_Start_f();
@@ -7881,7 +8622,16 @@ static qboolean LS_RaceLocalLoaded( void ) {
 	if ( !currentMap[0] || Q_stricmp( currentMap, ls_race.targetMap ) ) return qfalse;
 	if ( Cvar_VariableIntegerValue( "savegame_loading" ) ) return qfalse;
 	if ( Cvar_VariableIntegerValue( "g_reloading" ) ) return qfalse;
-	if ( Cvar_VariableIntegerValue( "cg_norender" ) ) return qfalse;
+	/* A stale g_missionStats or cg_norender from the previous mission/save
+	   keeps the world from rendering ("empty map" bug on race joiners).
+	   The map IS loaded and the snap is valid, so it's safe to clear them. */
+	if ( Cvar_VariableIntegerValue( "cg_norender" ) ) Cvar_Set( "cg_norender", "0" );
+	{
+		char missionStats[16];
+		Cvar_VariableStringBuffer( "g_missionStats", missionStats, sizeof( missionStats ) );
+		if ( missionStats[0] && strlen( missionStats ) > 1 ) Cvar_Set( "g_missionStats", "0" );
+	}
+	if ( !LS_RaceEnsurePlayerStart() ) return qfalse;
 	if ( LS_RaceUserInterfaceActive() ) return qfalse;
 	if ( ls.mapLoadFreeze ) ls.mapLoadFreeze = qfalse;
 	if ( Cvar_VariableIntegerValue( "ls_loading" ) ) Cvar_Set( "ls_loading", "0" );
@@ -7996,6 +8746,8 @@ static void LS_RaceResetSession( void ) {
 	ls_race.countdownStartMs = 0;
 	ls_race.countdownMs = 5000;
 	ls_race.raceStartMs = 0;
+	ls_race.playerStartIssued = qfalse;
+	ls_race.playerStartProcessed = qfalse;
 	ls_race.startIssued = qfalse;
 	ls_race.pendingStart = qfalse;
 	ls_race.loadIssued = qfalse;
@@ -8022,6 +8774,9 @@ static void LS_RaceResetSession( void ) {
 
 static void LS_RaceHost_f( void ) {
 	int port;
+	const char *bindIp;
+	if ( !LS_RaceApplyHostNetwork( &port ) ) return;
+	bindIp = LS_RaceHostBindIp();
 	LS_RaceCaptureSavedSettings();
 	LS_RaceResetSession();
 	ls_race.role = LS_RACE_ROLE_HOST;
@@ -8029,11 +8784,8 @@ static void LS_RaceHost_f( void ) {
 	ls_race.session = Sys_Milliseconds() & 0x7fffffff;
 	LS_RaceInitLocalPlayer( 0 );
 	LS_RaceSyncSettingsFromCvars();
-	port = Cvar_VariableIntegerValue( "net_port" );
-	if ( port <= 0 ) port = ls_race.portCvar ? ls_race.portCvar->integer : 27960;
-	if ( ls_race.portCvar ) Cvar_SetValue( ls_race.portCvar->name, port );
-	LS_RaceSetStatus( va( "Lobby hosted on UDP port %d", port ) );
-	Com_Printf( "^2Race: hosting lobby on UDP port %d. Join with your LAN/Radmin IP and this port.\n", port );
+	LS_RaceSetStatus( va( "Lobby hosted on %s:%d", bindIp, port ) );
+	Com_Printf( "^2Race: hosting lobby on %s:%d. Join with LAN IP, or public IP when this UDP port is forwarded/open.\n", bindIp, port );
 	Sys_ShowIP();
 	LS_RaceUpdateRuntimeCvars();
 }
@@ -8056,6 +8808,8 @@ static void LS_RaceJoin_f( void ) {
 		Com_Printf( "^1Race: invalid address '%s'\n", addrText );
 		return;
 	}
+	port = LS_RaceAdrPort( adr );
+	if ( port <= 0 ) port = 27960;
 	LS_RaceCaptureSavedSettings();
 	LS_RaceResetSession();
 	ls_race.role = LS_RACE_ROLE_CLIENT;
@@ -8149,7 +8903,7 @@ static void LS_RaceHandleHello( netadr_t from ) {
 	}
 	if ( !p && ls_race.state != LS_RACE_STATE_LOBBY ) p = LS_RaceFindPlayerForReconnect( from, nick );
 	if ( ls_race.state != LS_RACE_STATE_LOBBY && !p ) {
-		NET_OutOfBandPrint( NS_CLIENT, from, "srace reject Race_already_started" );
+		NET_OutOfBandPrint( NS_CLIENT, from, "srace reject Run_in_progress_wait_for_next_lobby" );
 		return;
 	}
 	if ( !p ) {
@@ -8310,9 +9064,10 @@ static void LS_RaceParsePlayerTelemetryArgs( lsRacePlayer_t *p ) {
 
 static void LS_RaceHandlePlayer( netadr_t from ) {
 	lsRacePlayer_t *p;
-	int session, slot;
+	int session, slot, now;
 	if ( ls_race.role != LS_RACE_ROLE_CLIENT ) return;
 	if ( !LS_RaceHostAdrMatches( from ) ) return;
+	now = Sys_Milliseconds();
 	session = atoi( Cmd_Argv( 2 ) );
 	if ( session != ls_race.session ) return;
 	slot = atoi( Cmd_Argv( 3 ) );
@@ -8321,7 +9076,7 @@ static void LS_RaceHandlePlayer( netadr_t from ) {
 		p = &ls_race.players[slot];
 		if ( !p->used ) LS_RaceInitLocalPlayer( slot );
 		else p->local = qtrue;
-		ls_race.lastHostPacketMs = Sys_Milliseconds();
+		ls_race.lastHostPacketMs = now;
 		return;
 	}
 	p = &ls_race.players[slot];
@@ -8332,6 +9087,7 @@ static void LS_RaceHandlePlayer( netadr_t from ) {
 		p->slot = slot;
 	}
 	p->local = qfalse;
+	if ( p->lastSampleMs ) LS_RaceUpdatePlayerRender( p, now );
 	LS_RaceSanitizeToken( Cmd_Argv( 4 ), p->nick, sizeof( p->nick ) );
 	p->color[0] = atoi( Cmd_Argv( 5 ) );
 	p->color[1] = atoi( Cmd_Argv( 6 ) );
@@ -8353,21 +9109,24 @@ static void LS_RaceHandlePlayer( netadr_t from ) {
 	if ( Cmd_Argc() > 21 ) LS_RaceSanitizeToken( Cmd_Argv( 21 ), p->stageName, sizeof( p->stageName ) );
 	else Q_strncpyz( p->stageName, p->map[0] ? p->map : "-", sizeof( p->stageName ) );
 	LS_RaceParsePlayerTelemetryArgs( p );
-	p->lastHeardMs = Sys_Milliseconds();
+	p->lastHeardMs = now;
+	LS_RaceStartPlayerSmooth( p, now );
 	if ( ls_race.role == LS_RACE_ROLE_CLIENT ) ls_race.lastHostPacketMs = p->lastHeardMs;
 }
 
 static void LS_RaceHandleState( netadr_t from ) {
 	lsRacePlayer_t *p;
-	int session, slot, stageProgress;
+	int session, slot, stageProgress, now;
 	qboolean loaded, started, finished;
 	qboolean importantChange;
 	if ( ls_race.role != LS_RACE_ROLE_HOST ) return;
+	now = Sys_Milliseconds();
 	session = atoi( Cmd_Argv( 2 ) );
 	if ( session != ls_race.session ) return;
 	slot = atoi( Cmd_Argv( 3 ) );
 	p = LS_RaceFindPlayerBySlot( slot );
 	if ( !LS_RacePlayerAdrMatches( p, from ) ) return;
+	if ( p->lastSampleMs ) LS_RaceUpdatePlayerRender( p, now );
 	loaded = atoi( Cmd_Argv( 9 ) ) ? qtrue : qfalse;
 	started = atoi( Cmd_Argv( 10 ) ) ? qtrue : qfalse;
 	finished = atoi( Cmd_Argv( 11 ) ) ? qtrue : qfalse;
@@ -8399,7 +9158,8 @@ static void LS_RaceHandleState( netadr_t from ) {
 		LS_RaceParsePlayerTelemetryArgs( p );
 		if ( oldObjectives != p->objectivesFound || oldZones != p->zoneProgress ) importantChange = qtrue;
 	}
-	p->lastHeardMs = Sys_Milliseconds();
+	p->lastHeardMs = now;
+	LS_RaceStartPlayerSmooth( p, now );
 	if ( importantChange ) {
 		LS_RaceBroadcastRoster();
 		ls_race.lastRosterMs = p->lastHeardMs;
@@ -8556,6 +9316,61 @@ static void LS_RaceHandleChat( netadr_t from ) {
 	}
 }
 
+static void LS_RaceHandleEvent( netadr_t from ) {
+	int session, slot;
+	char kind[32];
+	char detail[LS_RACE_CHAT_TEXT];
+	lsRacePlayer_t *p;
+	if ( ls_race.role != LS_RACE_ROLE_HOST ) return;
+	session = atoi( Cmd_Argv( 2 ) );
+	if ( session != ls_race.session ) return;
+	slot = atoi( Cmd_Argv( 3 ) );
+	p = LS_RaceFindPlayerBySlot( slot );
+	if ( !LS_RacePlayerAdrMatches( p, from ) ) return;
+	LS_RaceSanitizeToken( Cmd_Argv( 4 ), kind, sizeof( kind ) );
+	LS_RaceSanitizeChatText( Cmd_ArgsFrom( 5 ), detail, sizeof( detail ) );
+	p->lastHeardMs = Sys_Milliseconds();
+	if ( !Q_stricmp( kind, "cheat" ) ) {
+		Com_Printf( "^1Race anti-cheat: %s tried/triggered %s\n", p->nick, detail[0] ? detail : "protected command" );
+	} else {
+		Com_Printf( "^3Race event: %s %s %s\n", p->nick, kind, detail );
+	}
+}
+
+static void LS_RaceHandleStop( netadr_t from ) {
+	int session, i;
+	if ( ls_race.role != LS_RACE_ROLE_CLIENT ) return;
+	if ( !LS_RaceHostAdrMatches( from ) ) return;
+	if ( Cmd_Argc() < 3 ) return;
+	session = atoi( Cmd_Argv( 2 ) );
+	if ( session != ls_race.session ) return;
+	ls_race.state = LS_RACE_STATE_LOBBY;
+	ls_race.countdownStartMs = 0;
+	ls_race.raceStartMs = 0;
+	ls_race.playerStartIssued = qfalse;
+	ls_race.playerStartProcessed = qfalse;
+	ls_race.pendingStart = qfalse;
+	ls_race.loadIssued = qfalse;
+	ls_race.loadIssuedMs = 0;
+	ls_race.loadRetryCount = 0;
+	ls_race.loadIssuedMap[0] = '\0';
+	ls_race.lastHostPacketMs = Sys_Milliseconds();
+	for ( i = 0; i < LS_RACE_MAX_PLAYERS; ++i ) {
+		if ( !ls_race.players[i].used ) continue;
+		ls_race.players[i].loaded = qfalse;
+		ls_race.players[i].started = qfalse;
+		ls_race.players[i].finished = qfalse;
+		ls_race.players[i].timeMs = 0;
+		ls_race.players[i].stageTimeMs = 0;
+		ls_race.players[i].paused = qfalse;
+		ls_race.players[i].inMenu = qfalse;
+	}
+	Cvar_Set( "cl_paused", "0" );
+	LS_RaceSetStatus( "Race stopped - back to lobby" );
+	Com_Printf( "^3Race: stopped by host, back to lobby\n" );
+	LS_RaceUpdateRuntimeCvars();
+}
+
 static void LS_RaceSay_f( void ) {
 	char text[LS_RACE_CHAT_TEXT];
 	lsRacePlayer_t *local;
@@ -8590,6 +9405,7 @@ void LS_RaceConnectionlessPacket( netadr_t from ) {
 	if ( !Q_stricmp( sub, "discover" ) ) LS_RaceHandleDiscover( from );
 	else if ( !Q_stricmp( sub, "found" ) ) LS_RaceHandleFound( from );
 	else if ( !Q_stricmp( sub, "hello" ) ) LS_RaceHandleHello( from );
+	else if ( !Q_stricmp( sub, "queued" ) ) LS_RaceHandleQueued( from );
 	else if ( !Q_stricmp( sub, "welcome" ) ) LS_RaceHandleWelcome( from );
 	else if ( !Q_stricmp( sub, "player" ) ) LS_RaceHandlePlayer( from );
 	else if ( !Q_stricmp( sub, "state" ) ) LS_RaceHandleState( from );
@@ -8597,11 +9413,26 @@ void LS_RaceConnectionlessPacket( netadr_t from ) {
 	else if ( !Q_stricmp( sub, "load" ) ) LS_RaceHandleLoad( from );
 	else if ( !Q_stricmp( sub, "countdown" ) ) LS_RaceHandleCountdown( from );
 	else if ( !Q_stricmp( sub, "start" ) ) LS_RaceHandleStart( from );
+	else if ( !Q_stricmp( sub, "stop" ) ) LS_RaceHandleStop( from );
 	else if ( !Q_stricmp( sub, "leave" ) ) LS_RaceHandleLeave( from );
 	else if ( !Q_stricmp( sub, "chat" ) ) LS_RaceHandleChat( from );
+	else if ( !Q_stricmp( sub, "event" ) ) LS_RaceHandleEvent( from );
 	else if ( !Q_stricmp( sub, "reject" ) ) {
-		LS_RaceSetStatus( Cmd_Argv( 2 ) );
-		Com_Printf( "^1Race: join rejected: %s\n", Cmd_Argv( 2 ) );
+		const char *reason = Cmd_Argv( 2 );
+		char cleanReason[128];
+		LS_RaceFormatRejectReason( reason, cleanReason, sizeof( cleanReason ) );
+		LS_RaceSetStatus( cleanReason );
+		Com_Printf( "^1Race: join rejected: %s\n", cleanReason );
+		/* The host has explicitly refused us (kicked, lobby full, race
+		   already started, race stopped, ...). Tear down the local race
+		   session so the client returns to idle and can join a fresh
+		   lobby - without this, the kicked client keeps spamming state
+		   packets with a now-stale session and can never reconnect. */
+		if ( ls_race.role == LS_RACE_ROLE_CLIENT && LS_RaceHostAdrMatches( from ) ) {
+			LS_RaceResetSession();
+			LS_RaceRestoreSavedSettings();
+			Cvar_Set( "cl_paused", "0" );
+		}
 	}
 }
 
@@ -8821,13 +9652,14 @@ static void LS_RaceInit( void ) {
 	ls_race.antiCheat = 1;
 	ls_race.nickCvar = Cvar_Get( "name", "Player", CVAR_ARCHIVE );
 	ls_race.ipCvar = Cvar_Get( "ls_race_ip", "127.0.0.1", CVAR_ARCHIVE );
+	ls_race.hostIpCvar = Cvar_Get( "ls_race_host_ip", "localhost", CVAR_ARCHIVE );
 	ls_race.portCvar = Cvar_Get( "ls_race_port", "27960", CVAR_ARCHIVE );
 	ls_race.hideIpCvar = Cvar_Get( "ls_race_hide_ip", "1", CVAR_ARCHIVE );
 	ls_race.colorCvar = Cvar_Get( "ls_race_color", "80 180 255 1.00", CVAR_ARCHIVE );
 	ls_race.overlayCvar = Cvar_Get( "ls_race_overlay", "1", CVAR_ARCHIVE );
 	ls_race.countdownCvar = Cvar_Get( "ls_race_countdown", "5", CVAR_ARCHIVE );
 	ls_race.packetMsCvar = Cvar_Get( "ls_race_packet_ms", "33", CVAR_ARCHIVE );
-	ls_race.rosterMsCvar = Cvar_Get( "ls_race_roster_ms", "250", CVAR_ARCHIVE );
+	ls_race.rosterMsCvar = Cvar_Get( "ls_race_roster_ms", "500", CVAR_ARCHIVE );
 	ls_race.antiCheatCvar = Cvar_Get( "ls_race_anticheat", "1", CVAR_ARCHIVE );
 	ls_race.antiCheat = ls_race.antiCheatCvar && ls_race.antiCheatCvar->integer ? 1 : 0;
 	ls_race.ghostsCvar = Cvar_Get( "ls_race_ghosts", "1", CVAR_ARCHIVE );
@@ -8861,6 +9693,7 @@ static void LS_RaceInit( void ) {
 	Cvar_Get( "ls_race_nametag_scale", "1.0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_race_nametag_opacity", "1.0", CVAR_ARCHIVE );
 	Cvar_Get( "ls_race_ghost_render", "0", CVAR_ARCHIVE );
+	ls_race.passwordCvar = Cvar_Get( "ls_race_password", "", CVAR_ARCHIVE );
 	ls_race.activeCvar = Cvar_Get( "ls_race_active", "0", 0 );
 	ls_race.roleCvar = Cvar_Get( "ls_race_role", "Idle", 0 );
 	ls_race.stateCvar = Cvar_Get( "ls_race_state", "Idle", 0 );
@@ -9544,11 +10377,12 @@ static void LS_FinishRun( int nowReal ) {
 		memset( r, 0, sizeof( *r ) );
 		r->difficulty = ls.currentDifficulty;
 		r->mode       = ls.runMode;
+		r->categoryVariant = LS_CurCategoryVariant();
 		r->missionNum = ls.runMission;
 		r->mapIdx     = ( ls.runMode == LS_MODE_IL ) ? ls.modeFirstIdx : -1;
 		r->totalIGTMs = finalIGT;
 		r->totalRGTMs = ls.runSavedRealMs;
-		r->attemptId  = LS_MaxAttemptId( ls.runMode, di, ls.runMission, r->mapIdx ) + 1;
+		r->attemptId  = LS_MaxAttemptId( ls.runMode, LS_DiffIdx( ls.currentDifficulty ), ls.runMission, r->mapIdx, r->categoryVariant ) + 1;
 		for ( i = ls.modeFirstIdx; i <= ls.modeLastIdx && i < ls.numMaps; i++ ) {
 			if ( !ls.splits[i].cutscene ) {
 				r->splitTimes[n] = ls.splits[i].currentTimeMs;
@@ -9888,7 +10722,7 @@ static void LS_Frame( void ) {
 	}
 
 	/* ---- Periodic demo state update ----
-	   Write the current LS state to the demo file every ~500 ms so that
+	   Write the current LS state to the demo file every ~100 ms so that
 	   playback-side timer interpolation stays tightly synchronised with
 	   the actual recorded IGT.  Without this, the demo timer drifts
 	   between infrequent state snapshots because the recording uses
@@ -9897,7 +10731,7 @@ static void LS_Frame( void ) {
 	if ( clc.demorecording && ls.active && !ls.runFinished ) {
 		static int lsDemoLastWriteMs = 0;
 		int demoNow = Sys_Milliseconds();
-		if ( demoNow - lsDemoLastWriteMs >= 500 ) {
+		if ( demoNow - lsDemoLastWriteMs >= 100 ) {
 			LS_DemoWriteUpdate();
 			lsDemoLastWriteMs = demoNow;
 		}
@@ -10206,6 +11040,7 @@ static void LS_Frame( void ) {
 				Com_Printf( "^2LiveSplit: Run reset due to HL1 movement change\n" );
 			}
 
+			LS_SaveAll();
 			LS_Load();
 			LS_SetupMode( ls.runMode, ls.runMission );
 			ls_prevHL1Mode = curHL1;
@@ -10269,14 +11104,16 @@ static void LS_Frame( void ) {
 					ls.splits[k].prevGoldMs    = 0;
 					ls.splits[k].goldFlashMs   = 0;
 				}
-				for ( di = 0; di < LS_MAX_DIFFICULTIES; di++ ) {
+				for ( di = 0; di < LS_TOTAL_DIFF_SLOTS; di++ ) {
 					ls.fgAttempts[di]    = 0;
 					ls.fgCompletions[di] = 0;
 					ls.fgPB[di]          = 0;
+					ls.fgPBRgt[di]       = 0;
 					for ( gi = 0; gi < LS_NUM_MISSION_GROUPS; gi++ ) {
 						ls.msAttempts[gi][di]    = 0;
 						ls.msCompletions[gi][di] = 0;
 						ls.msPB[gi][di]          = 0;
+						ls.msPBRgt[gi][di]       = 0;
 					}
 				}
 				LS_HistoryFree();
@@ -12754,6 +13591,9 @@ void LS_DemoBuildState( char *out, int outSize ) {
 	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.runFinished ? 1 : 0 );
 	Info_SetValueForKey( out, "f", tmp );
 
+	Com_sprintf( tmp, sizeof( tmp ), "%d", ( ls.manualPause || ( cl_paused && cl_paused->integer ) || ( cls.keyCatchers & KEYCATCH_UI ) ) ? 1 : 0 );
+	Info_SetValueForKey( out, "pa", tmp );
+
 	Com_sprintf( tmp, sizeof( tmp ), "%d", ls.runMode );
 	Info_SetValueForKey( out, "m", tmp );
 
@@ -12908,6 +13748,7 @@ typedef struct {
 	qboolean valid;
 	int      active;
 	int      finished;
+	int      paused;
 	int      mode;          /* 0=FG 1=MS 2=IL */
 	int      difficulty;    /* 1-3 */
 	int      mission;       /* 1-5 */
@@ -12990,6 +13831,7 @@ static void LS_DemoParseState( const char *str, lsDemoState_t *st ) {
 	st->valid              = qtrue;
 	st->active             = atoi( Info_ValueForKey( str, "a" ) );
 	st->finished           = atoi( Info_ValueForKey( str, "f" ) );
+	st->paused             = atoi( Info_ValueForKey( str, "pa" ) );
 	st->mode               = atoi( Info_ValueForKey( str, "m" ) );
 	st->difficulty         = atoi( Info_ValueForKey( str, "d" ) );
 	st->mission            = atoi( Info_ValueForKey( str, "ms" ) );
@@ -13038,6 +13880,262 @@ static const lsDemoSplit_t *LS_DemoFindSplit( const lsDemoSplit_t *splits,
 		if ( splits[i].splitIdx == splitIdx ) return &splits[i];
 	}
 	return NULL;
+}
+
+static void LS_DemoBuildCategoryText( const lsDemoState_t *dst, char *out, int outSize ) {
+	const char *modeName = "Full Game";
+	const char *skillName = "BEO";
+	if ( !out || outSize <= 0 ) return;
+	switch ( dst->mode ) {
+	case LS_MODE_MISSION:
+		modeName = "Mission";
+		break;
+	case LS_MODE_IL:
+		modeName = "Individual Level";
+		break;
+	default:
+		modeName = "Full Game";
+		break;
+	}
+	switch ( dst->difficulty ) {
+	case 1:
+		skillName = "DHM";
+		break;
+	case 3:
+		skillName = "IADI";
+		break;
+	default:
+		skillName = "BEO";
+		break;
+	}
+	if ( dst->mode == LS_MODE_MISSION ) {
+		Com_sprintf( out, outSize, "Demo - %s %d - %s", modeName, dst->mission, skillName );
+	} else {
+		Com_sprintf( out, outSize, "Demo - %s - %s", modeName, skillName );
+	}
+}
+
+static void LS_DemoClearWindowState( void ) {
+	memset( (void *)&lswnd_state, 0, sizeof( lswnd_state ) );
+	lswnd_state.curRow = -1;
+	lswnd_state.prevSegBehind = -1;
+	lswnd_state.sobBestMs = -1;
+	lswnd_state.sobPbMs = -1;
+	lswnd_state.sobAvgMs = -1;
+	lswnd_state.bptBestMs = -1;
+	lswnd_state.bptPbMs = -1;
+	lswnd_state.bptAvgMs = -1;
+	lswnd_state.ptsMs = 0x80000000;
+	lswnd_state.ghostSegMs = -1;
+	LS_ShmUpdate();
+}
+
+static void LS_DemoUpdateWindowState( void ) {
+	const char *stateStr;
+	const char *timesStr;
+	lsDemoState_t dst;
+	lsDemoSplit_t dsplits[LS_MAX_MAPS];
+	int numDSplits;
+	int mapDefCount;
+	int liveIGT, segTime;
+	int vi, i, bsi;
+	int pbCum, bestCum;
+	int prevPbCum;
+	qboolean pbComplete, bestComplete;
+	volatile lsWndState_t *st = &lswnd_state;
+
+	if ( !clc.demoplaying || !cls.rendererStarted ) {
+		LS_DemoClearWindowState();
+		return;
+	}
+
+	stateStr = cl.gameState.stringData + cl.gameState.stringOffsets[CS_DEMO_LIVESPLIT];
+	timesStr = cl.gameState.stringData + cl.gameState.stringOffsets[CS_DEMO_LIVESPLIT_TIMES];
+	if ( !stateStr || !stateStr[0] ) {
+		LS_DemoClearWindowState();
+		return;
+	}
+
+	LS_DemoParseState( stateStr, &dst );
+	if ( !dst.valid ) {
+		LS_DemoClearWindowState();
+		return;
+	}
+
+	numDSplits = LS_DemoParseTimes( timesStr, dsplits, LS_MAX_MAPS );
+	mapDefCount = (int)( sizeof( ls_mapDefs ) / sizeof( ls_mapDefs[0] ) ) - 1;
+
+	if ( dst.modeFirstIdx < 0 ) dst.modeFirstIdx = 0;
+	if ( dst.modeLastIdx < dst.modeFirstIdx ) dst.modeLastIdx = dst.modeFirstIdx;
+	if ( dst.modeLastIdx >= mapDefCount ) dst.modeLastIdx = mapDefCount - 1;
+	if ( dst.currentMapIndex < dst.modeFirstIdx ) dst.currentMapIndex = dst.modeFirstIdx;
+	if ( dst.currentMapIndex > dst.modeLastIdx ) dst.currentMapIndex = dst.modeLastIdx;
+
+	if ( dst.finished ) {
+		liveIGT = dst.totalIGTMs;
+		segTime = 0;
+	} else if ( dst.active ) {
+		int elapsed = cl.serverTime - dst.captureServerTime;
+		if ( dst.paused ) elapsed = 0;
+		if ( elapsed < 0 ) elapsed = 0;
+		if ( elapsed > 2000 ) elapsed = 0;
+		segTime = dst.segTimeMs + elapsed;
+		liveIGT = dst.totalIGTMs + segTime;
+	} else {
+		segTime = dst.segTimeMs;
+		liveIGT = dst.totalIGTMs + segTime;
+	}
+	if ( liveIGT < 0 ) liveIGT = 0;
+	if ( segTime < 0 ) segTime = 0;
+
+	memset( (void *)st, 0, sizeof( *st ) );
+	st->curRow = -1;
+	st->prevSegBehind = -1;
+	st->sobBestMs = -1;
+	st->sobPbMs = -1;
+	st->sobAvgMs = -1;
+	st->bptBestMs = -1;
+	st->bptPbMs = -1;
+	st->bptAvgMs = -1;
+	st->ptsMs = 0x80000000;
+	st->ghostSegMs = -1;
+
+	Q_strncpyz( (char *)st->gameName, "Return to Castle Wolfenstein", sizeof( st->gameName ) );
+	LS_DemoBuildCategoryText( &dst, (char *)st->categoryText, sizeof( st->categoryText ) );
+	Q_strncpyz( (char *)st->compareLabel, "Personal Best", sizeof( st->compareLabel ) );
+	Q_strncpyz( (char *)st->prevSegLabel, "Previous Segment", sizeof( st->prevSegLabel ) );
+	Q_strncpyz( (char *)st->prevSegValue, "-", sizeof( st->prevSegValue ) );
+
+	pbCum = 0;
+	bestCum = 0;
+	prevPbCum = 0;
+	pbComplete = qtrue;
+	bestComplete = qtrue;
+	vi = 0;
+	for ( i = dst.modeFirstIdx; i <= dst.modeLastIdx && i < mapDefCount && vi < LSWND_MAX_ROWS; i++ ) {
+		const lsDemoSplit_t *ds;
+		const char *name;
+		int pbSeg = 0;
+		int cumTime = 0;
+		qboolean isCur;
+
+		if ( ls_mapDefs[i].cutscene ) continue;
+
+		ds = LS_DemoFindSplit( dsplits, numDSplits, i );
+		isCur = ( i == dst.currentMapIndex ) ? qtrue : qfalse;
+		name = ls_mapDefs[i].displayName;
+		if ( !name || !name[0] ) name = ls_mapDefs[i].name;
+		if ( !name || !name[0] ) name = "???";
+		Q_strncpyz( (char *)st->rows[vi].name, name, sizeof( st->rows[vi].name ) );
+		if ( ls_mapDefs[i].shortName && ls_mapDefs[i].shortName[0] ) {
+			Q_strncpyz( (char *)st->rows[vi].shortName, ls_mapDefs[i].shortName, sizeof( st->rows[vi].shortName ) );
+		}
+		st->rows[vi].state = ( ds && ds->done ) ? 2 : ( isCur ? 1 : 0 );
+		st->rows[vi].liveDeltaMs = 0x80000000;
+		st->rows[vi].pbCumMs = -1;
+		st->rows[vi].bestCumMs = -1;
+		st->rows[vi].avgCumMs = -1;
+
+		if ( ds && ds->pbCumMs > 0 ) {
+			st->rows[vi].pbCumMs = ds->pbCumMs;
+			LS_FormatTime( ds->pbCumMs, (char *)st->rows[vi].pbSplitTime, sizeof( st->rows[vi].pbSplitTime ) );
+			if ( ds->pbCumMs > prevPbCum ) {
+				pbSeg = ds->pbCumMs - prevPbCum;
+				st->rows[vi].pbSegMs = pbSeg;
+				st->rows[vi].segCompareMs = pbSeg;
+				LS_FormatTime( pbSeg, (char *)st->rows[vi].pbSegTime, sizeof( st->rows[vi].pbSegTime ) );
+			}
+			prevPbCum = ds->pbCumMs;
+		} else {
+			pbComplete = qfalse;
+		}
+
+		if ( ds && ds->goldMs > 0 ) {
+			st->rows[vi].bestSegMs = ds->goldMs;
+			LS_FormatTime( ds->goldMs, (char *)st->rows[vi].bestSeg, sizeof( st->rows[vi].bestSeg ) );
+			if ( bestComplete ) {
+				bestCum += ds->goldMs;
+				st->rows[vi].bestCumMs = bestCum;
+			}
+		} else {
+			bestComplete = qfalse;
+		}
+
+		if ( ds && ds->done ) {
+			cumTime = LS_DemoCumulativeTime( dsplits, numDSplits, dst.modeFirstIdx, i );
+			st->rows[vi].cumTimeMs = cumTime;
+			st->rows[vi].segTimeMs = ds->igtMs;
+			LS_FormatTime( cumTime, (char *)st->rows[vi].splitTime, sizeof( st->rows[vi].splitTime ) );
+			LS_FormatTime( ds->igtMs, (char *)st->rows[vi].segTime, sizeof( st->rows[vi].segTime ) );
+			if ( ds->pbCumMs > 0 ) {
+				int delta = cumTime - ds->pbCumMs;
+				if ( delta != 0 ) LS_FormatDelta( delta, (char *)st->rows[vi].delta, sizeof( st->rows[vi].delta ) );
+				else Q_strncpyz( (char *)st->rows[vi].delta, "---", sizeof( st->rows[vi].delta ) );
+				st->rows[vi].isBehind = delta > 0 ? 1 : 0;
+			}
+			if ( ds->goldMs > 0 ) {
+				int goldDelta = ds->igtMs - ds->goldMs;
+				if ( goldDelta != 0 ) LS_FormatDelta( goldDelta, (char *)st->rows[vi].deltaBest, sizeof( st->rows[vi].deltaBest ) );
+				else Q_strncpyz( (char *)st->rows[vi].deltaBest, "---", sizeof( st->rows[vi].deltaBest ) );
+				st->rows[vi].isGold = goldDelta <= 0 ? 1 : 0;
+			}
+		} else if ( isCur ) {
+			st->curRow = vi;
+			st->rows[vi].segTimeMs = segTime;
+			LS_FormatTime( segTime, (char *)st->rows[vi].segTime, sizeof( st->rows[vi].segTime ) );
+			if ( ds && ds->pbCumMs > 0 ) {
+				int liveDelta = liveIGT - ds->pbCumMs;
+				st->rows[vi].liveDeltaMs = liveDelta;
+				if ( liveDelta != 0 ) LS_FormatDelta( liveDelta, (char *)st->rows[vi].delta, sizeof( st->rows[vi].delta ) );
+				else Q_strncpyz( (char *)st->rows[vi].delta, "---", sizeof( st->rows[vi].delta ) );
+				st->rows[vi].isBehind = liveDelta > 0 ? 1 : 0;
+				st->timerBehind = liveDelta > 0 ? 1 : 0;
+			}
+		}
+
+		if ( pbComplete && ds && ds->pbCumMs > 0 ) pbCum = ds->pbCumMs;
+		vi++;
+	}
+	st->numRows = vi;
+
+	if ( pbComplete && pbCum > 0 ) {
+		st->sobPbMs = pbCum;
+		st->bptPbMs = pbCum;
+		LS_FormatTime( pbCum, (char *)st->pbText, sizeof( st->pbText ) );
+	}
+	if ( bestComplete && bestCum > 0 ) {
+		st->sobBestMs = bestCum;
+		st->bptBestMs = bestCum;
+		LS_FormatTime( bestCum, (char *)st->sobText, sizeof( st->sobText ) );
+		LS_FormatTime( bestCum, (char *)st->bptText, sizeof( st->bptText ) );
+	}
+
+	bsi = 0;
+	for ( i = dst.modeFirstIdx; i <= dst.modeLastIdx && i < mapDefCount && bsi < LSWND_MAX_ROWS; i++ ) {
+		const lsDemoSplit_t *ds;
+		const char *name;
+		if ( ls_mapDefs[i].cutscene ) continue;
+		ds = LS_DemoFindSplit( dsplits, numDSplits, i );
+		name = ls_mapDefs[i].displayName;
+		if ( !name || !name[0] ) name = ls_mapDefs[i].name;
+		if ( !name || !name[0] ) name = "???";
+		Q_strncpyz( (char *)st->bestSegs[bsi].name, name, sizeof( st->bestSegs[bsi].name ) );
+		if ( ds && ds->goldMs > 0 ) LS_FormatTime( ds->goldMs, (char *)st->bestSegs[bsi].time, sizeof( st->bestSegs[bsi].time ) );
+		else Q_strncpyz( (char *)st->bestSegs[bsi].time, "-", sizeof( st->bestSegs[bsi].time ) );
+		st->bestSegs[bsi].deltaMs = 0x80000000;
+		st->bestSegs[bsi].state = ( ds && ds->done ) ? 2 : ( i == dst.currentMapIndex ? 1 : 0 );
+		bsi++;
+	}
+	st->numBestSegs = bsi;
+
+	LS_FormatTime( liveIGT, (char *)st->timerText, sizeof( st->timerText ) );
+	LS_FormatTime( liveIGT, (char *)st->rtTimerText, sizeof( st->rtTimerText ) );
+	LS_FormatTime( segTime, (char *)st->segTimerText, sizeof( st->segTimerText ) );
+	st->active = dst.active ? 1 : 0;
+	st->finished = dst.finished ? 1 : 0;
+	st->paused = ( dst.paused || CL_DemoPaused() ) ? 1 : 0;
+
+	LS_ShmUpdate();
 }
 
 /*
@@ -13562,28 +14660,29 @@ void SCR_LiveSplitDraw( void ) {
 	qboolean activeUpdateReady;
 	qboolean draw2DReady;
 
-	/* ---- Demo playback: render LS panel from demo data, bypass live state ----
-	   Demo LS display only requires renderer and cg_livesplit; it does NOT
-	   need ls.initialized (no live LS session) or external LS connection.
-	   This check must come BEFORE any ls.initialized / extEnabled guards
-	   so that demos recorded with LS data are always playable. */
+	/* ---- Demo playback: feed recorded LS data into the main overlay state. */
 	if ( clc.demoplaying ) {
-		if ( cls.state == CA_ACTIVE && LS_Draw2DReady() && ( !cg_livesplit || cg_livesplit->integer ) ) {
-			LS_DemoDrawPlayback();
+		if ( cls.state == CA_ACTIVE && ( !cg_livesplit || cg_livesplit->integer ) ) {
+			LS_DemoUpdateWindowState();
+		} else {
+			LS_DemoClearWindowState();
 		}
 		return;
 	}
 
 	if ( !LS_WindowStateReady() ) return;
+	draw2DReady = LS_Draw2DReady();
 	if ( cls.state != CA_ACTIVE || !cl.mapname[0] ) {
 		if ( LS_WindowShouldHoldCachedState() ) {
 			LS_WindowHoldCachedState();
 		} else {
 			LS_WindowUpdateMenu();
 		}
+		if ( draw2DReady ) {
+			LS_DrawResetConfirmPopup();
+		}
 		return;
 	}
-	draw2DReady = LS_Draw2DReady();
 
 	if ( !cg_livesplit || !cg_livesplit->integer ) {
 		/* Even with cg_livesplit off, run timer logic if external LS is enabled */
