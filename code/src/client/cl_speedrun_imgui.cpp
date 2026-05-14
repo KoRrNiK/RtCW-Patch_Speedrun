@@ -7914,3 +7914,141 @@ extern "C" int CL_SpeedrunImGui_WndProc( void *hWnd, unsigned int uMsg, unsigned
 	}
 	return 0;
 }
+
+static ImGuiKey CL_ImGuiQuakeKeyToImGui( int key ) {
+	if ( key >= 'a' && key <= 'z' ) return (ImGuiKey)( ImGuiKey_A + key - 'a' );
+	if ( key >= 'A' && key <= 'Z' ) return (ImGuiKey)( ImGuiKey_A + key - 'A' );
+	if ( key >= '0' && key <= '9' ) return (ImGuiKey)( ImGuiKey_0 + key - '0' );
+
+	switch ( key )
+	{
+	case K_TAB: return ImGuiKey_Tab;
+	case K_LEFTARROW: return ImGuiKey_LeftArrow;
+	case K_RIGHTARROW: return ImGuiKey_RightArrow;
+	case K_UPARROW: return ImGuiKey_UpArrow;
+	case K_DOWNARROW: return ImGuiKey_DownArrow;
+	case K_PGUP: return ImGuiKey_PageUp;
+	case K_PGDN: return ImGuiKey_PageDown;
+	case K_HOME: return ImGuiKey_Home;
+	case K_END: return ImGuiKey_End;
+	case K_INS: return ImGuiKey_Insert;
+	case K_DEL: return ImGuiKey_Delete;
+	case K_BACKSPACE: return ImGuiKey_Backspace;
+	case ' ': return ImGuiKey_Space;
+	case K_ENTER:
+	case K_KP_ENTER: return ImGuiKey_Enter;
+	case K_ESCAPE: return ImGuiKey_Escape;
+	case K_CTRL: return ImGuiKey_ModCtrl;
+	case K_SHIFT: return ImGuiKey_ModShift;
+	case K_ALT: return ImGuiKey_ModAlt;
+	case K_COMMAND: return ImGuiKey_ModSuper;
+	case K_F1: return ImGuiKey_F1;
+	case K_F2: return ImGuiKey_F2;
+	case K_F3: return ImGuiKey_F3;
+	case K_F4: return ImGuiKey_F4;
+	case K_F5: return ImGuiKey_F5;
+	case K_F6: return ImGuiKey_F6;
+	case K_F7: return ImGuiKey_F7;
+	case K_F8: return ImGuiKey_F8;
+	case K_F9: return ImGuiKey_F9;
+	case K_F10: return ImGuiKey_F10;
+	case K_F11: return ImGuiKey_F11;
+	case K_F12: return ImGuiKey_F12;
+	default: return ImGuiKey_None;
+	}
+}
+
+extern "C" int CL_SpeedrunImGui_SDLMouseMotion( float x, float y ) {
+	if ( !CL_SpeedrunImGui_HasPanelOpen() && !s_raceChatOpen ) {
+		return 0;
+	}
+	if ( s_imguiInitialized && ImGui::GetCurrentContext() ) {
+		ImGui::GetIO().AddMousePosEvent( x, y );
+	}
+	return 1;
+}
+
+extern "C" int CL_SpeedrunImGui_SDLMouseButton( int quakeKey, int button, int down ) {
+	bool panelOpen = CL_SpeedrunImGui_HasPanelOpen();
+
+	if ( !panelOpen && !s_raceChatOpen ) {
+		return 0;
+	}
+	if ( s_raceChatOpen && !panelOpen ) {
+		return 1;
+	}
+	if ( s_pendingBindCommand && down ) {
+		CL_ImGuiAssignPendingBind( quakeKey );
+		return 1;
+	}
+	if ( button >= 0 && button < 5 ) {
+		s_mouseDown[button] = down ? true : false;
+		if ( s_imguiInitialized && ImGui::GetCurrentContext() ) {
+			ImGui::GetIO().AddMouseButtonEvent( button, down ? true : false );
+		}
+	}
+	return 1;
+}
+
+extern "C" int CL_SpeedrunImGui_SDLMouseWheel( float y ) {
+	if ( !CL_SpeedrunImGui_HasPanelOpen() && !s_raceChatOpen ) {
+		return 0;
+	}
+	if ( CL_SpeedrunImGui_HasPanelOpen() ) {
+		s_mouseWheel += y;
+	}
+	if ( s_imguiInitialized && ImGui::GetCurrentContext() ) {
+		ImGui::GetIO().AddMouseWheelEvent( 0.0f, y );
+	}
+	return 1;
+}
+
+extern "C" int CL_SpeedrunImGui_SDLTextInput( const char *text ) {
+	if ( !CL_SpeedrunImGui_HasPanelOpen() && !s_raceChatOpen ) {
+		return 0;
+	}
+	if ( s_raceChatOpen && Sys_Milliseconds() < s_raceChatSuppressInputUntilMs ) {
+		return 1;
+	}
+	if ( s_imguiInitialized && ImGui::GetCurrentContext() && text && text[0] ) {
+		ImGui::GetIO().AddInputCharactersUTF8( text );
+	}
+	return 1;
+}
+
+extern "C" int CL_SpeedrunImGui_SDLKeyEvent( int quakeKey, int down ) {
+	ImGuiKey imguiKey;
+
+	if ( !CL_SpeedrunImGui_HasPanelOpen() && !s_raceChatOpen ) {
+		return 0;
+	}
+	if ( s_raceChatOpen && Sys_Milliseconds() < s_raceChatSuppressInputUntilMs && quakeKey != K_ESCAPE ) {
+		return 1;
+	}
+	if ( s_pendingBindCommand && down ) {
+		CL_ImGuiAssignPendingBind( quakeKey );
+		return 1;
+	}
+	if ( down && quakeKey == K_ESCAPE && s_raceChatOpen ) {
+		CL_SpeedrunImGui_CloseRaceChat();
+		return 1;
+	}
+	if ( down && quakeKey == K_ESCAPE && s_raceGuiOpen ) {
+		CL_SpeedrunImGui_CloseRaceGui();
+		return 1;
+	}
+	if ( down && quakeKey == K_ESCAPE ) {
+		CL_SpeedrunImGui_Close();
+		return 1;
+	}
+
+	if ( s_imguiInitialized && ImGui::GetCurrentContext() ) {
+		ImGuiIO &io = ImGui::GetIO();
+		CL_ImGuiUpdateKeyModifiers( io );
+		imguiKey = CL_ImGuiQuakeKeyToImGui( quakeKey );
+		if ( imguiKey != ImGuiKey_None ) {
+			io.AddKeyEvent( imguiKey, down ? true : false );
+		}
+	}
+	return 1;
+}

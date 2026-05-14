@@ -15,6 +15,11 @@ void CL_SpeedrunImGui_CloseAllForGameplay( void );
 void CL_SpeedrunImGui_OpenRace( void );
 void CL_SpeedrunImGui_OpenRaceChat( void );
 int  CL_SpeedrunImGui_IsRaceChatOpen( void );
+int  CL_SpeedrunImGui_SDLMouseMotion( float x, float y );
+int  CL_SpeedrunImGui_SDLMouseButton( int quakeKey, int button, int down );
+int  CL_SpeedrunImGui_SDLMouseWheel( float y );
+int  CL_SpeedrunImGui_SDLTextInput( const char *text );
+int  CL_SpeedrunImGui_SDLKeyEvent( int quakeKey, int down );
 
 #ifdef __cplusplus
 }

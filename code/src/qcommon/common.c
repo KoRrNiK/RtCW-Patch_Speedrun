@@ -32,6 +32,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "qcommon.h"
 #include <setjmp.h>
 
+#ifdef RTCW_SDL3
+void IN_Frame( void );
+#endif
+
 #define MAXPRINTMSG 8192	// Knightmare- increased from 4096
 
 #define MAX_NUM_ARGVS   50
@@ -2481,6 +2485,9 @@ void Com_Frame( void ) {
 	//
 	// main event loop
 	//
+#ifdef RTCW_SDL3
+	IN_Frame();
+#endif
 	timeBeforeFirstEvents = Sys_Milliseconds();
 
 	// we may want to spin here if things are going too fast
