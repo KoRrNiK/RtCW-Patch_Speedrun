@@ -1,0 +1,3 @@
+#include "resource.h"
+
+IDI_RACEHOST ICON "..\\win32\\qe3.ico"
