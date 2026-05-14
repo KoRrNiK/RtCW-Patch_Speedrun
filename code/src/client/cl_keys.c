@@ -1642,6 +1642,193 @@ Called by the system for both key up and key down events
 ===================
 */
 //static int consoleCount = 0; // TTimo: unused
+#define CL_CINEMATIC_SKIP_INTENT_MS 750
+#define CL_CINEMATIC_SKIP_RETRY_MS 50
+
+static int cl_cinematicSkipIntentKey = 0;
+static unsigned cl_cinematicSkipIntentTime = 0;
+static qboolean cl_physicalSpaceDown = qfalse;
+static qboolean cl_cinematicHeldSpaceLatched = qfalse;
+static unsigned cl_cinematicHeldSpaceTime = 0;
+static qboolean cl_cinematicAutoSkipIssued = qfalse;
+static unsigned cl_cinematicNextAutoSkipTime = 0;
+
+static qboolean CL_IsCinematicSkipKey( int key ) {
+	return ( key == K_ESCAPE || key == K_SPACE || key == K_ENTER || key == K_KP_ENTER );
+}
+
+static void CL_ClearCinematicSkipIntent( void ) {
+	cl_cinematicSkipIntentKey = 0;
+	cl_cinematicSkipIntentTime = 0;
+}
+
+static void CL_LatchHeldSpace( unsigned time ) {
+	cl_cinematicHeldSpaceLatched = qtrue;
+	if ( !cl_cinematicHeldSpaceTime ) {
+		cl_cinematicHeldSpaceTime = time ? time : Sys_Milliseconds();
+	}
+}
+
+static void CL_ClearHeldSpaceLatch( void ) {
+	cl_cinematicHeldSpaceLatched = qfalse;
+	cl_cinematicHeldSpaceTime = 0;
+}
+
+static qboolean CL_IsSpaceSkipHeld( void ) {
+	if ( K_SPACE <= 0 || K_SPACE >= MAX_KEYS ) {
+		return qfalse;
+	}
+
+	if ( keys[K_SPACE].down || cl_physicalSpaceDown || cl_cinematicHeldSpaceLatched ) {
+		return qtrue;
+	}
+
+	if ( IN_IsPhysicalSpaceDown() ) {
+		CL_LatchHeldSpace( 0 );
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
+static qboolean CL_GetHeldCinematicSkipKey( int *key, unsigned *time ) {
+	if ( CL_IsSpaceSkipHeld() ) {
+		if ( key ) {
+			*key = K_SPACE;
+		}
+		if ( time ) {
+			*time = cl_cinematicHeldSpaceTime ? cl_cinematicHeldSpaceTime : (unsigned)Sys_Milliseconds();
+		}
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
+void CL_SetPhysicalSpaceState( qboolean down ) {
+	cl_physicalSpaceDown = down;
+	if ( down ) {
+		CL_LatchHeldSpace( 0 );
+	}
+}
+
+void CL_ClearPhysicalSpaceHold( void ) {
+	cl_physicalSpaceDown = qfalse;
+	CL_ClearHeldSpaceLatch();
+	if ( cl_cinematicSkipIntentKey == K_SPACE ) {
+		CL_ClearCinematicSkipIntent();
+	}
+	cl_cinematicNextAutoSkipTime = 0;
+}
+
+void CL_RecordCinematicSkipIntent( int key, unsigned time ) {
+	if ( !CL_IsCinematicSkipKey( key ) || ( cls.keyCatchers & KEYCATCH_CONSOLE ) ) {
+		return;
+	}
+
+	cl_cinematicSkipIntentKey = key;
+	cl_cinematicSkipIntentTime = time ? time : Sys_Milliseconds();
+}
+
+qboolean CL_ConsumeCinematicSkipIntent( int *key, unsigned *time ) {
+	int now;
+
+	if ( cls.keyCatchers & KEYCATCH_CONSOLE ) {
+		return qfalse;
+	}
+
+	now = Sys_Milliseconds();
+	if ( cl_cinematicSkipIntentKey ) {
+		qboolean intentWasSpace = ( cl_cinematicSkipIntentKey == K_SPACE ) ? qtrue : qfalse;
+		qboolean spaceHeld = intentWasSpace && CL_IsSpaceSkipHeld();
+		if ( ( now - (int)cl_cinematicSkipIntentTime ) <= CL_CINEMATIC_SKIP_INTENT_MS ||
+			 spaceHeld ) {
+			if ( key ) {
+				*key = cl_cinematicSkipIntentKey;
+			}
+			if ( time ) {
+				*time = spaceHeld
+					? ( cl_cinematicHeldSpaceTime ? cl_cinematicHeldSpaceTime : (unsigned)now )
+					: cl_cinematicSkipIntentTime;
+			}
+			if ( !spaceHeld ) {
+				CL_ClearCinematicSkipIntent();
+				cl_cinematicAutoSkipIssued = qtrue;
+			}
+			return qtrue;
+		}
+
+		CL_ClearCinematicSkipIntent();
+	}
+
+	if ( CL_GetHeldCinematicSkipKey( key, time ) ) {
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
+void CL_StartButtonBindingForHeldKey( int key, unsigned time ) {
+	char *kb;
+	char cmd[1024];
+
+	if ( key <= 0 || key >= MAX_KEYS ) {
+		return;
+	}
+
+	kb = keys[key].binding;
+	if ( kb && kb[0] == '+' ) {
+		Com_sprintf( cmd, sizeof( cmd ), "%s %i %i\n", kb, key, time );
+		Cbuf_AddText( cmd );
+	}
+}
+
+void CL_CheckCinematicSkipAuto( void ) {
+	int key;
+	unsigned time;
+	int now;
+	qboolean spaceHeld;
+
+	if ( !cl.cameraMode && cls.state != CA_CINEMATIC ) {
+		cl_cinematicAutoSkipIssued = qfalse;
+		cl_cinematicNextAutoSkipTime = 0;
+		return;
+	}
+
+	spaceHeld = CL_IsSpaceSkipHeld();
+	if ( cl_cinematicAutoSkipIssued && !spaceHeld ) {
+		return;
+	}
+
+	if ( cls.keyCatchers & KEYCATCH_CONSOLE ) {
+		return;
+	}
+
+	now = Sys_Milliseconds();
+	if ( spaceHeld ) {
+		if ( cl_cinematicNextAutoSkipTime && now < (int)cl_cinematicNextAutoSkipTime ) {
+			return;
+		}
+		cl_cinematicNextAutoSkipTime = (unsigned)( now + CL_CINEMATIC_SKIP_RETRY_MS );
+	}
+
+	if ( !CL_ConsumeCinematicSkipIntent( &key, &time ) ) {
+		return;
+	}
+
+	if ( cls.state == CA_CINEMATIC ) {
+		Cvar_Set( "nextdemo", "" );
+		SCR_StopCinematic();
+		CL_StartButtonBindingForHeldKey( key, time );
+		return;
+	}
+
+	if ( cl.cameraMode ) {
+		CL_AddReliableCommand( "cameraInterrupt" );
+		CL_StartButtonBindingForHeldKey( key, time );
+	}
+}
+
 void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 	char    *kb;
 	char cmd[1024];
@@ -1693,6 +1880,34 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 		return;
 	}
 
+	/* Cutscene/cinematic skip must win over UI catchers.  The SDL backend can
+	   leave KEYCATCH_UI active for ImGui/race chat, and then SPACE never reaches
+	   the old skip path. */
+	if ( down && !( cls.keyCatchers & KEYCATCH_CONSOLE ) ) {
+		if ( CL_IsCinematicSkipKey( key ) && keys[key].repeats <= 1 ) {
+			CL_RecordCinematicSkipIntent( key, time );
+		}
+		if ( cls.state == CA_CINEMATIC ) {
+			if ( keys[key].repeats > 1 ) {
+				return;
+			}
+			CL_ClearCinematicSkipIntent();
+			Cvar_Set( "nextdemo", "" );
+			SCR_StopCinematic();
+			CL_StartButtonBindingForHeldKey( key, time );
+			return;
+		}
+		if ( cl.cameraMode && CL_IsCinematicSkipKey( key ) ) {
+			if ( keys[key].repeats > 1 ) {
+				return;
+			}
+			CL_ClearCinematicSkipIntent();
+			CL_AddReliableCommand( "cameraInterrupt" );
+			CL_StartButtonBindingForHeldKey( key, time );
+			return;
+		}
+	}
+
 //----(SA)	added
 	if ( cl.cameraMode ) {
 		if ( !( cls.keyCatchers & ( KEYCATCH_UI | KEYCATCH_CONSOLE ) ) ) {    // let menu/console handle keys if necessary
@@ -1700,7 +1915,8 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 			// in cutscenes we need to handle keys specially (pausing not allowed in camera mode)
 			if ( (  key == K_ESCAPE ||
 					key == K_SPACE ||
-					key == K_ENTER ) && down ) {
+					key == K_ENTER ||
+					key == K_KP_ENTER ) && down ) {
 				if ( keys[key].repeats <= 1 ) {
 					CL_AddReliableCommand( "cameraInterrupt" );
 				}

@@ -416,7 +416,7 @@ gotnewcl:
 	denied = (char *)VM_Call( gvm, GAME_CLIENT_CONNECT, clientNum, qtrue, qfalse ); // firstTime = qtrue
 	if ( denied ) {
 		// we can't just use VM_ArgPtr, because that is only valid inside a VM_Call
-		denied = VM_ExplicitArgPtr( gvm, (int)denied );
+		denied = VM_ExplicitArgPtr( gvm, (vmArg_t)denied );
 
 		NET_OutOfBandPrint( NS_SERVER, from, "print\n%s\n", denied );
 		Com_DPrintf( "Game rejected a connection: %s.\n", denied );
@@ -1203,6 +1203,35 @@ void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK ) {
 			VM_Call( gvm, GAME_CLIENT_COMMAND, cl - svs.clients );
 		}
 	}
+}
+
+/*
+==================
+SV_ExecuteLocalClientCommand
+
+Single-player runs an in-process local server.  Camera control commands are
+latency-sensitive during cutscene skips, so execute the whitelisted command
+immediately instead of waiting for the next reliable client packet.
+==================
+*/
+qboolean SV_ExecuteLocalClientCommand( const char *s ) {
+	client_t *cl;
+
+	if ( !s || !s[0] || !svs.clients || !sv_maxclients || sv_maxclients->integer < 1 ) {
+		return qfalse;
+	}
+	if ( sv.state != SS_GAME || !gvm ) {
+		return qfalse;
+	}
+
+	cl = &svs.clients[0];
+	if ( cl->state < CS_ACTIVE ) {
+		return qfalse;
+	}
+
+	SV_ExecuteClientCommand( cl, s, qtrue );
+	Com_sprintf( cl->lastClientCommandString, sizeof( cl->lastClientCommandString ), "%s", s );
+	return qtrue;
 }
 
 /*

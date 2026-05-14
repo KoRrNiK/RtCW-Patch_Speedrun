@@ -30,13 +30,13 @@ If you have questions concerning this license or the applicable additional terms
 // cg_syscalls.asm is included instead when building a qvm
 #include "cg_local.h"
 
-static int ( QDECL * syscall )( int arg, ... ) = ( int ( QDECL * )( int, ... ) ) - 1;
+static vmArg_t ( QDECL * syscall )( vmArg_t arg, ... ) = ( vmArg_t ( QDECL * )( vmArg_t, ... ) ) - 1;
 
 // TTimo: guarding
 #if defined( __MACOS__ )
 #pragma export on
 #endif
-void dllEntry( int ( QDECL  *syscallptr )( int arg,... ) ) {
+void dllEntry( vmArg_t ( QDECL  *syscallptr )( vmArg_t arg,... ) ) {
 #if defined( __MACOS__ )
 #pragma export off
 #endif
@@ -417,8 +417,8 @@ qboolean trap_loadCamera( int camNum, const char *name ) {
 	return syscall( CG_LOADCAMERA, camNum, name );
 }
 
-void trap_startCamera( int camNum, int time ) {
-	syscall( CG_STARTCAMERA, camNum, time );
+qboolean trap_startCamera( int camNum, int time ) {
+	return syscall( CG_STARTCAMERA, camNum, time );
 }
 
 //----(SA)	added

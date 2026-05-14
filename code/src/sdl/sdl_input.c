@@ -43,6 +43,30 @@ static int systemShortcutUntil = 0;
 
 static void IN_DeactivateMouseInternal( qboolean isFullscreen );
 
+qboolean IN_IsPhysicalSpaceDown( void ) {
+	const Uint8 *keyboardState;
+	qboolean down = qfalse;
+
+	keyboardState = (const Uint8 *)SDL_GetKeyboardState( NULL );
+	if ( keyboardState && keyboardState[SDL_SCANCODE_SPACE] ) {
+		down = qtrue;
+	}
+#ifdef _WIN32
+	if ( GetAsyncKeyState( VK_SPACE ) & 0x8000 ) {
+		down = qtrue;
+	}
+#endif
+	return down;
+}
+
+static void IN_UpdatePhysicalSpaceState( void ) {
+	if ( IN_IsPhysicalSpaceDown() ) {
+		CL_SetPhysicalSpaceState( qtrue );
+	} else {
+		CL_ClearPhysicalSpaceHold();
+	}
+}
+
 static void IN_PrintKey( const SDL_KeyboardEvent *event, keyNum_t key, qboolean down ) {
 	Com_Printf( "%s Scancode: 0x%02x(%s) Sym: 0x%02x(%s) Q:%s\n",
 		down ? "+" : " ",
@@ -54,7 +78,11 @@ static void IN_PrintKey( const SDL_KeyboardEvent *event, keyNum_t key, qboolean 
 static keyNum_t IN_TranslateSDLToQ3Key( const SDL_KeyboardEvent *event, qboolean down ) {
 	keyNum_t key = 0;
 
-	if ( event->scancode >= SDL_SCANCODE_1 && event->scancode <= SDL_SCANCODE_0 ) {
+	if ( event->scancode == SDL_SCANCODE_GRAVE ) {
+		/* Console key should be physical-layout stable.  Some keyboards/layouts
+		   report this key as section/degree/etc instead of ` or ~. */
+		key = '`';
+	} else if ( event->scancode >= SDL_SCANCODE_1 && event->scancode <= SDL_SCANCODE_0 ) {
 		if ( event->scancode == SDL_SCANCODE_0 ) {
 			key = '0';
 		} else {
@@ -459,6 +487,9 @@ static void IN_ProcessEvents( void ) {
 		return;
 	}
 
+	SDL_PumpEvents();
+	IN_UpdatePhysicalSpaceState();
+
 	while ( SDL_PollEvent( &e ) ) {
 		switch ( e.type )
 		{
@@ -473,10 +504,14 @@ static void IN_ProcessEvents( void ) {
 			if ( IN_IsSystemShortcutKey( &e.key ) ) {
 				IN_SuspendMouseForSystemShortcut( 1500 );
 			}
-			if ( e.key.repeat && Key_GetCatcher() == 0 ) {
+			key = IN_TranslateSDLToQ3Key( &e.key, qtrue );
+			if ( e.key.repeat && Key_GetCatcher() == 0 && cls.state != CA_CINEMATIC &&
+				!( cl.cameraMode && ( key == K_ESCAPE || key == K_SPACE || key == K_ENTER || key == K_KP_ENTER ) ) ) {
 				break;
 			}
-			key = IN_TranslateSDLToQ3Key( &e.key, qtrue );
+			if ( key == K_SPACE ) {
+				CL_SetPhysicalSpaceState( qtrue );
+			}
 			if ( key && CL_SpeedrunImGui_SDLKeyEvent( key, qtrue ) ) {
 				break;
 			}
@@ -496,6 +531,9 @@ static void IN_ProcessEvents( void ) {
 				IN_SuspendMouseForSystemShortcut( 750 );
 			}
 			key = IN_TranslateSDLToQ3Key( &e.key, qfalse );
+			if ( key == K_SPACE ) {
+				CL_ClearPhysicalSpaceHold();
+			}
 			if ( key && CL_SpeedrunImGui_SDLKeyEvent( key, qfalse ) ) {
 				break;
 			}
@@ -615,6 +653,7 @@ static void IN_ProcessEvents( void ) {
 		case SDL_EVENT_WINDOW_MINIMIZED:
 			g_wv.isMinimized = qtrue;
 			g_wv.activeApp = qfalse;
+			CL_ClearPhysicalSpaceHold();
 			Cvar_SetValue( "com_minimized", 1 );
 			IN_SuspendMouseForSystemShortcut( 1000 );
 			IN_DeactivateMouseInternal( Cvar_VariableIntegerValue( "r_fullscreen" ) != 0 );
@@ -628,6 +667,7 @@ static void IN_ProcessEvents( void ) {
 
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
 			g_wv.activeApp = qfalse;
+			CL_ClearPhysicalSpaceHold();
 			Cvar_SetValue( "com_unfocused", 1 );
 			IN_SuspendMouseForSystemShortcut( 1000 );
 			IN_DeactivateMouseInternal( Cvar_VariableIntegerValue( "r_fullscreen" ) != 0 );
@@ -645,6 +685,8 @@ static void IN_ProcessEvents( void ) {
 			break;
 		}
 	}
+
+	IN_UpdatePhysicalSpaceState();
 }
 
 void IN_Init( void ) {

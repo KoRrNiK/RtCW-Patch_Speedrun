@@ -100,7 +100,7 @@ typedef struct {
 	byte file[65536];
 	short sqrTable[256];
 
-	unsigned int mcomp[256];
+	intptr_t mcomp[256];
 	byte                *qStatus[2][32768];
 
 	long oldXOff, oldYOff, oldysize, oldxsize;
@@ -137,11 +137,11 @@ typedef struct {
 	unsigned int xsize, ysize, maxsize, minsize;
 
 	qboolean half, smootheddouble, inMemory;
-	long normalBuffer0;
+	intptr_t normalBuffer0;
 	long roq_flags;
 	long roqF0;
 	long roqF1;
-	long t[2];
+	intptr_t t[2];
 	long roqFPS;
 	int playonwalls;
 	byte*               buf;
@@ -1102,8 +1102,8 @@ static void readQuadInfo( byte *qData ) {
 	cinTable[currentHandle].VQ0 = cinTable[currentHandle].VQNormal;
 	cinTable[currentHandle].VQ1 = cinTable[currentHandle].VQBuffer;
 
-	cinTable[currentHandle].t[0] = ( 0 - (unsigned int)cin.linbuf ) + (unsigned int)cin.linbuf + cinTable[currentHandle].screenDelta;
-	cinTable[currentHandle].t[1] = ( 0 - ( (unsigned int)cin.linbuf + cinTable[currentHandle].screenDelta ) ) + (unsigned int)cin.linbuf;
+	cinTable[currentHandle].t[0] = (intptr_t)cinTable[currentHandle].screenDelta;
+	cinTable[currentHandle].t[1] = -(intptr_t)cinTable[currentHandle].screenDelta;
 
 	cinTable[currentHandle].drawX = cinTable[currentHandle].CIN_WIDTH;
 	cinTable[currentHandle].drawY = cinTable[currentHandle].CIN_HEIGHT;
@@ -1135,7 +1135,8 @@ static void readQuadInfo( byte *qData ) {
 ******************************************************************************/
 
 static void RoQPrepMcomp( long xoff, long yoff ) {
-	long i, j, x, y, temp, temp2;
+	intptr_t i, j, temp, temp2;
+	long x, y;
 
 	i = cinTable[currentHandle].samplesPerLine; j = cinTable[currentHandle].samplesPerPixel;
 	if ( cinTable[currentHandle].xsize == ( cinTable[currentHandle].ysize * 4 ) && !cinTable[currentHandle].half ) {
@@ -1804,6 +1805,8 @@ CL_PlayCinematic_f
 void CL_PlayCinematic_f( void ) {
 	char    *arg, *s;
 	qboolean holdatend;
+	int skipKey = 0;
+	unsigned skipTime = 0;
 	int bits = CIN_system;
 
 	Com_DPrintf( "CL_PlayCinematic_f\n" );
@@ -1836,6 +1839,13 @@ void CL_PlayCinematic_f( void ) {
 	}
 
 	if ( CL_handle >= 0 ) {
+		if ( CL_ConsumeCinematicSkipIntent( &skipKey, &skipTime ) ) {
+			Cvar_Set( "nextdemo", "" );
+			SCR_StopCinematic();
+			CL_StartButtonBindingForHeldKey( skipKey, skipTime );
+			return;
+		}
+
 		do {
 			SCR_RunCinematic();
 		} while ( cinTable[currentHandle].buf == NULL && cinTable[currentHandle].status == FMV_PLAY );        // wait for first frame (load codebook and sound)

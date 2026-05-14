@@ -184,6 +184,20 @@ static qboolean CL_IsCameraOriginCommand( const char *cmd ) {
 	return cmd && !Q_strncmp( cmd, "setCameraOrigin", 15 ) && ( cmd[15] == '\0' || cmd[15] == ' ' ) ? qtrue : qfalse;
 }
 
+static qboolean CL_IsLocalCameraControlCommand( const char *cmd ) {
+	if ( !cmd ) {
+		return qfalse;
+	}
+	if ( !Q_stricmp( cmd, "startCamera" ) ||
+		 !Q_stricmp( cmd, "stopCamera" ) ||
+		 !Q_stricmp( cmd, "cameraInterrupt" ) ) {
+		return qtrue;
+	}
+	return qfalse;
+}
+
+extern qboolean SV_ExecuteLocalClientCommand( const char *cmd );
+
 /*
 ======================
 CL_AddReliableCommand
@@ -199,6 +213,10 @@ void CL_AddReliableCommand( const char *cmd ) {
 	// we must drop the connection
 //	if(cl.cameraMode)
 //		Com_Printf ("cmd: %s\n", cmd);
+	if ( CL_IsLocalCameraControlCommand( cmd ) && SV_ExecuteLocalClientCommand( cmd ) ) {
+		return;
+	}
+
 	if ( CL_IsCameraOriginCommand( cmd ) && clc.reliableSequence > clc.reliableAcknowledge ) {
 		index = clc.reliableSequence & ( MAX_RELIABLE_COMMANDS - 1 );
 		if ( CL_IsCameraOriginCommand( clc.reliableCommands[index] ) ) {
@@ -3979,6 +3997,7 @@ void CL_Frame( int msec ) {
 
 	// decide on the serverTime to render
 	CL_SetCGameTime();
+	CL_CheckCinematicSkipAuto();
 
 	// update the screen
 	SCR_UpdateScreen();

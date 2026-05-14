@@ -435,9 +435,17 @@ CL_CgameSystemCalls
 The cgame module is making a system call
 ====================
 */
+static float VM_ArgToFloat( vmArg_t arg ) {
+	int temp = (int)arg;
+	return *(float *)&temp;
+}
+
 #define VMA( x ) VM_ArgPtr( args[x] )
-#define VMF( x )  ( (float *)args )[x]
-int CL_CgameSystemCalls( int *args ) {
+#define VMF( x ) VM_ArgToFloat( args[x] )
+vmArg_t CL_CgameSystemCalls( vmArg_t *args ) {
+	int skipKey;
+	unsigned skipTime;
+
 	switch ( args[0] ) {
 	case CG_PRINT:
 		Com_Printf( "%s", VMA( 1 ) );
@@ -719,11 +727,11 @@ int CL_CgameSystemCalls( int *args ) {
 
 
 	case CG_MEMSET:
-		return (int)memset( VMA( 1 ), args[2], args[3] );
+		return (vmArg_t)memset( VMA( 1 ), args[2], args[3] );
 	case CG_MEMCPY:
-		return (int)memcpy( VMA( 1 ), VMA( 2 ), args[3] );
+		return (vmArg_t)memcpy( VMA( 1 ), VMA( 2 ), args[3] );
 	case CG_STRNCPY:
-		return (int)strncpy( VMA( 1 ), VMA( 2 ), args[3] );
+		return (vmArg_t)strncpy( VMA( 1 ), VMA( 2 ), args[3] );
 	case CG_SIN:
 		return FloatAsInt( sin( VMF( 1 ) ) );
 	case CG_COS:
@@ -800,6 +808,11 @@ int CL_CgameSystemCalls( int *args ) {
 			cl.cameraMode = qtrue;  //----(SA)	added
 		}
 		startCamera( args[1], args[2] );
+		if ( args[1] == 0 && CL_ConsumeCinematicSkipIntent( &skipKey, &skipTime ) ) {
+			CL_AddReliableCommand( "cameraInterrupt" );
+			CL_StartButtonBindingForHeldKey( skipKey, skipTime );
+			return 1;
+		}
 		return 0;
 
 //----(SA)	added

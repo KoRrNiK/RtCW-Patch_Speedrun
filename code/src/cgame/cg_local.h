@@ -2705,7 +2705,7 @@ qboolean    trap_GetEntityToken( char *buffer, int bufferSize );
 // Duffy, camera stuff
 #define CAM_PRIMARY 0   // the main camera for cutscenes, etc.
 qboolean    trap_loadCamera( int camNum, const char *name );
-void        trap_startCamera( int camNum, int time );
+qboolean    trap_startCamera( int camNum, int time );
 void        trap_stopCamera( int camNum );    //----(SA)	added
 qboolean    trap_getCameraInfo( int camNum, int time, vec3_t *origin, vec3_t *angles, float *fov );
 void        CG_StartCamera( const char *name, qboolean startBlack );

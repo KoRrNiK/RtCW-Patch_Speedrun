@@ -2082,7 +2082,14 @@ Cmd_InterruptCamera_f
 ==============
 */
 void Cmd_InterruptCamera_f( gentity_t *ent ) {
-	AICast_ScriptEvent( AICast_GetCastState( ent->s.number ), "trigger", "cameraInterrupt" );
+	cast_state_t *cs;
+
+	cs = AICast_GetCastState( ent->s.number );
+	AICast_ScriptEvent( cs, "trigger", "cameraInterrupt" );
+	/* Speedrun responsiveness: cameraInterrupt scripts usually only issue
+	   changelevel silent 4.  Run that event immediately instead of waiting for
+	   the next AI script tick, while keeping the normal camera/fade setup intact. */
+	AICast_ScriptRun( cs, qtrue );
 }
 
 /*
