@@ -245,6 +245,7 @@ static void CG_SoundParseSounds( char *filename, char *buffer ) {
 	inSound = qfalse;
 	wantSoundName = qtrue;
 	text = &buffer;
+	memset( &sound, 0, sizeof( sound ) );
 
 	while ( 1 ) {
 		token = COM_ParseExt( text, qtrue );

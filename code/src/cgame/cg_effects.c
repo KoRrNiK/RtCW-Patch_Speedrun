@@ -836,7 +836,6 @@ void CG_GibPlayer( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 							VectorCopy( junctionOrigin[i], origin );
 
 							if ( ( cent->currentState.aiChar == AICHAR_HELGA ) || ( cent->currentState.aiChar == AICHAR_HEINRICH ) ) {
-								size *= 3.0;
 								velocity[0] = crandom() * GIB_VELOCITY * 2.0;
 								velocity[1] = crandom() * GIB_VELOCITY * 2.0;
 								velocity[2] = GIB_JUMP + random() * GIB_VELOCITY;

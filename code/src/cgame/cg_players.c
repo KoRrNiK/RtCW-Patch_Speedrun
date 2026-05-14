@@ -3632,6 +3632,11 @@ void CG_AddZombieFlameEffect( centity_t *cent ) {
 	if ( cent->pe.cueZombieSpirit ) {
 		alpha = fadeRatio;
 	} else {
+		if ( fadeOutTime <= 0 ) {
+			cent->pe.zombieSpiritEndTime = 0;
+			CG_FireFlameChunks( cent, morg, mang, 0.1, qfalse, 0 );
+			return;
+		}
 		alpha = ( (float)( cent->pe.zombieSpiritEndTime - cg.time ) / (float)fadeOutTime );
 		fadeRatio = alpha;
 		if ( alpha < 0.0 ) {
