@@ -148,6 +148,37 @@ sfxHandle_t CG_CustomSound( int clientNum, const char *soundName ) {
 	return 0;
 }
 
+static sfxHandle_t CG_RegisterClientCustomSound( const char *modelDir, const char *fallbackDir, const char *soundName ) {
+	const char *dirs[3];
+	sfxHandle_t sound;
+	int i;
+	int j;
+
+	dirs[0] = modelDir;
+	dirs[1] = fallbackDir;
+	dirs[2] = "bj2";
+
+	for ( i = 0; i < (int)( sizeof( dirs ) / sizeof( dirs[0] ) ); i++ ) {
+		if ( !dirs[i] || !dirs[i][0] ) {
+			continue;
+		}
+		for ( j = 0; j < i; j++ ) {
+			if ( dirs[j] && !Q_stricmp( dirs[i], dirs[j] ) ) {
+				break;
+			}
+		}
+		if ( j != i ) {
+			continue;
+		}
+		sound = trap_S_RegisterSound( va( "sound/player/%s/%s", dirs[i], soundName ) );
+		if ( sound ) {
+			return sound;
+		}
+	}
+
+	return 0;
+}
+
 
 
 /*
@@ -1321,10 +1352,7 @@ void CG_LoadClientInfo( clientInfo_t *ci ) {
 		if ( !s ) {
 			break;
 		}
-		ci->sounds[i] = trap_S_RegisterSound( va( "sound/player/%s/%s", dir, s + 1 ) );
-		if ( !ci->sounds[i] ) {
-			ci->sounds[i] = trap_S_RegisterSound( va( "sound/player/%s/%s", fallback, s + 1 ) );
-		}
+		ci->sounds[i] = CG_RegisterClientCustomSound( dir, fallback, s + 1 );
 	}
 
 	// load the gibs
