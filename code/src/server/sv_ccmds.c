@@ -457,10 +457,107 @@ static void SV_MapRestart_f( void ) {
 SV_LoadGame_f
 =================
 */
+#define SV_SAVE_MOVEDSTUFF          15
+#define SV_SAVE_ADDEDMUSIC          8
+#define SV_SAVE_ADDEDFOG            16
+#define SV_SAVE_MIN_64BIT_ENTITY_SIZE 1536
+
+static qboolean SV_ReadSaveInt( const byte *buffer, int size, int *offset, int *value ) {
+	if ( *offset < 0 || *offset + (int)sizeof( int ) > size ) {
+		return qfalse;
+	}
+	memcpy( value, buffer + *offset, sizeof( int ) );
+	*value = LittleLong( *value );
+	*offset += sizeof( int );
+	return qtrue;
+}
+
+static qboolean SV_SkipSaveBytes( int size, int *offset, int count ) {
+	if ( count < 0 || *offset < 0 || *offset + count > size ) {
+		return qfalse;
+	}
+	*offset += count;
+	return qtrue;
+}
+
+static qboolean SV_ParseSaveEntitySize( const byte *buffer, int size, char *mapname, int mapnameSize, int *entitySize ) {
+	int offset;
+	int version;
+	int length;
+	int i;
+
+	*entitySize = 0;
+	if ( mapname && mapnameSize > 0 ) {
+		mapname[0] = 0;
+	}
+
+	offset = 0;
+	if ( !SV_ReadSaveInt( buffer, size, &offset, &version ) ) {
+		return qfalse;
+	}
+	if ( version != SAVE_VERSION && version != 17 && version != 13 && version != 14 && version != 15 ) {
+		return qfalse;
+	}
+	if ( !SV_SkipSaveBytes( size, &offset, MAX_QPATH ) ) {
+		return qfalse;
+	}
+	if ( mapname && mapnameSize > 0 ) {
+		Q_strncpyz( mapname, (const char *)( buffer + sizeof( int ) ), mapnameSize );
+	}
+	if ( !SV_SkipSaveBytes( size, &offset, sizeof( int ) * 2 ) ) {
+		return qfalse;
+	}
+	if ( version >= 13 && !SV_SkipSaveBytes( size, &offset, sizeof( int ) ) ) {
+		return qfalse;
+	}
+	if ( !SV_ReadSaveInt( buffer, size, &offset, &length ) || !SV_SkipSaveBytes( size, &offset, length ) ) {
+		return qfalse;
+	}
+	if ( version >= SV_SAVE_MOVEDSTUFF ) {
+		if ( version > SV_SAVE_ADDEDMUSIC ) {
+			for ( i = 0; i < 9; i++ ) {
+				if ( !SV_SkipSaveBytes( size, &offset, sizeof( int ) ) ) {
+					return qfalse;
+				}
+			}
+			if ( !SV_SkipSaveBytes( size, &offset, MAX_QPATH ) ) {
+				return qfalse;
+			}
+		}
+		if ( version >= SV_SAVE_ADDEDFOG ) {
+			if ( !SV_ReadSaveInt( buffer, size, &offset, &length ) || !SV_SkipSaveBytes( size, &offset, length ) ) {
+				return qfalse;
+			}
+		}
+		if ( version > 13 && !SV_SkipSaveBytes( size, &offset, sizeof( int ) ) ) {
+			return qfalse;
+		}
+	}
+
+	return SV_ReadSaveInt( buffer, size, &offset, entitySize );
+}
+
+static qboolean SV_IsLegacy32BitSavegame( const byte *buffer, int size, char *mapname, int mapnameSize, int *entitySize ) {
+#ifdef _WIN64
+	if ( !SV_ParseSaveEntitySize( buffer, size, mapname, mapnameSize, entitySize ) ) {
+		return qfalse;
+	}
+	return *entitySize > 0 && *entitySize < SV_SAVE_MIN_64BIT_ENTITY_SIZE;
+#else
+	(void)buffer;
+	(void)size;
+	(void)mapname;
+	(void)mapnameSize;
+	(void)entitySize;
+	return qfalse;
+#endif
+}
+
 void    SV_LoadGame_f( void ) {
 	char filename[MAX_QPATH], mapname[MAX_QPATH];
 	byte *buffer;
 	int size;
+	int saveEntitySize;
 
 	// dont allow command if another loadgame is pending
 	if ( Cvar_VariableIntegerValue( "savegame_loading" ) ) {
@@ -501,6 +598,22 @@ void    SV_LoadGame_f( void ) {
 
 	// read the mapname, if it is the same as the current map, then do a fast load
 	Com_sprintf( mapname, sizeof( mapname ), "%s", (const char*)( buffer + sizeof( int ) ) );
+
+	if ( SV_IsLegacy32BitSavegame( buffer, size, mapname, sizeof( mapname ), &saveEntitySize ) ) {
+		Hunk_FreeTempMemory( buffer );
+		Cvar_Set( "savegame_loading", "0" );
+		Cvar_Set( "savegame_filename", "" );
+		Com_Error( ERR_DROP,
+			"Old 32-bit savegame detected.\n\n"
+			"This save was created with the 32-bit build. The 64-bit build uses a different save layout, so loading it directly could corrupt memory or crash.\n\n"
+			"Nothing was deleted. You can still load this save with the 32-bit build, or keep it for a future save converter.\n\n"
+			"Save: %s\n"
+			"Map: %s\n"
+			"Save layout: entity block %i bytes",
+			filename,
+			mapname[0] ? mapname : "unknown",
+			saveEntitySize );
+	}
 
 	if ( com_sv_running->integer && ( com_frameTime != sv.serverId ) ) {
 		// check mapname

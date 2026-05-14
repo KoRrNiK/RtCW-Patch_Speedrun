@@ -189,7 +189,7 @@ static void UI_DrawColorPicker( void );
 #if defined( __MACOS__ )
 #pragma export on
 #endif
-int vmMain( int command, int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7, int arg8, int arg9, int arg10, int arg11  ) {
+vmArg_t vmMain( int command, vmArg_t arg0, vmArg_t arg1, vmArg_t arg2, vmArg_t arg3, vmArg_t arg4, vmArg_t arg5, vmArg_t arg6, vmArg_t arg7, vmArg_t arg8, vmArg_t arg9, vmArg_t arg10, vmArg_t arg11  ) {
 #if defined( __MACOS__ )
 #pragma export off
 #endif
@@ -333,7 +333,7 @@ int Text_Width( const char *text, int font, float scale, int limit ) {
 	useScale = scale * fnt->glyphScale;
 	out = 0;
 	if ( text ) {
-		len = strlen( text );
+		len = (int)strlen( text );
 		if ( limit > 0 && len > limit ) {
 			len = limit;
 		}
@@ -378,7 +378,7 @@ int Text_Height( const char *text, int font, float scale, int limit ) {
 	useScale = scale * fnt->glyphScale;
 	max = 0;
 	if ( text ) {
-		len = strlen( text );
+		len = (int)strlen( text );
 		if ( limit > 0 && len > limit ) {
 			len = limit;
 		}
@@ -434,7 +434,7 @@ void Text_Paint( float x, float y, int font, float scale, vec4_t color, const ch
 		const unsigned char *s = text;
 		trap_R_SetColor( color );
 		memcpy( &newColor[0], &color[0], sizeof( vec4_t ) );
-		len = strlen( text );
+		len = (int)strlen( text );
 		if ( limit > 0 && len > limit ) {
 			len = limit;
 		}
@@ -515,7 +515,7 @@ void Text_PaintWithCursor( float x, float y, int font, float scale, vec4_t color
 		const unsigned char *s = text;
 		trap_R_SetColor( color );
 		memcpy( &newColor[0], &color[0], sizeof( vec4_t ) );
-		len = strlen( text );
+		len = (int)strlen( text );
 		if ( limit > 0 && len > limit ) {
 			len = limit;
 		}
@@ -4520,6 +4520,24 @@ static int QDECL UI_SavegamesQsortCompare( const void *arg1, const void *arg2 ) 
 UI_SavegameSort
 ==============
 */
+static const char *UI_SavegameEmptyText( void ) {
+#ifdef _WIN64
+	if ( trap_Cvar_VariableValue( "ui_savegameListLegacy" ) != 0 ) {
+		return "(no old 32-bit savegames)";
+	}
+	return "(no 64-bit savegames)";
+#else
+	if ( trap_Cvar_VariableValue( "ui_savegameListLegacy" ) != 0 ) {
+		return "(no 64-bit savegames)";
+	}
+	return "(no savegames)";
+#endif
+}
+
+static void UI_SetSavegameLegacyButtonText( qboolean showLegacy ) {
+	trap_Cvar_Set( "ui_savegameLegacyButtonText", showLegacy ? "64-bit Saves" : "Old Saves" );
+}
+
 void UI_SavegameSort( int column, qboolean force ) {
 	int cursel;
 
@@ -4543,7 +4561,7 @@ void UI_SavegameSort( int column, qboolean force ) {
 
 	} else {
 		trap_Cvar_Set( "ui_savegameName", "" );
-		trap_Cvar_Set( "ui_savegameInfo", "(no savegames)" );
+		trap_Cvar_Set( "ui_savegameInfo", UI_SavegameEmptyText() );
 	}
 
 }
@@ -4567,11 +4585,11 @@ static void UI_LoadMods() {
 	numdirs = trap_FS_GetFileList( "$modlist", "", dirlist, sizeof( dirlist ) );
 	dirptr  = dirlist;
 	for ( i = 0; i < numdirs; i++ ) {
-		dirlen = strlen( dirptr ) + 1;
+		dirlen = (int)strlen( dirptr ) + 1;
 		descptr = dirptr + dirlen;
 		uiInfo.modList[uiInfo.modCount].modName = String_Alloc( dirptr );
 		uiInfo.modList[uiInfo.modCount].modDescr = String_Alloc( descptr );
-		dirptr += dirlen + strlen( descptr ) + 1;
+		dirptr += dirlen + (int)strlen( descptr ) + 1;
 		uiInfo.modCount++;
 		if ( uiInfo.modCount >= MAX_MODS ) {
 			break;
@@ -4634,6 +4652,7 @@ static void UI_DelSavegame() {
 
 
 #define SAVE_INFOSTRING_LENGTH  256     // defined in g_save.c
+#define UI_SAVE_MIN_64BIT_ENTITY_SIZE 1536
 
 
 /*
@@ -4647,6 +4666,96 @@ static char *monthStr[12] =
 	"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
 };
 
+static void UI_SkipSaveBytes( fileHandle_t f, int bytes ) {
+	char buffer[128];
+	int chunk;
+
+	while ( bytes > 0 ) {
+		chunk = bytes;
+		if ( chunk > (int)sizeof( buffer ) ) {
+			chunk = sizeof( buffer );
+		}
+		trap_FS_Read( buffer, chunk, f );
+		bytes -= chunk;
+	}
+}
+
+static qboolean UI_ReadSaveString( fileHandle_t f, char *buffer, int bufferSize, int stringLen ) {
+	int readLen;
+
+	if ( stringLen < 0 || stringLen > 8192 ) {
+		if ( bufferSize > 0 ) {
+			buffer[0] = '\0';
+		}
+		return qfalse;
+	}
+
+	readLen = stringLen;
+	if ( readLen >= bufferSize ) {
+		readLen = bufferSize - 1;
+	}
+
+	if ( readLen > 0 ) {
+		trap_FS_Read( buffer, readLen, f );
+	}
+	if ( bufferSize > 0 ) {
+		buffer[readLen] = '\0';
+	}
+
+	if ( stringLen > readLen ) {
+		UI_SkipSaveBytes( f, stringLen - readLen );
+	}
+
+	return qtrue;
+}
+
+static void UI_SetLegacySaveText( int index, int ver ) {
+	uiInfo.savegameList[index].legacy32Bit = qtrue;
+	uiInfo.savegameList[index].savegameInfoText = "Gametime: (unknown)\nHealth: (unknown)\n^132-bit savegame - shown only in Old saves.";
+	uiInfo.savegameList[index].date = "temp_date";
+	memset( &uiInfo.savegameList[index].tm, 0, sizeof( qtime_t ) );
+	uiInfo.savegameList[index].time = String_Alloc( va( "(old save ver: %d)", ver ) );
+}
+
+static void UI_CheckSaveLayoutFromCurrentOffset( fileHandle_t f, int index, int ver ) {
+	char tmp[MAX_QPATH];
+	int len;
+	int entityStructSize = 0;
+
+	uiInfo.savegameList[index].legacy32Bit = qfalse;
+
+	if ( ver < 15 ) {
+		uiInfo.savegameList[index].legacy32Bit = qtrue;
+		return;
+	}
+
+	trap_FS_Read( tmp, MAX_QPATH, f );       // music
+
+	if ( ver >= 16 ) {
+		trap_FS_Read( &len, sizeof( len ), f );  // fog string length
+		if ( len < 0 || len > 8192 ) {
+			uiInfo.savegameList[index].legacy32Bit = qtrue;
+			return;
+		}
+		UI_SkipSaveBytes( f, len );
+	}
+
+	if ( ver > 13 ) {
+		trap_FS_Read( &len, sizeof( len ), f );  // game skill
+	}
+	trap_FS_Read( &entityStructSize, sizeof( entityStructSize ), f );
+
+#ifdef _WIN64
+	if ( entityStructSize <= 0 || entityStructSize < UI_SAVE_MIN_64BIT_ENTITY_SIZE ) {
+		uiInfo.savegameList[index].legacy32Bit = qtrue;
+	}
+#else
+	if ( entityStructSize <= 0 || entityStructSize >= UI_SAVE_MIN_64BIT_ENTITY_SIZE ) {
+		uiInfo.savegameList[index].legacy32Bit = qtrue;
+	}
+#endif
+}
+
 /*
 ==============
 UI_ParseSavegame
@@ -4655,14 +4764,25 @@ UI_ParseSavegame
 void UI_ParseSavegame( int index ) {
 	fileHandle_t f;
 	qtime_t         *tm;
-	int i, ver;
+	int i, ver, infoLen, fileLen;
 	static char buf[SAVE_INFOSTRING_LENGTH];
+	char legacyInfo[MAX_STRING_CHARS];
 	char mapname[MAX_QPATH];
 
-	trap_FS_FOpenFile( va( "save/%s.svg", uiInfo.savegameList[index].savegameFile ), &f, FS_READ );
-	if ( !f ) {
+	uiInfo.savegameList[index].mapName = "unknownmap";
+	uiInfo.savegameList[index].episode = -1;
+	uiInfo.savegameList[index].savegameInfoText = "(unreadable savegame)";
+	uiInfo.savegameList[index].time = "(unreadable savegame)";
+	uiInfo.savegameList[index].legacy32Bit = qtrue;
+
+	fileLen = trap_FS_FOpenFile( va( "save/%s.svg", uiInfo.savegameList[index].savegameFile ), &f, FS_READ );
+	if ( !f || fileLen < (int)sizeof( int ) ) {
+		if ( f ) {
+			trap_FS_FCloseFile( f );
+		}
 		return;
 	}
+	uiInfo.savegameList[index].legacy32Bit = qfalse;
 
 	// read the version
 	trap_FS_Read( &ver, sizeof( i ), f );
@@ -4678,13 +4798,7 @@ void UI_ParseSavegame( int index ) {
 		trap_FS_FCloseFile( f );
 		uiInfo.savegameList[index].mapName          = "unknownmap";
 		uiInfo.savegameList[index].episode          = -1;
-		uiInfo.savegameList[index].savegameInfoText = "Gametime: (unknown)\nHealth: (unknown)\n(old savegame)";
-
-		uiInfo.savegameList[index].date = "temp_date";
-		uiInfo.savegameList[index].time = "(old savegame)";
-
-		memset( &uiInfo.savegameList[index].tm, 0, sizeof( qtime_t ) );
-		uiInfo.savegameList[index].time = String_Alloc( va( "(old savegame ver: %d)", ver ) );
+		UI_SetLegacySaveText( index, ver );
 		return;
 	}
 
@@ -4704,19 +4818,17 @@ void UI_ParseSavegame( int index ) {
 
 	if ( ver < 12 ) {
 		trap_FS_FCloseFile( f );
-		uiInfo.savegameList[index].savegameInfoText = "Gametime: (unknown)\nHealth: (unknown)\n(old savegame)";
-		uiInfo.savegameList[index].date = "temp_date";
-		memset( &uiInfo.savegameList[index].tm, 0, sizeof( qtime_t ) );
-		uiInfo.savegameList[index].time = String_Alloc( va( "(old savegame ver: %d)", ver ) );
+		UI_SetLegacySaveText( index, ver );
 		return;
 	}
 
 	// read the info string length
-	trap_FS_Read( &i, sizeof( i ), f );
+	trap_FS_Read( &infoLen, sizeof( infoLen ), f );
 
 	// read the info string
-	trap_FS_Read( buf, i, f );
-	buf[i] = '\0';        //DAJ made it a char
+	if ( !UI_ReadSaveString( f, buf, sizeof( buf ), infoLen ) ) {
+		Q_strncpyz( buf, "Gametime: (unknown)\nHealth: (unknown)\n(corrupt save header)", sizeof( buf ) );
+	}
 	uiInfo.savegameList[index].savegameInfoText = String_Alloc( buf );
 
 	// time
@@ -4731,10 +4843,19 @@ void UI_ParseSavegame( int index ) {
 		trap_FS_Read( &tm->tm_wday, sizeof( tm->tm_wday ), f );
 		trap_FS_Read( &tm->tm_yday, sizeof( tm->tm_yday ), f );        // days since jan1 (0-365)
 		trap_FS_Read( &tm->tm_isdst, sizeof( tm->tm_isdst ), f );
+		if ( tm->tm_mon < 0 || tm->tm_mon >= 12 ) {
+			tm->tm_mon = 0;
+		}
 		uiInfo.savegameList[index].time = String_Alloc( va( "%s %i, %i   %02i:%02i", monthStr[tm->tm_mon], tm->tm_mday, 1900 + tm->tm_year, tm->tm_hour, tm->tm_min ) );
 	} else {
 		memset( &uiInfo.savegameList[index].tm, 0, sizeof( qtime_t ) );
 		uiInfo.savegameList[index].time = String_Alloc( va( "(old save ver: %d)", ver ) );
+	}
+
+	UI_CheckSaveLayoutFromCurrentOffset( f, index, ver );
+	if ( uiInfo.savegameList[index].legacy32Bit ) {
+		Com_sprintf( legacyInfo, sizeof( legacyInfo ), "%s\n^132-bit savegame - shown only in Old saves.", uiInfo.savegameList[index].savegameInfoText );
+		uiInfo.savegameList[index].savegameInfoText = String_Alloc( legacyInfo );
 	}
 
 	trap_FS_FCloseFile( f );
@@ -4795,7 +4916,7 @@ static void UI_SaveFavourites( void ) {
 	trap_FS_FOpenFile( "save/favourites.txt", &f, FS_WRITE );
 	if ( !f ) return;
 	for ( i = 0; i < uiFavouriteCount; i++ ) {
-		trap_FS_Write( uiFavourites[i], strlen( uiFavourites[i] ), f );
+		trap_FS_Write( uiFavourites[i], (int)strlen( uiFavourites[i] ), f );
 		trap_FS_Write( "\n", 1, f );
 	}
 	trap_FS_FCloseFile( f );
@@ -4851,28 +4972,30 @@ UI_LoadSavegames
 static void UI_LoadSavegames( char *dir ) {
 	char sglist[4096];
 	char    *sgname;
-	int i, len;
+	int i, len, fileCount, saveIndex;
+	qboolean hasLegacy;
+	qboolean showLegacy;
 
 	UI_LoadFavourites();
 
 	if ( dir ) {
-		uiInfo.savegameCount = trap_FS_GetFileList( va( "save/%s", dir ), "svg", sglist, 4096 );
+		fileCount = trap_FS_GetFileList( va( "save/%s", dir ), "svg", sglist, 4096 );
 	} else {
-		uiInfo.savegameCount = trap_FS_GetFileList( "save", "svg", sglist, 4096 );
+		fileCount = trap_FS_GetFileList( "save", "svg", sglist, 4096 );
 	}
 
-	if ( uiInfo.savegameCount ) {
-		if ( uiInfo.savegameCount > MAX_SAVEGAMES ) {
-			uiInfo.savegameCount = MAX_SAVEGAMES;
-		}
-		sgname = sglist;
-		for ( i = 0; i < uiInfo.savegameCount; i++ ) {
+	uiInfo.savegameCount = 0;
+	hasLegacy = qfalse;
+	showLegacy = trap_Cvar_VariableValue( "ui_savegameListLegacy" ) != 0;
+	UI_SetSavegameLegacyButtonText( showLegacy );
 
-			len = strlen( sgname );
+	if ( fileCount ) {
+		sgname = sglist;
+		for ( i = 0; i < fileCount && uiInfo.savegameCount < MAX_SAVEGAMES; i++ ) {
+
+			len = (int)strlen( sgname );
 
 			if ( !Q_stricmp( sgname, "current.svg" ) ) {    // ignore some savegames that have special uses and shouldn't be loaded by the user directly
-				i--;
-				uiInfo.savegameCount -= 1;
 				sgname += len + 1;
 				continue;
 			}
@@ -4881,41 +5004,64 @@ static void UI_LoadSavegames( char *dir ) {
 				sgname[len - 4] = '\0';
 			}
 //			Q_strupr(sgname);
+			saveIndex = uiInfo.savegameCount;
 			if ( dir ) {
-				uiInfo.savegameList[i].savegameFile = String_Alloc( va( "%s/%s", dir, sgname ) );
+				uiInfo.savegameList[saveIndex].savegameFile = String_Alloc( va( "%s/%s", dir, sgname ) );
 			} else {
-				uiInfo.savegameList[i].savegameFile = String_Alloc( sgname );
+				uiInfo.savegameList[saveIndex].savegameFile = String_Alloc( sgname );
 			}
 
-			uiInfo.savegameList[i].savegameName = String_Alloc( sgname );
-
-			// get string into list for sorting too
-			uiInfo.savegameStatus.displaySavegames[i] = i;
-//			qsort( &uiInfo.savegameStatus.displaySavegames[0], uiInfo.savegameCount, sizeof(int), UI_SavegamesQsortCompare);
+			uiInfo.savegameList[saveIndex].savegameName = String_Alloc( sgname );
 
 			// read savegame and get needed info
-			UI_ParseSavegame( i );
-
-			// mark favourite status
-			uiInfo.savegameList[i].favourite = UI_IsFavourite( uiInfo.savegameList[i].savegameFile );
-
-			if ( uiInfo.savegameList[i].episode != -1 ) {
-				uiInfo.savegameList[i].sshotImage = trap_R_RegisterShaderNoMip( va( "levelshots/episodeshots/e%d.tga", uiInfo.savegameList[i].episode + 1 ) );
-			} else {
-				uiInfo.savegameList[i].sshotImage = trap_R_RegisterShaderNoMip( "levelshots/episodeshots/e_unknown.tga" );
+			UI_ParseSavegame( saveIndex );
+			if ( uiInfo.savegameList[saveIndex].legacy32Bit ) {
+				hasLegacy = qtrue;
 			}
 
+			if ( uiInfo.savegameList[saveIndex].legacy32Bit != showLegacy ) {
+				sgname += len + 1;
+				continue;
+			}
+
+			// get string into list for sorting too
+			uiInfo.savegameStatus.displaySavegames[saveIndex] = saveIndex;
+//			qsort( &uiInfo.savegameStatus.displaySavegames[0], uiInfo.savegameCount, sizeof(int), UI_SavegamesQsortCompare);
+
+			// mark favourite status
+			uiInfo.savegameList[saveIndex].favourite = UI_IsFavourite( uiInfo.savegameList[saveIndex].savegameFile );
+
+			if ( uiInfo.savegameList[saveIndex].episode != -1 ) {
+				uiInfo.savegameList[saveIndex].sshotImage = trap_R_RegisterShaderNoMip( va( "levelshots/episodeshots/e%d.tga", uiInfo.savegameList[saveIndex].episode + 1 ) );
+			} else {
+				uiInfo.savegameList[saveIndex].sshotImage = trap_R_RegisterShaderNoMip( "levelshots/episodeshots/e_unknown.tga" );
+			}
+
+			uiInfo.savegameCount++;
 
 
 			sgname += len + 1;
 		}
+	}
 
+	trap_Cvar_Set( "ui_savegameHasLegacy", hasLegacy ? "1" : "0" );
+	if ( showLegacy && !hasLegacy ) {
+		trap_Cvar_Set( "ui_savegameListLegacy", "0" );
+		UI_LoadSavegames( dir );
+		return;
+	}
+
+	if ( uiInfo.savegameCount ) {
 		// sort it
 		UI_SavegameSort( 0, qtrue );
 
 		// set current selection
 //		i = UI_SavegameIndexFromName(ui_savegameName.string);
 //		Menu_SetFeederSelection(NULL, FEEDER_SAVEGAMES, i, NULL);
+	} else {
+		trap_Cvar_Set( "ui_savegame", "" );
+		trap_Cvar_Set( "ui_savegameName", "" );
+		trap_Cvar_Set( "ui_savegameInfo", UI_SavegameEmptyText() );
 	}
 }
 
@@ -4938,7 +5084,7 @@ static void UI_LoadMovies() {
 		}
 		moviename = movielist;
 		for ( i = 0; i < uiInfo.movieCount; i++ ) {
-			len = strlen( moviename );
+			len = (int)strlen( moviename );
 			if ( !Q_stricmp( moviename +  len - 4,".roq" ) ) {
 				moviename[len - 4] = '\0';
 			}
@@ -5034,7 +5180,7 @@ static void UI_LoadDemos() {
 		}
 		demoname = demolist;
 		for ( i = 0; i < uiInfo.demoCount; i++ ) {
-			len = strlen( demoname );
+			len = (int)strlen( demoname );
 
 			/* query mtime BEFORE stripping extension (need full filename) */
 			Com_sprintf( demoQpath, sizeof( demoQpath ), "demos/%s", demoname );
@@ -5663,7 +5809,8 @@ static void UI_Update( const char *name ) {
 		}
 
 //----(SA)	added
-	} else if ( Q_stricmp( name, "ui_savegameListAutosave" ) == 0 ) {
+	} else if ( Q_stricmp( name, "ui_savegameListAutosave" ) == 0 || Q_stricmp( name, "ui_savegameListLegacy" ) == 0 ) {
+		val = trap_Cvar_VariableValue( "ui_savegameListAutosave" );
 		if ( val == 0 ) {
 			UI_LoadSavegames( NULL );
 		} else {
@@ -6389,10 +6536,10 @@ static void UI_BuildServerDisplayList( qboolean force ) {
 
 	// do motd updates here too
 	trap_Cvar_VariableStringBuffer( "cl_motdString", uiInfo.serverStatus.motd, sizeof( uiInfo.serverStatus.motd ) );
-	len = strlen( uiInfo.serverStatus.motd );
+	len = (int)strlen( uiInfo.serverStatus.motd );
 	if ( len == 0 ) {
 		strcpy( uiInfo.serverStatus.motd, "Welcome to Team Arena!" );
-		len = strlen( uiInfo.serverStatus.motd );
+		len = (int)strlen( uiInfo.serverStatus.motd );
 	}
 	if ( len != uiInfo.serverStatus.motdLen ) {
 		uiInfo.serverStatus.motdLen = len;
@@ -6632,7 +6779,7 @@ static int UI_GetServerStatusInfo( const char *serverAddress, serverStatusInfo_t
 				name = p;
 				Com_sprintf( &info->pings[len], sizeof( info->pings ) - len, "%d", i );
 				info->lines[info->numLines][0] = &info->pings[len];
-				len += strlen( &info->pings[len] ) + 1;
+				len += (int)strlen( &info->pings[len] ) + 1;
 				info->lines[info->numLines][1] = score;
 				info->lines[info->numLines][2] = ping;
 				info->lines[info->numLines][3] = name;
@@ -7117,11 +7264,19 @@ static const char *UI_FeederItemText( float feederID, int index, int column, qha
 					Com_sprintf( favBuf, sizeof( favBuf ), "^3%s", uiInfo.savegameList[ri].savegameName );
 					return favBuf;
 				}
+				if ( uiInfo.savegameList[ri].legacy32Bit ) {
+					Com_sprintf( favBuf, sizeof( favBuf ), "^1%s", uiInfo.savegameList[ri].savegameName );
+					return favBuf;
+				}
 				return uiInfo.savegameList[ri].savegameName;
 				break;
 			case SORT_SAVETIME:
 				if ( uiInfo.savegameList[ri].favourite ) {
 					Com_sprintf( favBuf, sizeof( favBuf ), "^3%s", uiInfo.savegameList[ri].time );
+					return favBuf;
+				}
+				if ( uiInfo.savegameList[ri].legacy32Bit ) {
+					Com_sprintf( favBuf, sizeof( favBuf ), "^1%s", uiInfo.savegameList[ri].time );
 					return favBuf;
 				}
 				return uiInfo.savegameList[ri].time;
@@ -7777,7 +7932,7 @@ static void UI_BuildQ3Model_List( void ) {
 	dirptr  = dirlist;
 	for ( i = 0; i < numdirs && uiInfo.q3HeadCount < MAX_PLAYERMODELS; i++,dirptr += dirlen + 1 )
 	{
-		dirlen = strlen( dirptr );
+		dirlen = (int)strlen( dirptr );
 
 		if ( dirlen && dirptr[dirlen - 1] == '/' ) {
 			dirptr[dirlen - 1] = '\0';
@@ -7792,7 +7947,7 @@ static void UI_BuildQ3Model_List( void ) {
 		fileptr  = filelist;
 		for ( j = 0; j < numfiles && uiInfo.q3HeadCount < MAX_PLAYERMODELS; j++,fileptr += filelen + 1 )
 		{
-			filelen = strlen( fileptr );
+			filelen = (int)strlen( fileptr );
 
 			COM_StripExtension( fileptr,skinname );
 
@@ -8281,13 +8436,17 @@ static connstate_t lastConnState;
 static char lastLoadingText[MAX_INFO_VALUE];
 
 static void UI_ReadableSize( char *buf, int bufsize, int value ) {
+	int len;
+
 	if ( value > 1024 * 1024 * 1024 ) { // gigs
 		Com_sprintf( buf, bufsize, "%d", value / ( 1024 * 1024 * 1024 ) );
-		Com_sprintf( buf + strlen( buf ), bufsize - strlen( buf ), ".%02d GB",
+		len = (int)strlen( buf );
+		Com_sprintf( buf + len, bufsize - len, ".%02d GB",
 					 ( value % ( 1024 * 1024 * 1024 ) ) * 100 / ( 1024 * 1024 * 1024 ) );
 	} else if ( value > 1024 * 1024 ) { // megs
 		Com_sprintf( buf, bufsize, "%d", value / ( 1024 * 1024 ) );
-		Com_sprintf( buf + strlen( buf ), bufsize - strlen( buf ), ".%02d MB",
+		len = (int)strlen( buf );
+		Com_sprintf( buf + len, bufsize - len, ".%02d MB",
 					 ( value % ( 1024 * 1024 ) ) * 100 / ( 1024 * 1024 ) );
 	} else if ( value > 1024 ) { // kilos
 		Com_sprintf( buf, bufsize, "%d KB", value / 1024 );
@@ -8570,6 +8729,9 @@ vmCvar_t ui_hudAlpha;
 vmCvar_t ui_hunkUsed;       //----(SA)	added
 vmCvar_t ui_cameraMode;     //----(SA)	added
 vmCvar_t ui_savegameListAutosave;       //----(SA)	added
+vmCvar_t ui_savegameListLegacy;
+vmCvar_t ui_savegameHasLegacy;
+vmCvar_t ui_savegameLegacyButtonText;
 vmCvar_t ui_savegameName;
 
 // NERVE - SMF - cvars for multiplayer
@@ -8707,6 +8869,10 @@ cvarTable_t cvarTable[] = {
 	{ &ui_hunkUsed, "com_hunkused", "0", 0 },     //----(SA)	added
 	{ &ui_cameraMode, "com_cameraMode", "0", 0},  //----(SA)	added
 
+	{ &ui_savegameListAutosave, "ui_savegameListAutosave", "0", 0},
+	{ &ui_savegameListLegacy, "ui_savegameListLegacy", "0", 0},
+	{ &ui_savegameHasLegacy, "ui_savegameHasLegacy", "0", 0},
+	{ &ui_savegameLegacyButtonText, "ui_savegameLegacyButtonText", "Old Saves", 0},
 	{ &ui_savegameName, "ui_savegameName", "", CVAR_ROM}
 
 

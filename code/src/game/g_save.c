@@ -657,6 +657,34 @@ static void G_SaveReadLegacyStruct( fileHandle_t f, byte *out, int outsize, int 
 	}
 }
 
+static void G_SaveCheck64BitLayout( fileHandle_t f, const char *filename, const char *mapname, const char *label, int savedSize, int currentSize ) {
+#ifdef _WIN64
+	if ( savedSize != currentSize ) {
+		trap_FS_FCloseFile( f );
+		trap_Cvar_Set( "savegame_loading", "0" );
+		trap_Cvar_Set( "savegame_filename", "" );
+		G_Error(
+			"This savegame uses an older 32-bit save layout and cannot be loaded safely by the 64-bit build yet.\n\n"
+			"Nothing was deleted. You can still load this save with the 32-bit build, or keep it for a future save converter.\n\n"
+			"Save: %s\n"
+			"Map: %s\n"
+			"Mismatch: %s block is %i bytes in the save, but this 64-bit build expects %i bytes.",
+			filename,
+			mapname && mapname[0] ? mapname : "unknown",
+			label,
+			savedSize,
+			currentSize );
+	}
+#else
+	(void)f;
+	(void)filename;
+	(void)mapname;
+	(void)label;
+	(void)savedSize;
+	(void)currentSize;
+#endif
+}
+
 static qboolean G_SaveAngleIsUsable( float angle ) {
 	return !IS_NAN( angle ) && angle > -360000.0f && angle < 360000.0f;
 }
@@ -1736,6 +1764,7 @@ void G_LoadGame(char* filename) {
 		// read the entity structures
 		trap_FS_Read(&i, sizeof(i), f);
 		size = i;
+		G_SaveCheck64BitLayout( f, filename, mapstr, "entity", size, sizeof( gentity_t ) );
 		last = 0;
 		while (1)
 		{
@@ -1778,6 +1807,7 @@ void G_LoadGame(char* filename) {
 		// read the client structures
 		trap_FS_Read(&i, sizeof(i), f);
 		size = i;
+		G_SaveCheck64BitLayout( f, filename, mapstr, "client", size, sizeof( gclient_t ) );
 		while (1)
 		{
 			trap_FS_Read(&i, sizeof(i), f);
@@ -1799,6 +1829,7 @@ void G_LoadGame(char* filename) {
 		// read the cast_state structures
 		trap_FS_Read(&i, sizeof(i), f);
 		size = i;
+		G_SaveCheck64BitLayout( f, filename, mapstr, "cast_state", size, sizeof( cast_state_t ) );
 		while (1)
 		{
 			trap_FS_Read(&i, sizeof(i), f);

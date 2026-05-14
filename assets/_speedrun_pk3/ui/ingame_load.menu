@@ -21,9 +21,10 @@ menuDef {
    	style 1
    	border 1
 
-	onOpen {	uiScript loadSavegames;
+	onOpen {	setcvar ui_savegameListAutosave 0;	// hmm
+				setcvar ui_savegameListLegacy 0;
+				uiScript loadSavegames;
 				setcvar "ui_savegame" "<type name here>" ;
-				setcvar ui_savegameListAutosave 0;	// hmm
 //				uiScript update ui_savegameListAutosave
 			}
 
@@ -330,7 +331,7 @@ menuDef {
 	itemDef {
 		name autosave
 //		type ITEM_TYPE_BUTTON
-		rect 52 270 170 18
+		rect 26 270 150 18
 //		cvar ui_savegameListAutosave
 		type ITEM_TYPE_MULTI
 		cvar "ui_savegameListAutosave"
@@ -350,7 +351,7 @@ menuDef {
 		name autosave_off
 		group showgametype
 		text "Show Autosaves..."
-		rect 52 270 170 18
+		rect 26 270 150 18
 		cvarTest "ui_savegameListAutosave"
 		showcvar { "0" }
 		style 1
@@ -359,7 +360,7 @@ menuDef {
 		bordercolor .5 .5 .5 .5        
 		backcolor 0 0 0 .25
 		textaligny 13
-		textalignx 82
+		textalignx 75
 		textalign ITEM_ALIGN_CENTER
 		decoration
 		visible MENU_TRUE
@@ -370,7 +371,7 @@ menuDef {
 		name autosave_on
 		group showgametype
 		text "Show Savegames..."
-		rect 52 270 170 18
+		rect 26 270 150 18
 		cvarTest "ui_savegameListAutosave"
 		showcvar { "1" }
 		style 1
@@ -379,7 +380,45 @@ menuDef {
 		bordercolor .5 .5 .5 .5        
 		backcolor 0 0 0 .25
 		textaligny 13
-		textalignx 82
+		textalignx 75
+		textalign ITEM_ALIGN_CENTER
+		decoration
+		visible MENU_TRUE
+	}
+
+	itemDef {
+		name oldsave
+		rect 182 270 110 18
+		type ITEM_TYPE_MULTI
+		cvar "ui_savegameListLegacy"
+		cvarTest "ui_savegameHasLegacy"
+		showcvar { "1" }
+		cvarFloatList { "" 0 "" 1  }
+		style 1
+		border 1
+		bordercolor .5 .5 .5 .5
+		backcolor 0 0 0 .25
+		mouseEnter { setitemcolor showoldtype backcolor .3 .5 .2 .25 }
+		mouseExit { setitemcolor showoldtype backcolor 0 0 0 .25 }
+		action { uiScript update "ui_savegameListLegacy" }
+		visible MENU_TRUE
+	}
+
+	itemDef {
+		name oldsave_off
+		group showoldtype
+		rect 182 270 110 18
+		type ITEM_TYPE_TEXT
+		cvar "ui_savegameLegacyButtonText"
+		cvarTest "ui_savegameHasLegacy"
+		showcvar { "1" }
+		style 1
+		textscale .25
+		border 1
+		bordercolor .5 .5 .5 .5
+		backcolor 0 0 0 .25
+		textaligny 13
+		textalignx 55
 		textalign ITEM_ALIGN_CENTER
 		decoration
 		visible MENU_TRUE

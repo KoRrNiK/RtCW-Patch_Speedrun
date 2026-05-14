@@ -115,6 +115,8 @@ extern vmCvar_t ui_hudAlpha;
 extern vmCvar_t ui_hunkUsed;    //----(SA)	added
 extern vmCvar_t ui_cameraMode;  //----(SA)	added
 extern vmCvar_t ui_savegameListAutosave;    //----(SA)	added
+extern vmCvar_t ui_savegameListLegacy;
+extern vmCvar_t ui_savegameHasLegacy;
 extern vmCvar_t ui_savegameName;    //----(SA)	added
 
 // NERVE - SMF - multiplayer cvars
@@ -145,7 +147,9 @@ extern vmCvar_t ui_serverStatusTimeOut;
 #define MAX_MENUDEPTH           8
 //#define MAX_MENUITEMS			128
 //#define MAX_MENUITEMS           256
+#ifndef MAX_MENUITEMS
 #define MAX_MENUITEMS           1024
+#endif
 
 #define MTYPE_NULL              0
 #define MTYPE_SLIDER            1
@@ -695,6 +699,7 @@ typedef struct {
 	qtime_t tm;
 
 	qboolean favourite;             // user-marked favourite (shown at top, highlighted yellow)
+	qboolean legacy32Bit;           // save was created by the old 32-bit layout
 
 } savegameInfo;
 //----(SA)	end
