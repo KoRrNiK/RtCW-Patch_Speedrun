@@ -1738,40 +1738,38 @@ static void ComputeStageIteratorFunc( void ) {
 	//
 	// see if this can go into the vertex lit fast path
 	//
-	if ( shader.numUnfoggedPasses == 1 ) {
-		if ( stages[0].rgbGen == CGEN_LIGHTING_DIFFUSE ) {
-			if ( stages[0].alphaGen == AGEN_IDENTITY ) {
-				if ( stages[0].bundle[0].tcGen == TCGEN_TEXTURE ) {
-					if ( !shader.polygonOffset ) {
-						if ( !shader.multitextureEnv ) {
-							if ( !shader.numDeforms ) {
-								shader.optimalStageIteratorFunc = RB_StageIteratorVertexLitTexture;
-								goto done;
-							}
-						}
-					}
-				}
-			}
-		}
+	if ( shader.numUnfoggedPasses == 1 &&
+		 stages[0].rgbGen == CGEN_LIGHTING_DIFFUSE &&
+		 stages[0].alphaGen == AGEN_IDENTITY &&
+		 stages[0].bundle[0].tcGen == TCGEN_TEXTURE &&
+		 !( stages[0].stateBits & ( GLS_ATEST_BITS | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) &&
+		 !stages[0].bundle[0].numTexMods &&
+		 !shader.noFog &&
+		 !shader.polygonOffset &&
+		 !shader.multitextureEnv &&
+		 !shader.numDeforms ) {
+		shader.optimalStageIteratorFunc = RB_StageIteratorVertexLitTexture;
+		goto done;
 	}
 
 	//
 	// see if this can go into an optimized LM, multitextured path
 	//
-	if ( shader.numUnfoggedPasses == 1 ) {
-		if ( ( stages[0].rgbGen == CGEN_IDENTITY ) && ( stages[0].alphaGen == AGEN_IDENTITY ) ) {
-			if ( stages[0].bundle[0].tcGen == TCGEN_TEXTURE &&
-				 stages[0].bundle[1].tcGen == TCGEN_LIGHTMAP ) {
-				if ( !shader.polygonOffset ) {
-					if ( !shader.numDeforms ) {
-						if ( shader.multitextureEnv ) {
-							shader.optimalStageIteratorFunc = RB_StageIteratorLightmappedMultitexture;
-							goto done;
-						}
-					}
-				}
-			}
-		}
+	if ( shader.numUnfoggedPasses == 1 &&
+		 stages[0].rgbGen == CGEN_IDENTITY &&
+		 stages[0].alphaGen == AGEN_IDENTITY &&
+		 stages[0].bundle[0].tcGen == TCGEN_TEXTURE &&
+		 stages[0].bundle[1].tcGen == TCGEN_LIGHTMAP &&
+		 !( stages[0].stateBits & ( GLS_ATEST_BITS | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) &&
+		 !stages[0].bundle[0].numTexMods &&
+		 !stages[0].bundle[1].numTexMods &&
+		 !shader.noFog &&
+		 !shader.polygonOffset &&
+		 shader.sort <= SS_OPAQUE &&
+		 !shader.numDeforms &&
+		 shader.multitextureEnv ) {
+		shader.optimalStageIteratorFunc = RB_StageIteratorLightmappedMultitexture;
+		goto done;
 	}
 
 done:

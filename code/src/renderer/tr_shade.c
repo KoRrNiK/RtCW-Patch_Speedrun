@@ -1417,6 +1417,46 @@ static qboolean RB_FastPathNeedsGenericEntityAlpha( void ) {
 	return qfalse;
 }
 
+static qboolean RB_VertexLitFastPathNeedsGeneric( const shaderStage_t *stage ) {
+	if ( !stage ) {
+		return qtrue;
+	}
+
+	if ( tess.shader->noFog || tess.shader->polygonOffset || tess.shader->numDeforms ) {
+		return qtrue;
+	}
+
+	if ( stage->bundle[0].numTexMods || ( stage->stateBits & ( GLS_ATEST_BITS | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) ) {
+		return qtrue;
+	}
+
+	return RB_FastPathNeedsGenericEntityAlpha();
+}
+
+static qboolean RB_LightmappedFastPathNeedsGeneric( const shaderStage_t *stage ) {
+	if ( !stage ) {
+		return qtrue;
+	}
+
+	if ( tess.shader->noFog || tess.shader->polygonOffset || tess.shader->numDeforms || tess.shader->sort > SS_OPAQUE ) {
+		return qtrue;
+	}
+
+	if ( stage->stateBits & ( GLS_ATEST_BITS | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) {
+		return qtrue;
+	}
+
+	if ( stage->bundle[0].tcGen != TCGEN_TEXTURE || stage->bundle[1].tcGen != TCGEN_LIGHTMAP ) {
+		return qtrue;
+	}
+
+	if ( stage->bundle[0].numTexMods || stage->bundle[1].numTexMods ) {
+		return qtrue;
+	}
+
+	return RB_FastPathNeedsGenericEntityAlpha();
+}
+
 void RB_StageIteratorVertexLitTexture( void ) {
 	shaderCommands_t *input;
 	shader_t        *shader;
@@ -1425,7 +1465,7 @@ void RB_StageIteratorVertexLitTexture( void ) {
 
 	shader = input->shader;
 
-	if ( RB_FastPathNeedsGenericEntityAlpha() ) {
+	if ( RB_VertexLitFastPathNeedsGeneric( tess.xstages[0] ) ) {
 		RB_StageIteratorGeneric();
 		return;
 	}
@@ -1526,6 +1566,17 @@ void RB_StageIteratorLightmappedMultitexture( void ) {
 
 	input = &tess;
 
+	/* The collapsed lightmap multitexture path is fragile with RtCW SP
+	   grates/alpha surfaces on modern OpenGL drivers. Keep correctness
+	   and let these surfaces use the generic iterator. */
+	RB_StageIteratorGeneric();
+	return;
+
+	if ( RB_LightmappedFastPathNeedsGeneric( tess.xstages[0] ) ) {
+		RB_StageIteratorGeneric();
+		return;
+	}
+
 	//
 	// log this call
 	//
@@ -1546,7 +1597,7 @@ void RB_StageIteratorLightmappedMultitexture( void ) {
 	//
 	// set color, pointers, and lock
 	//
-	GL_State( GLS_DEFAULT );
+	GL_State( tess.xstages[0]->stateBits );
 	qglVertexPointer( 3, GL_FLOAT, 16, input->xyz );
 
 	if ( qglPNTrianglesiATI && tess.ATI_tess ) {
@@ -1585,7 +1636,7 @@ void RB_StageIteratorLightmappedMultitexture( void ) {
 	if ( r_lightmap->integer ) {
 		GL_TexEnv( GL_REPLACE );
 	} else {
-		GL_TexEnv( GL_MODULATE );
+		GL_TexEnv( tess.shader->multitextureEnv );
 	}
 
 //----(SA)	modified for snooper

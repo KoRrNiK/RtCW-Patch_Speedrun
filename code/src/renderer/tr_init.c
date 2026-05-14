@@ -490,6 +490,21 @@ static void R_ModeList_f( void ) {
 
 /*
 ==================
+R_PrepareScreenshotReadback
+==================
+*/
+static void R_PrepareScreenshotReadback( void ) {
+	if ( r_drawBuffer && !Q_stricmp( r_drawBuffer->string, "GL_FRONT" ) ) {
+		qglReadBuffer( GL_FRONT );
+	} else {
+		qglReadBuffer( GL_BACK );
+	}
+
+	qglPixelStorei( GL_PACK_ALIGNMENT, 1 );
+}
+
+/*
+==================
 R_TakeScreenshotTGA
 ==================
 */
@@ -497,13 +512,18 @@ void R_TakeScreenshotTGA( int x, int y, int width, int height, char *fileName ) 
 	byte	*buffer;
 	int		i, c, temp;
 	int		grab_width, grab_x;	// Knightmare added
+	int		dataSize;
 
 	// Knightmare- because this captures in RGB, round down width to nearest multiple of 4 to fix 1366x768 shots
 	grab_width = width & ~3;
 	grab_x = (width - grab_width) / 2;
+	if ( grab_width <= 0 || height <= 0 ) {
+		return;
+	}
+	dataSize = grab_width * height * 3;
 
 //	buffer = ri.Hunk_AllocateTempMemory( glConfig.vidWidth * glConfig.vidHeight * 3 + 18 );
-	buffer = ri.Hunk_AllocateTempMemory( grab_width * height * 3 + 18 );
+	buffer = ri.Hunk_AllocateTempMemory( dataSize + 18 );
 
 	memset( buffer, 0, 18 );
 	buffer[2] = 2;      // uncompressed type
@@ -515,11 +535,11 @@ void R_TakeScreenshotTGA( int x, int y, int width, int height, char *fileName ) 
 	buffer[15] = height >> 8;
 	buffer[16] = 24;    // pixel size
 
-//	qglReadPixels( x, y, grab_width, height, GL_RGB, GL_UNSIGNED_BYTE, buffer + 18 );
-	qglReadPixels( grab_x, y, grab_width, height, GL_RGB, GL_UNSIGNED_BYTE, buffer + 18 );
+	R_PrepareScreenshotReadback();
+	qglReadPixels( x + grab_x, y, grab_width, height, GL_RGB, GL_UNSIGNED_BYTE, buffer + 18 );
 
 	// swap rgb to bgr
-	c = 18 + width * height * 3;
+	c = 18 + dataSize;
 	for ( i = 18 ; i < c ; i += 3 ) {
 		temp = buffer[i];
 		buffer[i] = buffer[i + 2];
@@ -528,7 +548,7 @@ void R_TakeScreenshotTGA( int x, int y, int width, int height, char *fileName ) 
 
 	// gamma correct
 	if ( ( tr.overbrightBits > 0 ) && glConfig.deviceSupportsGamma ) {
-		R_GammaCorrect( buffer + 18, glConfig.vidWidth * glConfig.vidHeight * 3 );
+		R_GammaCorrect( buffer + 18, dataSize );
 	}
 
 	ri.FS_WriteFile( fileName, buffer, c );
@@ -543,18 +563,25 @@ R_TakeScreenshotJPEG
 */
 void R_TakeScreenshotJPEG( int x, int y, int width, int height, char *fileName ) {
 	byte        *buffer;
+	int         dataSize;
 
-	buffer = ri.Hunk_AllocateTempMemory( glConfig.vidWidth * glConfig.vidHeight * 4 );
+	if ( width <= 0 || height <= 0 ) {
+		return;
+	}
 
+	dataSize = width * height * 4;
+	buffer = ri.Hunk_AllocateTempMemory( dataSize );
+
+	R_PrepareScreenshotReadback();
 	qglReadPixels( x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer );
 
 	// gamma correct
 	if ( ( tr.overbrightBits > 0 ) && glConfig.deviceSupportsGamma ) {
-		R_GammaCorrect( buffer, glConfig.vidWidth * glConfig.vidHeight * 4 );
+		R_GammaCorrect( buffer, dataSize );
 	}
 
 	ri.FS_WriteFile( fileName, buffer, 1 );     // create path
-	SaveJPG( fileName, 95, glConfig.vidWidth, glConfig.vidHeight, buffer );
+	SaveJPG( fileName, 95, width, height, buffer );
 
 	ri.Hunk_FreeTempMemory( buffer );
 }
@@ -638,6 +665,7 @@ void R_LevelShot( void ) {
 	buffer[14] = 128;
 	buffer[16] = 24;    // pixel size
 
+	R_PrepareScreenshotReadback();
 	qglReadPixels( 0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_RGB, GL_UNSIGNED_BYTE, source );
 
 	// resample from source
@@ -1088,7 +1116,7 @@ void R_Register( void ) {
 #endif
 	r_depthbits = ri.Cvar_Get( "r_depthbits", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_overBrightBits = ri.Cvar_Get( "r_overBrightBits", "0", CVAR_ARCHIVE | CVAR_LATCH );	// Knightmare- disable by default
-	r_ignorehwgamma = ri.Cvar_Get( "r_ignorehwgamma", "0", CVAR_ARCHIVE | CVAR_LATCH );		// Knightmare- HW gamma enabled by default ----(SA) changed this to default to '1' for Drew
+	r_ignorehwgamma = ri.Cvar_Get( "r_ignorehwgamma", "1", CVAR_ARCHIVE | CVAR_LATCH );		// Knightmare- prefer software gamma so HUD/blackbars stay untouched
 	r_mode = ri.Cvar_Get( "r_mode", "3", CVAR_ARCHIVE | CVAR_LATCH );
 	r_fullscreen = ri.Cvar_Get( "r_fullscreen", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_borderless = ri.Cvar_Get( "r_borderless", "0", CVAR_ARCHIVE | CVAR_LATCH );

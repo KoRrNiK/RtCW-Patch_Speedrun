@@ -810,6 +810,9 @@ static void Upload32(   unsigned *data,
 				break;
 			}
 		}
+		if ( samples == 4 ) {
+			noCompress = qtrue;
+		}
 		// select proper internal format
 		if ( samples == 3 ) {
 			if ( !noCompress && glConfig.textureCompression == TC_EXT_COMP_S3TC ) {
