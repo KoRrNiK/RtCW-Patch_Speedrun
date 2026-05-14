@@ -63,6 +63,7 @@ cvar_t  *com_fixedtime;
 cvar_t  *com_dropsim;       // 0.0 to 1.0, simulated packet drops
 cvar_t  *com_journal;
 cvar_t  *com_maxfps;
+cvar_t  *com_fpsSleepMargin;
 cvar_t  *com_timedemo;
 cvar_t  *com_sv_running;
 cvar_t  *com_cl_running;
@@ -2126,6 +2127,7 @@ void Com_Init( char *commandLine ) {
 	// init commands and vars
 	//
 	com_maxfps = Cvar_Get( "com_maxfps", "85", CVAR_ARCHIVE );
+	com_fpsSleepMargin = Cvar_Get( "com_fpsSleepMargin", "5", CVAR_ARCHIVE );
 	com_blood = Cvar_Get( "com_blood", "1", CVAR_ARCHIVE );
 
 	com_developer = Cvar_Get( "developer", "0", CVAR_TEMP );
@@ -2488,12 +2490,13 @@ void Com_Frame( void ) {
 		minMsec = 1;
 	}
 
-	// Hybrid frame limiter: original do-while loop structure (proven stable)
-	// with Sleep(1) added to save CPU when far from target, and microsecond
-	// precision for the exit condition at high FPS (avoids integer-ms quantization).
+	// Hybrid frame limiter: Sleep(1) while far from target, then finish the
+	// frame with QPC precision.  The final few milliseconds intentionally avoid
+	// Sleep(1), because Windows can overshoot it enough to turn an 83fps cap
+	// into visible ~70fps pacing drops.
 	{
 		static __int64 lastFrameStartUs = 0;
-		__int64 targetUs, nowUs, elapsedUs;
+		__int64 targetUs, nowUs, elapsedUs, remainingUs, sleepMarginUs;
 		qboolean useUsExit;  // use microsecond exit instead of integer ms
 
 		nowUs = Sys_Microseconds();
@@ -2504,12 +2507,18 @@ void Com_Frame( void ) {
 		// Only use microsecond exit for non-dedicated, fps-limited, non-timedemo
 		useUsExit = ( !com_dedicated->integer && com_maxfps->integer > 0 && !com_timedemo->integer );
 		targetUs = useUsExit ? ( 1000000 / com_maxfps->integer ) : 1000;
+		sleepMarginUs = com_fpsSleepMargin ? ( (__int64)com_fpsSleepMargin->integer * 1000 ) : 5000;
+		if ( sleepMarginUs < 0 ) {
+			sleepMarginUs = 0;
+		} else if ( sleepMarginUs > 10000 ) {
+			sleepMarginUs = 10000;
+		}
 
 		do {
-			// Sleep(1) to save CPU when more than 2ms remain
 			if ( useUsExit ) {
 				elapsedUs = Sys_Microseconds() - lastFrameStartUs;
-				if ( ( targetUs - elapsedUs ) > 2000 ) {
+				remainingUs = targetUs - elapsedUs;
+				if ( remainingUs > sleepMarginUs ) {
 					Sys_Sleep( 1 );
 				}
 			}
