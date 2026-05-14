@@ -5,10 +5,16 @@
 # Build output
 code/src/Debug/
 code/src/Debug_x64/
+code/src/Release/
+code/src/Release_x64/
 code/src/bin/
 code/src/*/Debug/
 code/src/*/Debug_x64/
+code/src/*/Release/
+code/src/*/Release_x64/
 code/src/*/bin/
+
+/code/src/race_host_app/obj
 
 # Binary artifacts (keep source pk3 folder tracked)
 code/src/_speedrun_pk3/
