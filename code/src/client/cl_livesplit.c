@@ -6500,7 +6500,6 @@ static void SV_InitCommands( void ) {
 #define LS_RACE_LOAD_RESEND_MS    500
 #define LS_RACE_COUNTDOWN_RESEND_MS 250
 #define LS_RACE_RESYNC_MS         1000
-#define LS_RACE_PORT_SCAN_SPAN    10
 #define LS_RACE_START_RESEND_MS   250
 #define LS_RACE_START_RESEND_WINDOW_MS 5000
 #define LS_RACE_GHOST_ALPHA       120
@@ -7930,58 +7929,27 @@ static void LS_RaceBroadcastRoster( void ) {
 	}
 }
 
+static unsigned short LS_RacePortToNet( int port ) {
+	if ( port < 0 ) port = 0;
+	if ( port > 65535 ) port = 65535;
+	return (unsigned short)BigShort( (short)(unsigned short)port );
+}
+
 static int LS_RaceAdrPort( netadr_t adr ) {
-	return BigShort( adr.port );
+	return (int)(unsigned short)BigShort( (short)adr.port );
 }
 
 static void LS_RaceSetAdrPort( netadr_t *adr, int port ) {
 	if ( !adr ) return;
-	adr->port = BigShort( (short)port );
-}
-
-static int LS_RacePortScanBase( netadr_t adr, int rememberedPort ) {
-	int currentPort = LS_RaceAdrPort( adr );
-	return rememberedPort > 0 ? rememberedPort : currentPort;
-}
-
-static qboolean LS_RaceShouldScanHostPorts( void ) {
-	if ( ls_race.role != LS_RACE_ROLE_CLIENT || ls_race.hostAdr.type != NA_IP ) return qfalse;
-	return ls_race.state == LS_RACE_STATE_CONNECTING ? qtrue : qfalse;
-}
-
-static qboolean LS_RaceAllowPortScan( void ) {
-	return ls_race.role == LS_RACE_ROLE_CLIENT &&
-		ls_race.state == LS_RACE_STATE_CONNECTING &&
-		ls_race.hostAdr.type == NA_IP ? qtrue : qfalse;
+	adr->port = LS_RacePortToNet( port );
 }
 
 static qboolean LS_RaceHostAdrMatches( netadr_t from ) {
-	int requestedPort, fromPort;
 	if ( NET_CompareAdr( from, ls_race.hostAdr ) ) {
 		if ( !ls_race.hostBasePort ) ls_race.hostBasePort = LS_RaceAdrPort( from );
 		return qtrue;
 	}
-	if ( ls_race.role != LS_RACE_ROLE_CLIENT ) return qfalse;
-	if ( !NET_CompareBaseAdr( from, ls_race.hostAdr ) ) {
-		if ( ls_race.session && Cmd_Argc() > 2 && atoi( Cmd_Argv( 2 ) ) == ls_race.session ) {
-			ls_race.hostAdr = from;
-			if ( !ls_race.hostBasePort ) ls_race.hostBasePort = LS_RaceAdrPort( from );
-			if ( ls_race.portCvar ) Cvar_SetValue( ls_race.portCvar->name, LS_RaceAdrPort( from ) );
-			return qtrue;
-		}
-		return qfalse;
-	}
-	requestedPort = LS_RaceAdrPort( ls_race.hostAdr );
-	fromPort = LS_RaceAdrPort( from );
-	if ( LS_RaceAllowPortScan() ) {
-		if ( fromPort < requestedPort || fromPort >= requestedPort + LS_RACE_PORT_SCAN_SPAN ) return qfalse;
-	} else if ( !ls_race.session ) {
-		return qfalse;
-	}
-	ls_race.hostAdr = from;
-	if ( !ls_race.hostBasePort ) ls_race.hostBasePort = fromPort;
-	if ( ls_race.portCvar ) Cvar_SetValue( ls_race.portCvar->name, fromPort );
-	return qtrue;
+	return qfalse;
 }
 
 static qboolean LS_RacePlayerAdrMatches( lsRacePlayer_t *p, netadr_t from ) {
@@ -8007,20 +7975,6 @@ static void LS_RaceSendHelloTo( netadr_t to ) {
 }
 
 static void LS_RaceSendHello( void ) {
-	int basePort, scanPort;
-	netadr_t probeAdr;
-	if ( LS_RaceShouldScanHostPorts() ) {
-		int exactPort = LS_RaceAdrPort( ls_race.hostAdr );
-		LS_RaceSendHelloTo( ls_race.hostAdr );
-		basePort = LS_RacePortScanBase( ls_race.hostAdr, ls_race.hostBasePort );
-		for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
-			if ( scanPort == exactPort ) continue;
-			probeAdr = ls_race.hostAdr;
-			LS_RaceSetAdrPort( &probeAdr, scanPort );
-			LS_RaceSendHelloTo( probeAdr );
-		}
-		return;
-	}
 	LS_RaceSendHelloTo( ls_race.hostAdr );
 }
 
@@ -8044,7 +7998,7 @@ static void LS_RaceHostSocketAddress( const char *socketIp, int port, struct soc
 	netadr_t adr;
 	memset( address, 0, sizeof( *address ) );
 	address->sin_family = AF_INET;
-	address->sin_port = htons( (short)port );
+	address->sin_port = htons( (unsigned short)port );
 	if ( !socketIp || !socketIp[0] || !Q_stricmp( socketIp, "localhost" ) || !Q_stricmp( socketIp, "0.0.0.0" ) ) {
 		address->sin_addr.s_addr = INADDR_ANY;
 		return;
@@ -8176,15 +8130,10 @@ static qboolean LS_RaceResolveHostAddress( const char *ip, int port, netadr_t *o
 	return out->type == NA_IP ? qtrue : qfalse;
 }
 
-static qboolean LS_RaceSendDiscoverScanTo( const char *ip, int basePort ) {
-	netadr_t baseAdr, probeAdr;
-	int scanPort;
-	if ( !LS_RaceResolveHostAddress( ip, basePort, &baseAdr ) ) return qfalse;
-	for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
-		probeAdr = baseAdr;
-		LS_RaceSetAdrPort( &probeAdr, scanPort );
-		NET_OutOfBandPrint( NS_CLIENT, probeAdr, "srace discover %d", LS_RACE_PROTO_VERSION );
-	}
+static qboolean LS_RaceSendDiscoverTo( const char *ip, int port ) {
+	netadr_t to;
+	if ( !LS_RaceResolveHostAddress( ip, port, &to ) ) return qfalse;
+	NET_OutOfBandPrint( NS_CLIENT, to, "srace discover %d", LS_RACE_PROTO_VERSION );
 	return qtrue;
 }
 
@@ -8223,7 +8172,7 @@ static void LS_RaceAddFoundLobby( netadr_t adr, int session, const char *nick, i
 }
 
 static void LS_RaceRefresh_f( void ) {
-	int basePort, directBasePort, scanPort;
+	int basePort, directBasePort;
 	netadr_t to;
 	const char *ip;
 	qboolean directScan;
@@ -8233,20 +8182,18 @@ static void LS_RaceRefresh_f( void ) {
 	directScan = LS_RaceResolveHostAddress( ip, basePort, &to );
 	directBasePort = directScan ? LS_RaceAdrPort( to ) : basePort;
 	if ( directBasePort <= 0 ) directBasePort = basePort;
-	LS_RaceClearFoundLobbies( directScan ? "Scanning LAN and host IP..." : "Scanning local network..." );
+	LS_RaceClearFoundLobbies( directScan ? "Scanning selected host and LAN port..." : "Scanning selected LAN port..." );
 	if ( directScan ) {
-		LS_RaceSendDiscoverScanTo( ip, directBasePort );
-		Com_Printf( "^3Race: scanning host %s on UDP ports %d-%d\n", ip, directBasePort, directBasePort + LS_RACE_PORT_SCAN_SPAN - 1 );
+		LS_RaceSendDiscoverTo( ip, directBasePort );
+		Com_Printf( "^3Race: scanning host %s on UDP port %d\n", ip, directBasePort );
 	}
-	Com_Printf( "^3Race: scanning local network on UDP ports %d-%d\n", basePort, basePort + LS_RACE_PORT_SCAN_SPAN - 1 );
-	for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
-		memset( &to, 0, sizeof( to ) );
-		to.type = NA_BROADCAST;
-		to.port = BigShort( (short)scanPort );
-		NET_OutOfBandPrint( NS_CLIENT, to, "srace discover %d", LS_RACE_PROTO_VERSION );
-		to.type = NA_BROADCAST_IPX;
-		NET_OutOfBandPrint( NS_CLIENT, to, "srace discover %d", LS_RACE_PROTO_VERSION );
-	}
+	Com_Printf( "^3Race: scanning local network on UDP port %d\n", basePort );
+	memset( &to, 0, sizeof( to ) );
+	to.type = NA_BROADCAST;
+	to.port = LS_RacePortToNet( basePort );
+	NET_OutOfBandPrint( NS_CLIENT, to, "srace discover %d", LS_RACE_PROTO_VERSION );
+	to.type = NA_BROADCAST_IPX;
+	NET_OutOfBandPrint( NS_CLIENT, to, "srace discover %d", LS_RACE_PROTO_VERSION );
 }
 
 static void LS_RaceJoinFound_f( void ) {
@@ -8342,22 +8289,7 @@ static void LS_RaceSendStateToHost( void ) {
 }
 
 static void LS_RaceSendStateToHostScan( void ) {
-	lsRacePlayer_t *p;
-	int basePort, scanPort, exactPort;
-	netadr_t probeAdr;
-	if ( ls_race.role != LS_RACE_ROLE_CLIENT ) return;
-	p = LS_RaceFindPlayerBySlot( ls_race.localSlot );
-	if ( !p ) return;
-	LS_RaceSendStateToHostAdr( ls_race.hostAdr, p );
-	if ( !LS_RaceShouldScanHostPorts() ) return;
-	exactPort = LS_RaceAdrPort( ls_race.hostAdr );
-	basePort = LS_RacePortScanBase( ls_race.hostAdr, ls_race.hostBasePort );
-	for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
-		if ( scanPort == exactPort ) continue;
-		probeAdr = ls_race.hostAdr;
-		LS_RaceSetAdrPort( &probeAdr, scanPort );
-		LS_RaceSendStateToHostAdr( probeAdr, p );
-	}
+	LS_RaceSendStateToHost();
 }
 
 static void LS_RaceSendChatTo( netadr_t to, int slot, const char *nick, const char *text ) {
@@ -8382,21 +8314,10 @@ static void LS_RaceBroadcastChat( int slot, const char *nick, const char *text, 
 
 static void LS_RaceSendChatToHostScan( const char *text ) {
 	lsRacePlayer_t *p;
-	int basePort, scanPort, exactPort;
-	netadr_t probeAdr;
 	if ( ls_race.role != LS_RACE_ROLE_CLIENT ) return;
 	p = LS_RaceFindPlayerBySlot( ls_race.localSlot );
 	if ( !p ) return;
 	LS_RaceSendChatTo( ls_race.hostAdr, p->slot, p->nick, text );
-	if ( !LS_RaceShouldScanHostPorts() ) return;
-	exactPort = LS_RaceAdrPort( ls_race.hostAdr );
-	basePort = LS_RacePortScanBase( ls_race.hostAdr, ls_race.hostBasePort );
-	for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
-		if ( scanPort == exactPort ) continue;
-		probeAdr = ls_race.hostAdr;
-		LS_RaceSetAdrPort( &probeAdr, scanPort );
-		LS_RaceSendChatTo( probeAdr, p->slot, p->nick, text );
-	}
 }
 
 static void LS_RaceSendEventTo( netadr_t to, int slot, const char *kind, const char *detail ) {
@@ -8411,21 +8332,10 @@ static void LS_RaceSendEventTo( netadr_t to, int slot, const char *kind, const c
 
 static void LS_RaceSendEventToHostScan( const char *kind, const char *detail ) {
 	lsRacePlayer_t *p;
-	int basePort, scanPort, exactPort;
-	netadr_t probeAdr;
 	if ( ls_race.role != LS_RACE_ROLE_CLIENT ) return;
 	p = LS_RaceFindPlayerBySlot( ls_race.localSlot );
 	if ( !p ) return;
 	LS_RaceSendEventTo( ls_race.hostAdr, p->slot, kind, detail );
-	if ( !LS_RaceShouldScanHostPorts() ) return;
-	exactPort = LS_RaceAdrPort( ls_race.hostAdr );
-	basePort = LS_RacePortScanBase( ls_race.hostAdr, ls_race.hostBasePort );
-	for ( scanPort = basePort; scanPort < basePort + LS_RACE_PORT_SCAN_SPAN; scanPort++ ) {
-		if ( scanPort == exactPort ) continue;
-		probeAdr = ls_race.hostAdr;
-		LS_RaceSetAdrPort( &probeAdr, scanPort );
-		LS_RaceSendEventTo( probeAdr, p->slot, kind, detail );
-	}
 }
 
 static void LS_RaceSendLoadTo( netadr_t to ) {
@@ -8821,8 +8731,8 @@ static void LS_RaceJoin_f( void ) {
 	ls_race.lastHostPacketMs = Sys_Milliseconds();
 	if ( ls_race.ipCvar ) Cvar_Set( ls_race.ipCvar->name, ip );
 	if ( ls_race.portCvar ) Cvar_SetValue( ls_race.portCvar->name, port );
-	LS_RaceSetStatus( va( "Connecting to %s, probing ports %d-%d", ip, port, port + LS_RACE_PORT_SCAN_SPAN - 1 ) );
-	Com_Printf( "^3Race: sending hello to %s, probing UDP ports %d-%d\n", ip, port, port + LS_RACE_PORT_SCAN_SPAN - 1 );
+	LS_RaceSetStatus( va( "Connecting to %s:%d", ip, port ) );
+	Com_Printf( "^3Race: sending hello to %s:%d\n", ip, port );
 	LS_RaceSendHello();
 	LS_RaceUpdateRuntimeCvars();
 }
@@ -8967,7 +8877,6 @@ static void LS_RaceHandleWelcome( netadr_t from ) {
 	ls_race.hostAdr = from;
 	if ( !ls_race.hostBasePort ) ls_race.hostBasePort = LS_RaceAdrPort( from );
 	ls_race.lastHostPacketMs = now;
-	if ( ls_race.portCvar ) Cvar_SetValue( ls_race.portCvar->name, LS_RaceAdrPort( from ) );
 	LS_RaceApplySettings( mode, mission, percent100, difficulty, hl1Movement, autoJump, antiCheat, Cmd_Argv( 10 ) );
 	Q_strncpyz( ls_race.targetMap, Cmd_Argv( 11 ), sizeof( ls_race.targetMap ) );
 	if ( !Q_stricmp( ls_race.targetMap, "-" ) ) ls_race.targetMap[0] = '\0';
@@ -10825,10 +10734,21 @@ static void LS_Frame( void ) {
 		}
 	}
 
-	/* Deferred Full Game start: the run begins when the player clicks
-	   the continue arrow on the briefing screen (playerstart fires,
-	   ls_loading goes to 0), not during loading or the briefing. */
-	if ( ls.fgPendingStart && cls.state >= CA_ACTIVE &&
+	/* Deferred Full Game start: normal maps begin when playerstart clears
+	   ls_loading.  Cutscene maps have no briefing/playerstart, so wait for
+	   the camera letterbox instead of starting on the earlier CA_ACTIVE frame. */
+	{
+		qboolean fgStartReady = qtrue;
+		char fgMap[LS_MAX_MAPNAME];
+		int fgIdx;
+
+		LS_ExtractMapname( cl.mapname, fgMap, sizeof( fgMap ) );
+		fgIdx = fgMap[0] ? LS_FindMapIndex( fgMap ) : -1;
+		if ( fgIdx >= 0 && ls.splits[fgIdx].cutscene ) {
+			fgStartReady = Cvar_VariableIntegerValue( "cg_letterbox" ) ? qtrue : qfalse;
+		}
+
+	if ( ls.fgPendingStart && cls.state >= CA_ACTIVE && fgStartReady &&
 		 !Cvar_VariableIntegerValue( "ls_loading" ) && !LS_RaceBlocksTimerStart() ) {
 		int k, di;
 		ls.fgPendingStart   = qfalse;
@@ -10896,6 +10816,7 @@ static void LS_Frame( void ) {
 			ls.cheatsUsed = qtrue;
 			LS_TriggerAlert( "CHEATS ACTIVATED", 1.0f, 0.2f, 0.2f );
 		}
+	}
 	}
 
 	/* Deferred auto-record: fire the record command once CA_ACTIVE */

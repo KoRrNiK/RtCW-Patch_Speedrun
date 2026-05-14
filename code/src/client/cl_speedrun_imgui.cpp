@@ -8019,6 +8019,16 @@ extern "C" int CL_SpeedrunImGui_SDLTextInput( const char *text ) {
 extern "C" int CL_SpeedrunImGui_SDLKeyEvent( int quakeKey, int down ) {
 	ImGuiKey imguiKey;
 
+	if ( quakeKey == '`' || quakeKey == '~' ) {
+		return 0;
+	}
+
+	if ( down && !( cls.keyCatchers & KEYCATCH_CONSOLE ) &&
+		( cls.state == CA_CINEMATIC ||
+		  ( cl.cameraMode && ( quakeKey == K_ESCAPE || quakeKey == K_SPACE || quakeKey == K_ENTER || quakeKey == K_KP_ENTER ) ) ) ) {
+		return 0;
+	}
+
 	if ( !CL_SpeedrunImGui_HasPanelOpen() && !s_raceChatOpen ) {
 		return 0;
 	}

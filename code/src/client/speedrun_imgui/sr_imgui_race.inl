@@ -147,16 +147,24 @@ static void CL_ImGuiRaceDrawChatComposer( bool canChat ) {
 }
 
 static void CL_ImGuiRaceDrawJoinBox( bool hideIp, bool isHost, bool isClient, bool canJoinManual, bool canConnect, bool canRefresh ) {
+	static const float raceColorFallback[4] = { 0.31f, 0.70f, 1.00f, 1.00f };
+	bool showIp = !hideIp;
 	CL_ImGuiBeginAutoBox( "race_control_join" );
 	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "Join" );
+	CL_ImGuiInputCvarName( "Join Name", "name", "Player", ImGuiInputTextFlags_None );
+	CL_ImGuiColorCvarName( "Player Color", "ls_race_color", raceColorFallback );
 	CL_ImGuiInputCvarName( "Host IP", "ls_race_ip", "127.0.0.1", ImGuiInputTextFlags_CharsNoBlank | ( hideIp ? ImGuiInputTextFlags_Password : 0 ) );
+	if ( ImGui::Checkbox( "Show IP", &showIp ) ) {
+		Cvar_SetValue( "ls_race_hide_ip", showIp ? 0.0f : 1.0f );
+	}
+	CL_ImGuiOptionTooltip( "Show IP", "ls_race_hide_ip", "Shows or hides the Host IP field in the Race menu." );
 	CL_ImGuiIntInputCvarName( "UDP Port", "ls_race_port", "27960", 1, 65535 );
 	CL_ImGuiInputCvarName( "Password", "ls_race_password", "", ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_Password );
 	if ( ImGui::BeginTable( "race_join_buttons", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
 		ImGui::TableNextRow();
 		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Join Manual", "ls_race_join", 0.0f, canJoinManual, isHost ? "Leave hosted lobby before joining another race." : "Leave the current race before joining another lobby." );
 		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( isClient ? "Reconnect" : "Connect", "ls_race_connect", 0.0f, canConnect, "Hosts cannot connect to themselves." );
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Scan", "ls_race_refresh", 0.0f, canRefresh, "Scans LAN and the Host IP/UDP port range for external Race Host lobbies." );
+		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Scan", "ls_race_refresh", 0.0f, canRefresh, "Scans LAN and the Host IP on the selected UDP port." );
 		ImGui::EndTable();
 	}
 	ImGui::TextDisabled( "%s", Cvar_VariableString( "ls_race_found_status" ) );
