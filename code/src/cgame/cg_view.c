@@ -2250,7 +2250,7 @@ static int CG_CalcViewValues( void ) {
 	AnglesToAxis( cg.refdefViewAngles, cg.refdef.viewaxis );
 
 	if ( cg.hyperspace ) {
-		cg.refdef.rdflags |= RDF_NOWORLDMODEL | RDF_HYPERSPACE;
+		cg.refdef.rdflags |= RDF_HYPERSPACE;
 	}
 
 	// field of view
@@ -2646,19 +2646,15 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	   happens later at RenderScene time; this early override ensures
 	   the cgame also works from the correct viewpoint. */
 	{
-		char buf[64];
-		trap_Cvar_VariableStringBuffer( "cl_freecamActive", buf, sizeof( buf ) );
-		if ( atoi( buf ) ) {
+		if ( cg_freecamActive.integer ) {
 			float x, y, z, pitch, yaw, roll;
 			vec3_t fcAngles;
-			trap_Cvar_VariableStringBuffer( "cl_freecamPos", buf, sizeof( buf ) );
-			if ( sscanf( buf, "%f %f %f", &x, &y, &z ) == 3 ) {
+			if ( sscanf( cg_freecamPos.string, "%f %f %f", &x, &y, &z ) == 3 ) {
 				cg.refdef.vieworg[0] = x;
 				cg.refdef.vieworg[1] = y;
 				cg.refdef.vieworg[2] = z;
 			}
-			trap_Cvar_VariableStringBuffer( "cl_freecamAngles", buf, sizeof( buf ) );
-			if ( sscanf( buf, "%f %f %f", &pitch, &yaw, &roll ) == 3 ) {
+			if ( sscanf( cg_freecamAngles.string, "%f %f %f", &pitch, &yaw, &roll ) == 3 ) {
 				fcAngles[0] = pitch;
 				fcAngles[1] = yaw;
 				fcAngles[2] = roll;
@@ -2729,6 +2725,9 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	}
 	cg.refdef.time = cg.time;
 	memcpy( cg.refdef.areamask, cg.snap->areamask, sizeof( cg.refdef.areamask ) );
+	if ( cg_freecamActive.integer ) {
+		memset( cg.refdef.areamask, 0, sizeof( cg.refdef.areamask ) );
+	}
 
 	DEBUGTIME
 

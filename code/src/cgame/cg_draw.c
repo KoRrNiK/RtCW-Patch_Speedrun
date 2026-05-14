@@ -1773,6 +1773,38 @@ static qboolean CG_ClearProtectedNamedCvar( const char *name ) {
 	return qfalse;
 }
 
+static void CG_ClearProtectedPracticeCvars( void ) {
+	static int lastCheatToolWarn = 0;
+	static int nextNamedCheckTime = 0;
+	qboolean wantsCheatTool = qfalse;
+
+	if ( cg_svCheats.integer ) {
+		return;
+	}
+
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawTriggers", &cg_drawTriggers );
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawEnemies", &cg_drawEnemies );
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawItems", &cg_drawItems );
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawEnemySight", &cg_drawEnemySight );
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawAIPath", &cg_drawAIPath );
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_explosiveTimers", &cg_explosiveTimers );
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_draw", &cg_zoneDraw );
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_edit", &cg_zoneEdit );
+	wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_race_debug", &cg_zoneRaceDebug );
+
+	if ( cg.time >= nextNamedCheckTime ) {
+		nextNamedCheckTime = cg.time + 250;
+		wantsCheatTool |= CG_ClearProtectedNamedCvar( "ls_godmode" );
+		wantsCheatTool |= CG_ClearProtectedNamedCvar( "r_drawClips" );
+		wantsCheatTool |= CG_ClearProtectedNamedCvar( "g_triggerLog" );
+	}
+
+	if ( wantsCheatTool && cg.time - lastCheatToolWarn > 3000 ) {
+		CG_CenterPrint( "Practice/dev tools disabled: sv_cheats is 0", SCREEN_HEIGHT * 0.25, SMALLCHAR_WIDTH );
+		lastCheatToolWarn = cg.time;
+	}
+}
+
 
 /*
 ===============================================================================
@@ -3644,10 +3676,7 @@ CG_Draw2D
 =================
 */
 static qboolean CG_SpeedrunImGuiIsOpen( void ) {
-	char buf[8];
-
-	trap_Cvar_VariableStringBuffer( "ui_speedrun_imgui", buf, sizeof( buf ) );
-	return atoi( buf ) != 0;
+	return cg_speedrunImGui.integer != 0;
 }
 
 static void CG_Draw2D( void ) {
@@ -3751,14 +3780,11 @@ static void CG_Draw2D( void ) {
 	   a visual indicator helps the user understand why they can't
 	   move further. */
 	if ( cg.demoPlayback ) {
-		char buf[64];
-		trap_Cvar_VariableStringBuffer( "cl_freecamActive", buf, sizeof( buf ) );
-		if ( atoi( buf ) ) {
+		if ( cg_freecamActive.integer ) {
 			float fcX, fcY, fcZ, dist, maxDist;
 			vec3_t playerOrigin, diff;
 
-			trap_Cvar_VariableStringBuffer( "cl_freecamPos", buf, sizeof( buf ) );
-			if ( sscanf( buf, "%f %f %f", &fcX, &fcY, &fcZ ) == 3 ) {
+			if ( sscanf( cg_freecamPos.string, "%f %f %f", &fcX, &fcY, &fcZ ) == 3 ) {
 				VectorCopy( cg.snap->ps.origin, playerOrigin );
 				playerOrigin[2] += cg.snap->ps.viewheight;
 
@@ -3767,9 +3793,8 @@ static void CG_Draw2D( void ) {
 				diff[2] = fcZ - playerOrigin[2];
 				dist = VectorLength( diff );
 
-				trap_Cvar_VariableStringBuffer( "cl_freecamMaxDist", buf, sizeof( buf ) );
-				maxDist = atof( buf );
-				if ( maxDist < 500 ) maxDist = 4000;
+				maxDist = cg_freecamMaxDist.value;
+				if ( maxDist < 500 ) maxDist = 20000;
 
 				if ( dist > maxDist * 0.85f ) {
 					vec4_t warnColor;
@@ -4016,19 +4041,15 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 	   The engine writes cl_freecamActive / cl_freecamPos / cl_freecamAngles
 	   every frame when freecam is on. */
 	{
-		char buf[64];
-		trap_Cvar_VariableStringBuffer( "cl_freecamActive", buf, sizeof( buf ) );
-		if ( atoi( buf ) ) {
+		if ( cg_freecamActive.integer ) {
 			float x, y, z, pitch, yaw, roll;
 			vec3_t fcAngles;
-			trap_Cvar_VariableStringBuffer( "cl_freecamPos", buf, sizeof( buf ) );
-			if ( sscanf( buf, "%f %f %f", &x, &y, &z ) == 3 ) {
+			if ( sscanf( cg_freecamPos.string, "%f %f %f", &x, &y, &z ) == 3 ) {
 				cg.refdef.vieworg[0] = x;
 				cg.refdef.vieworg[1] = y;
 				cg.refdef.vieworg[2] = z;
 			}
-			trap_Cvar_VariableStringBuffer( "cl_freecamAngles", buf, sizeof( buf ) );
-			if ( sscanf( buf, "%f %f %f", &pitch, &yaw, &roll ) == 3 ) {
+			if ( sscanf( cg_freecamAngles.string, "%f %f %f", &pitch, &yaw, &roll ) == 3 ) {
 				fcAngles[0] = pitch;
 				fcAngles[1] = yaw;
 				fcAngles[2] = roll;
@@ -4041,30 +4062,7 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 	}
 
 	// ---- Dev tools: clear protected practice settings while sv_cheats is 0 ----
-	{
-		char cheatsBuf[4];
-		static int lastCheatToolWarn = 0;
-		trap_Cvar_VariableStringBuffer( "sv_cheats", cheatsBuf, sizeof( cheatsBuf ) );
-		if ( atoi( cheatsBuf ) == 0 ) {
-			qboolean wantsCheatTool = qfalse;
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawTriggers", &cg_drawTriggers );
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawEnemies", &cg_drawEnemies );
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawItems", &cg_drawItems );
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawEnemySight", &cg_drawEnemySight );
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_drawAIPath", &cg_drawAIPath );
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "cg_explosiveTimers", &cg_explosiveTimers );
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_draw", &cg_zoneDraw );
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_edit", &cg_zoneEdit );
-			wantsCheatTool |= CG_ClearProtectedVmCvar( "sp_zone_race_debug", &cg_zoneRaceDebug );
-			wantsCheatTool |= CG_ClearProtectedNamedCvar( "ls_godmode" );
-			wantsCheatTool |= CG_ClearProtectedNamedCvar( "r_drawClips" );
-			wantsCheatTool |= CG_ClearProtectedNamedCvar( "g_triggerLog" );
-			if ( wantsCheatTool && cg.time - lastCheatToolWarn > 3000 ) {
-				CG_CenterPrint( "Practice/dev tools disabled: sv_cheats is 0", SCREEN_HEIGHT * 0.25, SMALLCHAR_WIDTH );
-				lastCheatToolWarn = cg.time;
-			}
-		}
-	}
+	CG_ClearProtectedPracticeCvars();
 
 	CG_ZoneFrame();
 
@@ -4551,9 +4549,7 @@ static void CG_drawVelocity( void ) {
 }
 
 static qboolean CG_SpeedrunCheatsEnabled( void ) {
-	char cheatsBuf[8];
-	trap_Cvar_VariableStringBuffer( "sv_cheats", cheatsBuf, sizeof( cheatsBuf ) );
-	return atoi( cheatsBuf ) != 0;
+	return cg_svCheats.integer != 0;
 }
 
 static void CG_DrawExplosiveTimerBox( float x, float y, const char *label, float remaining, float total, qboolean centered ) {

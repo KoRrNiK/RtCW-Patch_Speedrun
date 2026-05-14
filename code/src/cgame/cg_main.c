@@ -291,6 +291,12 @@ vmCvar_t bh_movement;
 vmCvar_t bh_autojump;
 vmCvar_t cg_drawKeys;
 vmCvar_t ks_mouse;
+vmCvar_t cg_speedrunImGui;
+vmCvar_t cg_freecamActive;
+vmCvar_t cg_freecamPos;
+vmCvar_t cg_freecamAngles;
+vmCvar_t cg_freecamMaxDist;
+vmCvar_t cg_svCheats;
 vmCvar_t cg_crosshairType;
 vmCvar_t cg_crosshairColorR;
 vmCvar_t cg_crosshairColorG;
@@ -576,6 +582,12 @@ cvarTable_t cvarTable[] = {
 	{ &bh_autojump, "bh_autojump", "0", CVAR_ARCHIVE },
 	{ &cg_drawKeys, "cg_drawKeys", "1", CVAR_ARCHIVE },
 	{ &ks_mouse, "ks_mouse", "0", CVAR_ARCHIVE },
+	{ &cg_speedrunImGui, "ui_speedrun_imgui", "0", 0 },
+	{ &cg_freecamActive, "cl_freecamActive", "0", 0 },
+	{ &cg_freecamPos, "cl_freecamPos", "0 0 0", 0 },
+	{ &cg_freecamAngles, "cl_freecamAngles", "0 0 0", 0 },
+	{ &cg_freecamMaxDist, "cl_freecamMaxDist", "20000", 0 },
+	{ &cg_svCheats, "sv_cheats", "0", 0 },
 	{ &cg_crosshairType, "cg_crosshairType", "0", CVAR_ARCHIVE },
 	{ &cg_crosshairColorR, "cg_crosshairColorR", "1.0", CVAR_ARCHIVE },
 	{ &cg_crosshairColorG, "cg_crosshairColorG", "1.0", CVAR_ARCHIVE },
