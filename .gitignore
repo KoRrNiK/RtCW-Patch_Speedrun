@@ -4,15 +4,20 @@
 
 # Build output
 code/src/Debug/
+code/src/Debug_SDL3/
 code/src/Debug_x64/
 code/src/Release/
+code/src/Release_SDL3/
 code/src/Release_x64/
 code/src/bin/
 code/src/*/Debug/
+code/src/*/Debug_SDL3/
 code/src/*/Debug_x64/
 code/src/*/Release/
+code/src/*/Release_SDL3/
 code/src/*/Release_x64/
 code/src/*/bin/
+code/src/win32/winquake_sdl3.res
 
 /code/src/race_host_app/obj
 

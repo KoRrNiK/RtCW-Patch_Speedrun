@@ -1,0 +1,17 @@
+#include "sys_resource_sdl.h"
+#include <winres.h>
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif
+
+IDI_ICON1 ICON DISCARDABLE "qe3.ico"
+
+STRINGTABLE DISCARDABLE
+BEGIN
+    IDS_STRING1 "Wolfenstein SDL3"
+END
+
+#endif

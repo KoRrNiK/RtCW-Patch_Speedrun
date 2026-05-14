@@ -15,24 +15,23 @@
     <ProjectGuid>{47CCBCAD-2A5C-4A70-8504-371F2EC29CBE}</ProjectGuid>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v145</PlatformToolset>
-    <UseOfMfc>false</UseOfMfc>
-  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset>v145</PlatformToolset>
     <UseOfMfc>false</UseOfMfc>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v145</PlatformToolset>
+    <UseOfMfc>false</UseOfMfc>
+  </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <ImportGroup Label="ExtensionSettings">
-  </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="$(VCTargetsPath)Microsoft.CPP.UpgradeFromVC60.props" />
   </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="PropertySheets">
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="$(VCTargetsPath)Microsoft.CPP.UpgradeFromVC60.props" />
   </ImportGroup>
@@ -58,21 +57,18 @@
       <MkTypLibCompatible>true</MkTypLibCompatible>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <TargetEnvironment>Win32</TargetEnvironment>
-      <TypeLibraryName>.\Debug/wolf.tlb</TypeLibraryName>
-      <HeaderFileName />
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>thirdparty\imgui;thirdparty\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_DEBUG;_WINDOWS;__USEA3D;__A3D_GEOM;WIN32;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>thirdparty\imgui;thirdparty\imgui\backends;thirdparty\SDL3\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;RTCW_SDL3;__USEA3D;__A3D_GEOM;WIN32;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PrecompiledHeaderOutputFile>.\Debug/wolf.pch</PrecompiledHeaderOutputFile>
       <AssemblerListingLocation>.\Debug/</AssemblerListingLocation>
       <ObjectFileName>.\Debug/</ObjectFileName>
       <ProgramDataBaseFileName>.\Debug/</ProgramDataBaseFileName>
-      <BrowseInformation>true</BrowseInformation>
-      <BrowseInformationFile>.\Debug/</BrowseInformationFile>
+      <BrowseInformation>false</BrowseInformation>
       <WarningLevel>Level3</WarningLevel>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
@@ -80,11 +76,11 @@
     <ResourceCompile>
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
-      <ResourceOutputFileName>win32\winquake.res</ResourceOutputFileName>
+      <ResourceOutputFileName>.\Debug\sys_resource.res</ResourceOutputFileName>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>winmm.lib;wsock32.lib;wininet.lib;opengl32.lib;imm32.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>SDL3.lib;winmm.lib;wsock32.lib;wininet.lib;opengl32.lib;imm32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>thirdparty\SDL3\lib\win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <OutputFile>$(OutDir)WolfSP.exe</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -99,10 +95,12 @@
       <LargeAddressAware>true</LargeAddressAware>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
     </Link>
-    <Bscmake>
-      <SuppressStartupBanner>true</SuppressStartupBanner>
-      <OutputFile>Debug/wolf.bsc</OutputFile>
-    </Bscmake>
+    <Manifest>
+      <AdditionalManifestFiles>sys\resources\sys_manifest_sdl.xml;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
+    <PostBuildEvent>
+      <Command>copy /Y "$(ProjectDir)thirdparty\SDL3\bin\win32\SDL3.dll" "$(OutDir)SDL3.dll"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Midl>
@@ -110,14 +108,12 @@
       <MkTypLibCompatible>true</MkTypLibCompatible>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <TargetEnvironment>Win32</TargetEnvironment>
-      <TypeLibraryName>.\Release/wolf.tlb</TypeLibraryName>
-      <HeaderFileName />
     </Midl>
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
-      <AdditionalIncludeDirectories>thirdparty\imgui;thirdparty\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>thirdparty\imgui;thirdparty\imgui\backends;thirdparty\SDL3\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;__USEA3D;__A3D_GEOM;WIN32;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;RTCW_SDL3;__USEA3D;__A3D_GEOM;WIN32;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -132,10 +128,11 @@
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
+      <ResourceOutputFileName>.\Release\sys_resource.res</ResourceOutputFileName>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>winmm.lib;wsock32.lib;wininet.lib;opengl32.lib;imm32.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>SDL3.lib;winmm.lib;wsock32.lib;wininet.lib;opengl32.lib;imm32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>thirdparty\SDL3\lib\win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <OutputFile>$(OutDir)WolfSP.exe</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <IgnoreSpecificDefaultLibraries>libc;%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
@@ -150,10 +147,12 @@
       <TargetMachine>MachineX86</TargetMachine>
       <LargeAddressAware>true</LargeAddressAware>
     </Link>
-    <Bscmake>
-      <SuppressStartupBanner>true</SuppressStartupBanner>
-      <OutputFile>.\Release/wolf.bsc</OutputFile>
-    </Bscmake>
+    <Manifest>
+      <AdditionalManifestFiles>sys\resources\sys_manifest_sdl.xml;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
+    <PostBuildEvent>
+      <Command>copy /Y "$(ProjectDir)thirdparty\SDL3\bin\win32\SDL3.dll" "$(OutDir)SDL3.dll"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="client\cl_cgame.c" />
@@ -204,68 +203,43 @@
     <ClCompile Include="server\sv_net_chan.c" />
     <ClCompile Include="server\sv_snapshot.c" />
     <ClCompile Include="server\sv_world.c" />
+    <ClCompile Include="sdl\sdl_input.c" />
+    <ClCompile Include="sdl\sdl_platform.c" />
+    <ClCompile Include="sdl\sdl_snd.c" />
+    <ClCompile Include="sys\core\sys_console_sdl.c" />
+    <ClCompile Include="sys\core\sys_sdl.c" />
+    <ClCompile Include="sys\platform\win32\sys_net_win32.c" />
+    <ClCompile Include="sys\platform\win32\sys_win32_shared.c" />
     <ClCompile Include="thirdparty\imgui\backends\imgui_impl_opengl2.cpp" />
     <ClCompile Include="thirdparty\imgui\imgui.cpp" />
     <ClCompile Include="thirdparty\imgui\imgui_draw.cpp" />
     <ClCompile Include="thirdparty\imgui\imgui_tables.cpp" />
     <ClCompile Include="thirdparty\imgui\imgui_widgets.cpp" />
-    <ClCompile Include="win32\win_input.c" />
-    <ClCompile Include="win32\win_main.c" />
-    <ClCompile Include="win32\win_net.c" />
-    <ClCompile Include="win32\win_shared.c" />
-    <ClCompile Include="win32\win_snd.c" />
-    <ClCompile Include="win32\win_syscon.c" />
-    <ClCompile Include="win32\win_wndproc.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="A3D\a3dWrapperdp.h" />
-    <ClInclude Include="A3D\ia3dapi.h" />
-    <ClInclude Include="A3D\snd_A3D.h" />
-    <ClInclude Include="A3D\snd_a3dg.h" />
-    <ClInclude Include="botai\botai.h" />
-    <ClInclude Include="cgame\cg_public.h" />
-    <ClInclude Include="cgame\tr_types.h" />
+    <ClInclude Include="sdl\sdl_local.h" />
+    <ClInclude Include="sys\core\sys_local.h" />
+    <ClInclude Include="sys\platform\win32\sys_glw_win.h" />
+    <ClInclude Include="sys\resources\sys_resource_sdl.h" />
     <ClInclude Include="client\client.h" />
     <ClInclude Include="client\cl_speedrun_imgui.h" />
     <ClInclude Include="client\keys.h" />
     <ClInclude Include="client\snd_local.h" />
     <ClInclude Include="client\snd_public.h" />
-    <ClInclude Include="code\main\ui\menudef.h" />
-    <ClInclude Include="game\bg_public.h" />
-    <ClInclude Include="game\botlib.h" />
-    <ClInclude Include="game\g_public.h" />
     <ClInclude Include="game\q_shared.h" />
-    <ClInclude Include="game\surfaceflags.h" />
-    <ClInclude Include="qcommon\cm_local.h" />
-    <ClInclude Include="qcommon\cm_patch.h" />
-    <ClInclude Include="qcommon\cm_polylib.h" />
-    <ClInclude Include="qcommon\cm_public.h" />
     <ClInclude Include="qcommon\qcommon.h" />
-    <ClInclude Include="qcommon\qfiles.h" />
-    <ClInclude Include="qcommon\unzip.h" />
-    <ClInclude Include="qcommon\vm_local.h" />
     <ClInclude Include="renderer\qgl.h" />
     <ClInclude Include="renderer\tr_local.h" />
     <ClInclude Include="renderer\tr_public.h" />
     <ClInclude Include="server\server.h" />
-    <ClInclude Include="thirdparty\imgui\backends\imgui_impl_opengl2.h" />
-    <ClInclude Include="thirdparty\imgui\imconfig.h" />
-    <ClInclude Include="thirdparty\imgui\imgui.h" />
-    <ClInclude Include="thirdparty\imgui\imgui_internal.h" />
-    <ClInclude Include="thirdparty\imgui\imstb_rectpack.h" />
-    <ClInclude Include="thirdparty\imgui\imstb_textedit.h" />
-    <ClInclude Include="thirdparty\imgui\imstb_truetype.h" />
     <ClInclude Include="ui\keycodes.h" />
-    <ClInclude Include="ui\ui_public.h" />
-    <ClInclude Include="win32\win_local.h" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="win32\background.bmp" />
-    <Image Include="win32\clear.bmp" />
-    <Image Include="win32\qe3.ico" />
+    <Image Include="sys\resources\qe3.ico" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="win32\winquake.rc" />
+    <None Include="sys\resources\sys_manifest_sdl.xml" />
+    <ResourceCompile Include="sys\resources\sys_resource_sdl.rc" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="botlib\botlib.vcxproj">
@@ -278,13 +252,6 @@
       <Project>{AA96579B-0F16-4614-8453-0B03C8B39A46}</Project>
     </ProjectReference>
   </ItemGroup>
-  <ItemGroup>
-    <None Include="code\src\cgame\cgame.vcxproj" />
-    <None Include="code\src\extractfuncs\extractfuncs.vcxproj" />
-    <None Include="code\src\game\game.vcxproj" />
-    <None Include="code\src\ui\ui.vcxproj" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-  </ImportGroup>
+  <ImportGroup Label="ExtensionTargets" />
 </Project>
