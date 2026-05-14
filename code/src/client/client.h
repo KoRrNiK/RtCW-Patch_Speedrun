@@ -238,6 +238,9 @@ typedef struct {
 
 	qboolean demoHideHUD;           // hide LiveSplit panel and progress bar (H key toggle)
 	int demoRecLastServerTime;      // last snapshot serverTime written to demo (for dedup)
+	qboolean demoRecPauseActive;    // recording synthetic frozen frames while local SP is paused
+	int demoRecPauseServerTime;     // synthetic demo serverTime used for paused/menu recording
+	int demoRecPauseLastWriteMs;    // real time of the last synthetic paused frame
 
 	int timeDemoFrames;             // counter of rendered frames
 	int timeDemoStart;              // cls.realtime before first frame
@@ -493,6 +496,7 @@ void CL_ReadPackets( void );
 void CL_UpdateDemoFreecam( int frameMsec );
 qboolean CL_DemoPaused( void );
 qboolean CL_DemoBindsHidden( void );
+qboolean CL_DemoGetMetadata( const char *demoName, int *fileSize, int *durationMs, int *mapCount );
 
 void CL_WritePacket( void );
 void IN_CenterView( void );

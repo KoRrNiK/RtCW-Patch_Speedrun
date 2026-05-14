@@ -271,6 +271,113 @@ void CL_WriteDemoMessage( msg_t *msg, int headerBytes ) {
 	FS_Write( msg->data + headerBytes, len, clc.demofile );
 }
 
+static void CL_WriteDemoRawMessage( msg_t *msg, int sequence ) {
+	int swlen;
+	if ( !clc.demofile || !msg ) return;
+	swlen = LittleLong( sequence );
+	FS_Write( &swlen, 4, clc.demofile );
+	swlen = LittleLong( msg->cursize );
+	FS_Write( &swlen, 4, clc.demofile );
+	FS_Write( msg->data, msg->cursize, clc.demofile );
+}
+
+static void CL_WriteDemoPauseLiveSplitState( void ) {
+	char lsState[MAX_INFO_STRING];
+	char lsTimes[MAX_INFO_STRING];
+	LS_DemoBuildState( lsState, sizeof( lsState ) );
+	LS_DemoBuildTimes( lsTimes, sizeof( lsTimes ) );
+	if ( lsState[0] ) {
+		CL_DemoWriteConfigstring( CS_DEMO_LIVESPLIT, lsState );
+	}
+	if ( lsTimes[0] ) {
+		CL_DemoWriteConfigstring( CS_DEMO_LIVESPLIT_TIMES, lsTimes );
+	}
+}
+
+static void CL_WriteDemoPauseSnapshot( int serverTime ) {
+	msg_t msg;
+	byte bufData[MAX_MSGLEN];
+	int i;
+	static qboolean warnedOverflow = qfalse;
+
+	if ( !cl.snap.valid || cl.snap.numEntities < 0 || cl.snap.numEntities > MAX_PARSE_ENTITIES ) return;
+
+	MSG_Init( &msg, bufData, sizeof( bufData ) );
+	MSG_Bitstream( &msg );
+	msg.allowoverflow = qtrue;
+
+	MSG_WriteLong( &msg, clc.reliableSequence );
+	MSG_WriteByte( &msg, svc_snapshot );
+	MSG_WriteLong( &msg, serverTime );
+	MSG_WriteByte( &msg, 0 );
+	MSG_WriteByte( &msg, cl.snap.snapFlags );
+	MSG_WriteByte( &msg, MAX_MAP_AREA_BYTES );
+	if ( Cvar_VariableIntegerValue( "cl_demoWideSnapshots" ) ) {
+		byte wideAreamask[MAX_MAP_AREA_BYTES];
+		memset( wideAreamask, 0, sizeof( wideAreamask ) );
+		MSG_WriteData( &msg, wideAreamask, MAX_MAP_AREA_BYTES );
+	} else {
+		MSG_WriteData( &msg, cl.snap.areamask, MAX_MAP_AREA_BYTES );
+	}
+	MSG_WriteDeltaPlayerstate( &msg, NULL, &cl.snap.ps );
+
+	for ( i = 0; i < cl.snap.numEntities; ++i ) {
+		entityState_t *ent = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( ent->number < 0 || ent->number >= MAX_GENTITIES ) continue;
+		MSG_WriteDeltaEntity( &msg, &cl.entityBaselines[ent->number], ent, qtrue );
+		if ( msg.overflowed ) break;
+	}
+	MSG_WriteBits( &msg, ( MAX_GENTITIES - 1 ), GENTITYNUM_BITS );
+	MSG_WriteByte( &msg, svc_EOF );
+
+	if ( msg.overflowed ) {
+		if ( !warnedOverflow ) {
+			Com_Printf( "^3Demo: paused snapshot too large, skipping frozen-frame recording until it fits.\n" );
+			warnedOverflow = qtrue;
+		}
+		return;
+	}
+	warnedOverflow = qfalse;
+	CL_WriteDemoRawMessage( &msg, clc.serverMessageSequence );
+}
+
+static void CL_DemoRecordPausedFrame( void ) {
+	qboolean paused;
+	int now, elapsed;
+
+	if ( !clc.demorecording || clc.demowaiting || !clc.demofile || cls.state != CA_ACTIVE || !cl.snap.valid ) {
+		clc.demoRecPauseActive = qfalse;
+		return;
+	}
+
+	paused = ( com_sv_running && com_sv_running->integer && sv_paused && sv_paused->integer && cl_paused && cl_paused->integer ) ? qtrue : qfalse;
+	if ( !paused ) {
+		clc.demoRecPauseActive = qfalse;
+		clc.demoRecPauseLastWriteMs = 0;
+		clc.demoRecPauseServerTime = 0;
+		return;
+	}
+
+	now = Sys_Milliseconds();
+	if ( !clc.demoRecPauseActive ) {
+		clc.demoRecPauseActive = qtrue;
+		clc.demoRecPauseServerTime = cl.snap.serverTime;
+		clc.demoRecPauseLastWriteMs = now - 100;
+	}
+
+	elapsed = now - clc.demoRecPauseLastWriteMs;
+	if ( elapsed < 100 ) return;
+	if ( elapsed > 1000 ) elapsed = 1000;
+	clc.demoRecPauseLastWriteMs = now;
+	clc.demoRecPauseServerTime += elapsed;
+	if ( clc.demoRecPauseServerTime <= cl.snap.serverTime ) {
+		clc.demoRecPauseServerTime = cl.snap.serverTime + elapsed;
+	}
+
+	CL_WriteDemoPauseSnapshot( clc.demoRecPauseServerTime );
+	CL_WriteDemoPauseLiveSplitState();
+}
+
 
 /*
 ====================
@@ -294,6 +401,10 @@ void CL_StopRecord_f( void ) {
 	FS_FCloseFile( clc.demofile );
 	clc.demofile = 0;
 	clc.demorecording = qfalse;
+	clc.demoRecPauseActive = qfalse;
+	clc.demoRecPauseServerTime = 0;
+	clc.demoRecPauseLastWriteMs = 0;
+	Cvar_Set( "cl_demorecording", "0" );
 
 	Com_Printf( "Stopped demo.\n" );
 }
@@ -400,7 +511,12 @@ void CL_Record_f( void ) {
 		return;
 	}
 	clc.demorecording = qtrue;
+	Cvar_Get( "cl_demoWideSnapshots", "1", CVAR_ARCHIVE );
+	Cvar_Set( "cl_demorecording", "1" );
 	clc.demoRecLastServerTime = 0;  // reset dedup tracker for new recording
+	clc.demoRecPauseActive = qfalse;
+	clc.demoRecPauseServerTime = 0;
+	clc.demoRecPauseLastWriteMs = 0;
 	Q_strncpyz( clc.demoName, demoName, sizeof( clc.demoName ) );
 
 	// don't start saving messages until a non-delta compressed message is received
@@ -740,11 +856,17 @@ void CL_DemoFreecam_f( void ) {
 			clc.demoFreecamPos[0], clc.demoFreecamPos[1], clc.demoFreecamPos[2] ) );
 		Cvar_Set( "cl_freecamAngles", va( "%.2f %.2f %.2f",
 			clc.demoFreecamAngles[0], clc.demoFreecamAngles[1], clc.demoFreecamAngles[2] ) );
+		{
+			cvar_t *maxDist = Cvar_Get( "cl_freecamMaxDist", "20000", CVAR_ARCHIVE );
+			if ( maxDist && maxDist->value == 4000.0f ) {
+				Cvar_Set( "cl_freecamMaxDist", "20000" );
+			}
+		}
 		/* Disable PVS culling so the full map is visible from any camera position */
 		Cvar_Set( "r_novis", "1" );
 		/* Extend far clip plane and disable fog so the full map is visible
 		   even on foggy maps (e.g. Forest, Norway). */
-		Cvar_Set( "r_zfar", "131072" );
+		Cvar_Set( "r_zfar", "262144" );
 		Cvar_Set( "r_wolffog", "0" );
 	} else {
 		clc.demoFreecam = qfalse;
@@ -1232,8 +1354,10 @@ static void CL_DemoScanMaps( void ) {
 					if ( s_demoMaps[lastGamestateIdx].startServerTime <= 0 ) {
 						s_demoMaps[lastGamestateIdx].startServerTime = snapServerTime;
 					}
-					/* Always update endServerTime to track the last snapshot in this map */
-					s_demoMaps[lastGamestateIdx].endServerTime = snapServerTime;
+					/* Paused demo frames can be followed by lower game serverTime after resume. */
+					if ( snapServerTime > s_demoMaps[lastGamestateIdx].endServerTime ) {
+						s_demoMaps[lastGamestateIdx].endServerTime = snapServerTime;
+					}
 				}
 			}
 		}
@@ -1269,6 +1393,134 @@ static void CL_DemoScanMaps( void ) {
 						s_demoMaps[i].fileOffset );
 		}
 	}
+}
+
+qboolean CL_DemoGetMetadata( const char *demoName, int *fileSize, int *durationMs, int *mapCount ) {
+	char name[MAX_OSPATH];
+	char extension[32];
+	fileHandle_t f;
+	int fileLen;
+	int nameLen, extLen;
+	int totalMs, maps;
+	int curStart, curEnd;
+	qboolean haveMap;
+
+	if ( fileSize ) *fileSize = -1;
+	if ( durationMs ) *durationMs = -1;
+	if ( mapCount ) *mapCount = 0;
+
+	if ( !demoName || !demoName[0] ) {
+		return qfalse;
+	}
+
+	Com_sprintf( extension, sizeof( extension ), ".dm_%d", PROTOCOL_VERSION );
+	nameLen = strlen( demoName );
+	extLen = strlen( extension );
+	if ( nameLen > extLen && !Q_stricmp( demoName + nameLen - extLen, extension ) ) {
+		Com_sprintf( name, sizeof( name ), "demos/%s", demoName );
+	} else {
+		Com_sprintf( name, sizeof( name ), "demos/%s.dm_%d", demoName, PROTOCOL_VERSION );
+	}
+
+	f = 0;
+	fileLen = FS_FOpenFileRead( name, &f, qtrue );
+	if ( !f || fileLen <= 0 ) {
+		if ( f ) FS_FCloseFile( f );
+		return qfalse;
+	}
+
+	if ( fileSize ) *fileSize = fileLen;
+	totalMs = 0;
+	maps = 0;
+	curStart = 0;
+	curEnd = 0;
+	haveMap = qfalse;
+
+	while ( 1 ) {
+		int seq, msglen, r, cmd;
+		byte bufData[MAX_MSGLEN];
+		msg_t buf;
+
+		r = FS_Read( &seq, 4, f );
+		if ( r != 4 ) break;
+		r = FS_Read( &msglen, 4, f );
+		if ( r != 4 ) break;
+		msglen = LittleLong( msglen );
+		if ( msglen == -1 ) break;
+		if ( msglen <= 0 || msglen > MAX_MSGLEN ) break;
+		r = FS_Read( bufData, msglen, f );
+		if ( r != msglen ) break;
+
+		MSG_Init( &buf, bufData, sizeof( bufData ) );
+		buf.cursize = msglen;
+		MSG_Bitstream( &buf );
+
+		MSG_ReadLong( &buf );
+		while ( buf.readcount < buf.cursize ) {
+			cmd = MSG_ReadByte( &buf );
+			if ( cmd == svc_EOF || buf.readcount > buf.cursize ) {
+				break;
+			}
+			if ( cmd == svc_gamestate ) {
+				int subcmd;
+				qboolean foundServerInfo = qfalse;
+
+				if ( haveMap && curStart > 0 && curEnd >= curStart ) {
+					totalMs += curEnd - curStart;
+				}
+				haveMap = qfalse;
+				curStart = 0;
+				curEnd = 0;
+
+				MSG_ReadLong( &buf );
+				while ( buf.readcount < buf.cursize ) {
+					subcmd = MSG_ReadByte( &buf );
+					if ( subcmd == svc_EOF || buf.readcount > buf.cursize ) break;
+					if ( subcmd == svc_configstring ) {
+						int csIdx = MSG_ReadShort( &buf );
+						char *csStr = MSG_ReadBigString( &buf );
+						if ( csIdx == CS_SERVERINFO ) {
+							const char *mapname = Info_ValueForKey( csStr, "mapname" );
+							if ( mapname && mapname[0] ) {
+								foundServerInfo = qtrue;
+							}
+						}
+					} else {
+						break;
+					}
+				}
+				if ( foundServerInfo ) {
+					haveMap = qtrue;
+					maps++;
+				}
+				break;
+			} else if ( cmd == svc_snapshot ) {
+				int snapServerTime = MSG_ReadLong( &buf );
+				if ( haveMap && snapServerTime > 0 ) {
+					if ( curStart <= 0 ) curStart = snapServerTime;
+					if ( snapServerTime > curEnd ) curEnd = snapServerTime;
+				}
+				break;
+			} else if ( cmd == svc_serverCommand ) {
+				MSG_ReadLong( &buf );
+				MSG_ReadString( &buf );
+			} else if ( cmd == svc_demo_configstring ) {
+				MSG_ReadShort( &buf );
+				MSG_ReadBigString( &buf );
+			} else if ( cmd != svc_nop ) {
+				break;
+			}
+		}
+	}
+
+	if ( haveMap && curStart > 0 && curEnd >= curStart ) {
+		totalMs += curEnd - curStart;
+	}
+
+	FS_FCloseFile( f );
+	if ( durationMs ) *durationMs = totalMs;
+	if ( mapCount ) *mapCount = maps;
+	return qtrue;
 }
 
 /*
@@ -3719,6 +3971,7 @@ void CL_Frame( int msec ) {
 
 	// send intentions now
 	CL_SendCmd();
+	CL_DemoRecordPausedFrame();
 	LS_RaceFrame();
 
 	// resend a connection request if necessary

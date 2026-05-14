@@ -1152,7 +1152,7 @@ void CL_UpdateDemoFreecam( int frameMsec ) {
 		VectorSubtract( clc.demoFreecamPos, playerOrigin, diff );
 		dist = VectorLength( diff );
 
-		cv = Cvar_Get( "cl_freecamMaxDist", "4000", CVAR_ARCHIVE );
+		cv = Cvar_Get( "cl_freecamMaxDist", "20000", CVAR_ARCHIVE );
 		maxDist = cv->value;
 		if ( maxDist < 500 ) maxDist = 500;
 

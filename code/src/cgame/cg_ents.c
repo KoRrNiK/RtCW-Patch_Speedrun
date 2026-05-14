@@ -2351,6 +2351,11 @@ static void CG_InterpolateEntityPosition( centity_t *cent ) {
 	// it would be an internal error to find an entity that interpolates without
 	// a snapshot ahead of the current one
 	if ( cg.nextSnap == NULL ) {
+		if ( cg.demoPlayback ) {
+			BG_EvaluateTrajectory( &cent->currentState.pos, cg.time, cent->lerpOrigin );
+			BG_EvaluateTrajectory( &cent->currentState.apos, cg.time, cent->lerpAngles );
+			return;
+		}
 		CG_Error( "CG_InterpoateEntityPosition: cg.nextSnap == NULL" );
 	}
 
