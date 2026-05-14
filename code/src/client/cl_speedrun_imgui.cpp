@@ -6,6 +6,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 extern "C" {
 #include "client.h"
@@ -141,18 +142,43 @@ static ImFont *CL_ImGuiAddFontFileSafe( ImGuiIO &io, const char *path, float siz
 	return io.Fonts->AddFontFromFileTTF( path, sizePixels, &cfg );
 }
 
-#define SRGUI_MAX_DEMOS 256
+#define SRGUI_MAX_DEMOS 2048
+#define SRGUI_DEMOS_PER_PAGE 128
+#define SRGUI_DEMO_SORT_NEWEST 6
 #define SRGUI_DEMOCAT_FULLGAME 0
 #define SRGUI_DEMOCAT_MISSION  1
 #define SRGUI_DEMOCAT_IL       2
 #define SRGUI_DEMOCAT_OTHER    3
+#define SRGUI_DEMOMETA_PENDING 0
+#define SRGUI_DEMOMETA_READY   1
+#define SRGUI_DEMOMETA_FAILED  2
 
 static char s_demoList[SRGUI_MAX_DEMOS][MAX_QPATH];
 static int  s_demoCategory[SRGUI_MAX_DEMOS];
+static int  s_demoSizeBytes[SRGUI_MAX_DEMOS];
+static int  s_demoDurationMs[SRGUI_MAX_DEMOS];
+static int  s_demoMapCount[SRGUI_MAX_DEMOS];
+static int  s_demoMetaState[SRGUI_MAX_DEMOS];
+static int  s_demoMTime[SRGUI_MAX_DEMOS];
 static int  s_demoCount = 0;
 static int  s_demoSelected = -1;
 static int  s_demoFilter = -1;
+static int  s_demoMetaScanCursor = 0;
+static int  s_demoSortColumn = SRGUI_DEMO_SORT_NEWEST;
+static bool s_demoSortAscending = true;
+static int  s_demoPage = 0;
 static char s_demoSearch[64] = "";
+static int  s_demoListRevision = 1;
+static int  s_demoMetaRevision = 1;
+static int  s_demoSortedCache[SRGUI_MAX_DEMOS];
+static int  s_demoSortedCount = 0;
+static int  s_demoSortedListRevision = -1;
+static int  s_demoSortedMetaRevision = -1;
+static int  s_demoSortedSortColumn = -1;
+static int  s_demoSortedFilter = -2;
+static int  s_demoSortedCountKey = -1;
+static bool s_demoSortedAscending = true;
+static char s_demoSortedSearch[64] = "";
 
 static cvar_t *s_cg_livesplit = NULL;
 static cvar_t *s_ls_type = NULL;
@@ -984,6 +1010,20 @@ static ImGuiKey CL_ImGuiMapVK( WPARAM vk ) {
 	return ImGuiKey_None;
 }
 
+static void CL_ImGuiUpdateKeyModifiers( ImGuiIO &io ) {
+	io.AddKeyEvent( ImGuiMod_Ctrl, ( GetKeyState( VK_CONTROL ) & 0x8000 ) != 0 );
+	io.AddKeyEvent( ImGuiMod_Shift, ( GetKeyState( VK_SHIFT ) & 0x8000 ) != 0 );
+	io.AddKeyEvent( ImGuiMod_Alt, ( GetKeyState( VK_MENU ) & 0x8000 ) != 0 );
+	io.AddKeyEvent( ImGuiMod_Super, ( ( GetKeyState( VK_LWIN ) | GetKeyState( VK_RWIN ) ) & 0x8000 ) != 0 );
+}
+
+static void CL_ImGuiAddKeyEvent( ImGuiIO &io, WPARAM vk, bool down ) {
+	ImGuiKey key = CL_ImGuiMapVK( vk );
+	if ( key != ImGuiKey_None ) {
+		io.AddKeyEvent( key, down );
+	}
+}
+
 static void CL_ImGuiSetDarkSpeedrunStyle( void ) {
 	ImGuiStyle &style = ImGui::GetStyle();
 	style.WindowPadding = ImVec2( 18, 16 );
@@ -1059,12 +1099,35 @@ static void CL_ImGuiReadColorCvar( cvar_t *cv, const float fallback[4], float ou
 static void CL_ImGuiApplyRuntimeStyle( void ) {
 	static const float accentFallback[4] = { 0.36f, 0.82f, 0.21f, 1.00f };
 	static const float accentAltFallback[4] = { 0.96f, 0.74f, 0.24f, 1.00f };
+	static ImGuiContext *lastContext = NULL;
+	static int lastRoundingMod = -1;
+	static int lastCardAlphaMod = -1;
+	static int lastAccentMod = -1;
+	static int lastAccentAltMod = -1;
+	static bool initialized = false;
 	float accent[4];
 	float accentAlt[4];
 	bool rounded = !s_imguiRounding || s_imguiRounding->integer != 0;
 	float cardAlpha = s_imguiCardAlpha ? Com_Clamp( 0.35f, 1.0f, s_imguiCardAlpha->value ) : 0.92f;
+	ImGuiContext *context = ImGui::GetCurrentContext();
+	int roundingMod = s_imguiRounding ? s_imguiRounding->modificationCount : -2;
+	int cardAlphaMod = s_imguiCardAlpha ? s_imguiCardAlpha->modificationCount : -2;
+	int accentMod = s_imguiAccent ? s_imguiAccent->modificationCount : -2;
+	int accentAltMod = s_imguiAccentAlt ? s_imguiAccentAlt->modificationCount : -2;
 	ImGuiStyle &style = ImGui::GetStyle();
 	ImVec4 *c = style.Colors;
+
+	if ( initialized && context == lastContext &&
+		 roundingMod == lastRoundingMod && cardAlphaMod == lastCardAlphaMod &&
+		 accentMod == lastAccentMod && accentAltMod == lastAccentAltMod ) {
+		return;
+	}
+	initialized = true;
+	lastContext = context;
+	lastRoundingMod = roundingMod;
+	lastCardAlphaMod = cardAlphaMod;
+	lastAccentMod = accentMod;
+	lastAccentAltMod = accentAltMod;
 
 	CL_ImGuiReadColorCvar( s_imguiAccent, accentFallback, accent );
 	CL_ImGuiReadColorCvar( s_imguiAccentAlt, accentAltFallback, accentAlt );
@@ -1982,7 +2045,7 @@ static void CL_ImGuiDragLayoutElement( const char *label, const char *xCvar, con
 	ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.10f, 0.18f, 0.07f, 0.92f ) );
 	ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.24f, 0.42f, 0.13f, 0.96f ) );
 	ImGui::PushStyleColor( ImGuiCol_ButtonActive, ImVec4( 0.36f, 0.62f, 0.18f, 1.00f ) );
-	ImGui::Begin( label, NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus );
+	ImGui::Begin( label, NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus );
 	ImGui::PushID( label );
 	pos = ImGui::GetWindowPos();
 	size = ImGui::GetWindowSize();
@@ -2213,11 +2276,10 @@ static float s_imguiKeystrokeCmSaveAccum = 0.0f;
 static bool  s_imguiKeystrokeCmInit = false;
 static bool  s_imguiKeystrokeRunWasActive = false;
 
-static void CL_ImGuiDrawKeystrokeKey( ImDrawList *draw, ImFont *font, float fontSize, float x, float y, float w, float h, const char *label, float t, float rounding, float borderSize, ImU32 idleBg, ImU32 activeBg, ImU32 idleBorder, ImU32 activeBorder, ImU32 idleText, ImU32 activeText, float appear = 1.0f, float pulse = 0.0f ) {
+static void CL_ImGuiDrawKeystrokeKey( ImDrawList *draw, ImFont *font, float fontSize, float x, float y, float w, float h, const char *label, float t, float rounding, float borderSize, ImU32 idleBg, ImU32 activeBg, ImU32 idleBorder, ImU32 activeBorder, ImU32 idleText, ImU32 activeText, int effect, float appear = 1.0f, float pulse = 0.0f ) {
 	ImU32 bg = CL_ImGuiLerpColorU32( idleBg, activeBg, t );
 	ImU32 border = CL_ImGuiLerpColorU32( idleBorder, activeBorder, t );
 	ImU32 text = CL_ImGuiLerpColorU32( idleText, activeText, t );
-	int effect = Cvar_VariableIntegerValue( "ks_effect" );
 	appear = Com_Clamp( 0.0f, 1.0f, appear );
 	if ( appear <= 0.01f ) return;
 	if ( appear < 0.999f || pulse > 0.001f ) {
@@ -2415,14 +2477,14 @@ static void CL_ImGuiDrawKeystrokeMouseDirection( ImDrawList *draw, float x, floa
 	draw->AddCircleFilled( ImVec2( x + radius + dirX * maxOff, y + radius + dirY * maxOff ), dotR, dotColor, 18 );
 }
 
-static int CL_ImGuiCollectActiveKeystrokes( const bool pressed[SRGUI_KEYSTROKE_KEY_COUNT], int out[SRGUI_KEYSTROKE_KEY_COUNT], int maxCount ) {
+static int CL_ImGuiCollectActiveKeystrokes( const bool pressed[SRGUI_KEYSTROKE_KEY_COUNT], int out[SRGUI_KEYSTROKE_KEY_COUNT], int maxCount, bool showUse, bool showReload ) {
 	static const int order[] = { 0, 1, 2, 3, 4, 5, 6, 8, 9, 10 };
 	int count = 0;
 	if ( maxCount < 1 ) maxCount = SRGUI_KEYSTROKE_KEY_COUNT;
 	for ( int i = 0; i < IM_ARRAYSIZE( order ); ++i ) {
 		int idx = order[i];
-		if ( idx == 9 && !Cvar_VariableIntegerValue( "ks_show_use" ) ) continue;
-		if ( idx == 10 && !Cvar_VariableIntegerValue( "ks_show_reload" ) ) continue;
+		if ( idx == 9 && !showUse ) continue;
+		if ( idx == 10 && !showReload ) continue;
 		if ( pressed[idx] ) {
 			out[count++] = idx;
 			if ( count >= maxCount ) break;
@@ -2431,26 +2493,30 @@ static int CL_ImGuiCollectActiveKeystrokes( const bool pressed[SRGUI_KEYSTROKE_K
 	return count;
 }
 
-static void CL_ImGuiDrawActiveKeystrokeStrip( ImDrawList *draw, ImFont *font, float fontSize, float x, float y, float maxW, float maxH, float itemW, float itemH, float gap, bool vertical, int anchor, int maxCount, const bool pressed[SRGUI_KEYSTROKE_KEY_COUNT], const char *labels[SRGUI_KEYSTROKE_KEY_COUNT], float rounding, float borderSize, ImU32 idleBg, ImU32 activeBg, ImU32 idleBorder, ImU32 activeBorder, ImU32 idleText, ImU32 activeText ) {
+static void CL_ImGuiDrawActiveKeystrokeStrip( ImDrawList *draw, ImFont *font, float fontSize, float x, float y, float maxW, float maxH, float itemW, float itemH, float gap, bool vertical, int anchor, int maxCount, const bool pressed[SRGUI_KEYSTROKE_KEY_COUNT], const char *labels[SRGUI_KEYSTROKE_KEY_COUNT], float rounding, float borderSize, ImU32 idleBg, ImU32 activeBg, ImU32 idleBorder, ImU32 activeBorder, ImU32 idleText, ImU32 activeText, int effect, bool showUse, bool showReload ) {
 	int active[SRGUI_KEYSTROKE_KEY_COUNT];
-	int count = CL_ImGuiCollectActiveKeystrokes( pressed, active, maxCount );
+	int count = CL_ImGuiCollectActiveKeystrokes( pressed, active, maxCount, showUse, showReload );
 	if ( count <= 0 ) return;
 	if ( vertical ) {
 		float totalH = itemH * (float)count + gap * (float)( count - 1 );
 		float startY = ( anchor == 3 ) ? y + maxH - totalH : ( anchor == 2 ? y + ( maxH - totalH ) * 0.5f : y );
 		for ( int i = 0; i < count; ++i ) {
-			CL_ImGuiDrawKeystrokeKey( draw, font, fontSize, x, startY + ( itemH + gap ) * (float)i, itemW, itemH, labels[active[i]], s_imguiKeystrokeAlpha[active[i]], rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, s_imguiKeystrokeAppear[active[i]], s_imguiKeystrokePulse[active[i]] );
+			CL_ImGuiDrawKeystrokeKey( draw, font, fontSize, x, startY + ( itemH + gap ) * (float)i, itemW, itemH, labels[active[i]], s_imguiKeystrokeAlpha[active[i]], rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, effect, s_imguiKeystrokeAppear[active[i]], s_imguiKeystrokePulse[active[i]] );
 		}
 	} else {
 		float totalW = itemW * (float)count + gap * (float)( count - 1 );
 		float startX = ( anchor == 1 ) ? x + maxW - totalW : ( anchor == 2 ? x + ( maxW - totalW ) * 0.5f : x );
 		for ( int i = 0; i < count; ++i ) {
-			CL_ImGuiDrawKeystrokeKey( draw, font, fontSize, startX + ( itemW + gap ) * (float)i, y, itemW, itemH, labels[active[i]], s_imguiKeystrokeAlpha[active[i]], rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, s_imguiKeystrokeAppear[active[i]], s_imguiKeystrokePulse[active[i]] );
+			CL_ImGuiDrawKeystrokeKey( draw, font, fontSize, startX + ( itemW + gap ) * (float)i, y, itemW, itemH, labels[active[i]], s_imguiKeystrokeAlpha[active[i]], rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, effect, s_imguiKeystrokeAppear[active[i]], s_imguiKeystrokePulse[active[i]] );
 		}
 	}
 }
 
 static void CL_ImGuiEnsureKeystrokeCvars( void ) {
+	static bool initialized = false;
+	if ( initialized ) return;
+	initialized = true;
+
 	CL_ImGuiCvar( "ks_imgui", "1" );
 	Cvar_Set( "ks_imgui", "1" );
 	CL_ImGuiCvar( "ks_layout", "0" );
@@ -2519,6 +2585,9 @@ static void CL_ImGuiDrawKeystrokesOverlay( void ) {
 	int mouseMode = Cvar_VariableIntegerValue( "ks_mouse" );
 	int activeAnchor = Cvar_VariableIntegerValue( "ks_active_anchor" );
 	int activeMax = Cvar_VariableIntegerValue( "ks_active_max" );
+	int effect = Cvar_VariableIntegerValue( "ks_effect" );
+	bool showUse = Cvar_VariableIntegerValue( "ks_show_use" ) != 0;
+	bool showReload = Cvar_VariableIntegerValue( "ks_show_reload" ) != 0;
 	float gridSize = Com_Clamp( 48.0f, 220.0f, Cvar_VariableValue( "ks_mouse_grid_size" ) ) * scale * screenScale;
 	bool pressed[SRGUI_KEYSTROKE_KEY_COUNT];
 	const char *labels[SRGUI_KEYSTROKE_KEY_COUNT] = { "W", "A", "S", "D", "JUMP", "DUCK", "FIRE", "RMB", "RUN", "USE", "RLD", "LEAN L", "LEAN R" };
@@ -2598,13 +2667,13 @@ static void CL_ImGuiDrawKeystrokesOverlay( void ) {
 	ImU32 idleText = CL_ImGuiColorU32( "ks_clr_text", ImVec4( 0.50f, 0.56f, 0.48f, 0.78f ), opacity );
 	ImU32 activeText = CL_ImGuiColorU32( "ks_clr_active_text", ImVec4( 0.86f, 0.97f, 0.72f, 1.00f ), opacity );
 
-#define DRAW_KS(idx, px, py, pw) CL_ImGuiDrawKeystrokeKey( draw, font, fontSize, (px), (py), (pw), boxH, labels[(idx)], s_imguiKeystrokeAlpha[(idx)], rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, 1.0f, s_imguiKeystrokePulse[(idx)] )
+#define DRAW_KS(idx, px, py, pw) CL_ImGuiDrawKeystrokeKey( draw, font, fontSize, (px), (py), (pw), boxH, labels[(idx)], s_imguiKeystrokeAlpha[(idx)], rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, effect, 1.0f, s_imguiKeystrokePulse[(idx)] )
 	if ( layout == 1 ) {
 		float cx = x;
 		for ( int i = 0; i < 6; ++i ) { DRAW_KS( i, cx, y, i >= 4 ? wideW : boxW ); cx += ( i >= 4 ? wideW : boxW ) + gap; }
 		if ( mouseMode >= 1 ) { DRAW_KS( 6, cx, y, wideW ); cx += wideW + gap; DRAW_KS( 8, cx, y, wideW ); cx += wideW + gap; }
-		if ( Cvar_VariableIntegerValue( "ks_show_use" ) ) { DRAW_KS( 9, cx, y, wideW ); cx += wideW + gap; }
-		if ( Cvar_VariableIntegerValue( "ks_show_reload" ) ) { DRAW_KS( 10, cx, y, wideW ); cx += wideW + gap; }
+		if ( showUse ) { DRAW_KS( 9, cx, y, wideW ); cx += wideW + gap; }
+		if ( showReload ) { DRAW_KS( 10, cx, y, wideW ); cx += wideW + gap; }
 	} else if ( layout == 3 ) {
 		float keysW = boxW * 3.0f + gap * 2.0f;
 		float ctrlW = boxW * 1.35f;
@@ -2626,15 +2695,15 @@ static void CL_ImGuiDrawKeystrokesOverlay( void ) {
 		float cy = y;
 		for ( int i = 0; i < IM_ARRAYSIZE( order ); ++i ) {
 			int idx = order[i];
-			if ( idx == 9 && !Cvar_VariableIntegerValue( "ks_show_use" ) ) continue;
-			if ( idx == 10 && !Cvar_VariableIntegerValue( "ks_show_reload" ) ) continue;
+			if ( idx == 9 && !showUse ) continue;
+			if ( idx == 10 && !showReload ) continue;
 			DRAW_KS( idx, x, cy, wideW );
 			cy += boxH + gap;
 		}
 	} else if ( layout == 5 ) {
-		CL_ImGuiDrawActiveKeystrokeStrip( draw, font, fontSize, x, y, CL_ImGuiKeysHandleWidth() * scale * screenScale, boxH, wideW, boxH, gap, false, activeAnchor, activeMax, pressed, labels, rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText );
+		CL_ImGuiDrawActiveKeystrokeStrip( draw, font, fontSize, x, y, CL_ImGuiKeysHandleWidth() * scale * screenScale, boxH, wideW, boxH, gap, false, activeAnchor, activeMax, pressed, labels, rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, effect, showUse, showReload );
 	} else if ( layout == 6 ) {
-		CL_ImGuiDrawActiveKeystrokeStrip( draw, font, fontSize, x, y, wideW, CL_ImGuiKeysHandleHeight() * scale * screenScale, wideW, boxH, gap, true, activeAnchor, activeMax, pressed, labels, rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText );
+		CL_ImGuiDrawActiveKeystrokeStrip( draw, font, fontSize, x, y, wideW, CL_ImGuiKeysHandleHeight() * scale * screenScale, wideW, boxH, gap, true, activeAnchor, activeMax, pressed, labels, rounding, borderSize, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, effect, showUse, showReload );
 	} else if ( layout == 7 ) {
 		float miniFontScale = Com_Clamp( 0.30f, 1.20f, Cvar_VariableValue( "ks_grid_keys_font_scale" ) );
 		float miniW = gridSize * 0.20f;
@@ -2647,7 +2716,7 @@ static void CL_ImGuiDrawKeystrokesOverlay( void ) {
 		float miniY = y + ( gridSize - ( miniVertical ? miniMaxH : miniH ) ) * 0.5f + Cvar_VariableValue( "ks_grid_keys_y" ) * scale * screenScale;
 		CL_ImGuiDrawKeystrokeMouseGrid( draw, x, y, gridSize, gridSize, -s_imguiKeystrokeMouseX, s_imguiKeystrokeMouseY, rounding, borderSize, idleBg, idleBorder, activeText );
 		if ( Cvar_VariableIntegerValue( "ks_grid_keys" ) ) {
-			CL_ImGuiDrawActiveKeystrokeStrip( draw, font, fontSize * miniFontScale, miniX, miniY, miniMaxW, miniMaxH, miniW, miniH, miniGap, miniVertical, activeAnchor, activeMax, pressed, labels, 0.0f, borderSize * 0.65f, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText );
+			CL_ImGuiDrawActiveKeystrokeStrip( draw, font, fontSize * miniFontScale, miniX, miniY, miniMaxW, miniMaxH, miniW, miniH, miniGap, miniVertical, activeAnchor, activeMax, pressed, labels, 0.0f, borderSize * 0.65f, idleBg, activeBg, idleBorder, activeBorder, idleText, activeText, effect, showUse, showReload );
 		}
 	} else {
 		DRAW_KS( 0, x + boxW + gap, y, boxW );
@@ -2672,11 +2741,11 @@ static void CL_ImGuiDrawKeystrokesOverlay( void ) {
 				}
 				row += 1.0f;
 			}
-			if ( Cvar_VariableIntegerValue( "ks_show_use" ) || Cvar_VariableIntegerValue( "ks_show_reload" ) ) {
+			if ( showUse || showReload ) {
 				float ex = x;
 				float ey = y + ( boxH + gap ) * row;
-				if ( Cvar_VariableIntegerValue( "ks_show_use" ) ) { DRAW_KS( 9, ex, ey, wideW ); ex += wideW + gap; }
-				if ( Cvar_VariableIntegerValue( "ks_show_reload" ) ) { DRAW_KS( 10, ex, ey, wideW ); ex += wideW + gap; }
+				if ( showUse ) { DRAW_KS( 9, ex, ey, wideW ); ex += wideW + gap; }
+				if ( showReload ) { DRAW_KS( 10, ex, ey, wideW ); ex += wideW + gap; }
 			}
 		}
 	}
@@ -2872,7 +2941,7 @@ static bool CL_ImGuiShouldDrawLiveSplitOverlay( void ) {
 	if ( !s_cg_livesplit || !s_cg_livesplit->integer ) return false;
 	if ( Cvar_VariableIntegerValue( "ls_type" ) == 1 ) return false;
 	if ( !Cvar_VariableIntegerValue( "ls_draw" ) ) return false;
-	if ( clc.demoplaying ) return false;
+	if ( clc.demoplaying && clc.demoHideHUD ) return false;
 	return true;
 }
 
@@ -2882,9 +2951,19 @@ static bool CL_ImGuiShouldDrawZoneTimerOverlay( void ) {
 	return true;
 }
 
+static const lsRaceUiSnapshot_t *CL_ImGuiRaceSnapshotThisFrame( void ) {
+	static lsRaceUiSnapshot_t race;
+	static int frame = -1;
+
+	if ( frame != cls.framecount ) {
+		LS_RaceBuildSnapshot( &race );
+		frame = cls.framecount;
+	}
+	return &race;
+}
+
 static bool CL_ImGuiShouldDrawRaceOverlay( void ) {
-	lsRaceUiSnapshot_t race;
-	LS_RaceBuildSnapshot( &race );
+	const lsRaceUiSnapshot_t &race = *CL_ImGuiRaceSnapshotThisFrame();
 	if ( !race.active ) return false;
 	if ( !Cvar_VariableIntegerValue( "ls_race_overlay" ) ) return false;
 	if ( clc.demoplaying ) return false;
@@ -2892,9 +2971,8 @@ static bool CL_ImGuiShouldDrawRaceOverlay( void ) {
 }
 
 static bool CL_ImGuiShouldDrawRaceCountdown( void ) {
-	lsRaceUiSnapshot_t race;
 	if ( cls.state != CA_ACTIVE ) return false;
-	LS_RaceBuildSnapshot( &race );
+	const lsRaceUiSnapshot_t &race = *CL_ImGuiRaceSnapshotThisFrame();
 	if ( !race.active ) return false;
 	if ( !Cvar_VariableIntegerValue( "ls_race_countdown_center" ) ) return false;
 	if ( clc.demoplaying ) return false;
@@ -3062,25 +3140,6 @@ static void CL_ImGuiRaceStateChip( const char *state, bool compact ) {
 	ImGui::Dummy( boxSize );
 }
 
-static float CL_ImGuiRaceStateChipWidth( const char *state, bool compact, float scale ) {
-	const char *label = CL_ImGuiRaceStateLabel( state, compact );
-	ImVec2 textSize = ImGui::CalcTextSize( label );
-	float padX = ( compact ? 4.0f : 6.0f ) * scale;
-	if ( !label || !label[0] ) return 0.0f;
-	return textSize.x + padX * 2.0f;
-}
-
-static void CL_ImGuiRaceDrawStateChipAt( ImDrawList *draw, ImVec2 pos, const char *state, bool compact, float scale ) {
-	const char *label = CL_ImGuiRaceStateLabel( state, compact );
-	ImVec2 textSize = ImGui::CalcTextSize( label );
-	float padX = ( compact ? 4.0f : 6.0f ) * scale;
-	float padY = ( compact ? 1.0f : 1.5f ) * scale;
-	ImVec2 boxSize( textSize.x + padX * 2.0f, textSize.y + padY * 2.0f );
-	if ( !label || !label[0] ) return;
-	draw->AddRectFilled( pos, ImVec2( pos.x + boxSize.x, pos.y + boxSize.y ), CL_ImGuiRaceStateBgU32( state ), 3.0f * scale );
-	draw->AddText( ImVec2( pos.x + padX, pos.y + padY ), CL_ImGuiRaceStateTextU32( state ), label );
-}
-
 static void CL_ImGuiRaceBuildCheatText( int flags, char *out, int outSize, bool compact ) {
 	bool any = false;
 	if ( !out || outSize <= 0 ) return;
@@ -3117,30 +3176,15 @@ static void CL_ImGuiRaceDrawAlertChipAt( ImDrawList *draw, ImVec2 pos, const cha
 	draw->AddText( ImVec2( pos.x + 4.0f * scale, pos.y + 1.0f * scale ), IM_COL32( 255, 238, 226, 255 ), label );
 }
 
-static void CL_ImGuiRaceBuildProgressText( const srRaceRow_t *row, char *out, int outSize, bool compact ) {
-	if ( !out || outSize <= 0 ) return;
-	out[0] = '\0';
-	if ( !row ) return;
-	if ( row->objectivesTotal > 0 && row->zonesTotal > 0 ) {
-		Com_sprintf( out, outSize, compact ? "P%d O%d/%d Z%d/%d" : "Pts %d   Obj %d/%d   Zones %d/%d", row->score, row->objectivesFound, row->objectivesTotal, row->zonesFound, row->zonesTotal );
-	} else if ( row->objectivesTotal > 0 ) {
-		Com_sprintf( out, outSize, compact ? "P%d O%d/%d" : "Pts %d   Obj %d/%d", row->score, row->objectivesFound, row->objectivesTotal );
-	} else if ( row->zonesTotal > 0 ) {
-		Com_sprintf( out, outSize, compact ? "P%d Z%d/%d" : "Pts %d   Zones %d/%d", row->score, row->zonesFound, row->zonesTotal );
-	} else if ( row->score > 0 ) {
-		Com_sprintf( out, outSize, compact ? "P%d" : "Pts %d", row->score );
-	}
-}
-
 static void CL_ImGuiRaceBuildRunnerLine( const srRaceRow_t *row, char *out, int outSize ) {
-	char stageText[64];
+	char mapText[64];
 
 	if ( !out || outSize <= 0 ) return;
 	out[0] = '\0';
 	if ( !row ) return;
-	Q_strncpyz( stageText, row->stage[0] ? row->stage : row->map, sizeof( stageText ) );
-	if ( stageText[0] && Q_stricmp( stageText, "-" ) ) {
-		Com_sprintf( out, outSize, "%s%s - %s", row->nick, row->local ? " *" : "", stageText );
+	Q_strncpyz( mapText, ( row->map[0] && Q_stricmp( row->map, "-" ) ) ? row->map : row->stage, sizeof( mapText ) );
+	if ( mapText[0] && Q_stricmp( mapText, "-" ) ) {
+		Com_sprintf( out, outSize, "%s%s - %s", row->nick, row->local ? " *" : "", mapText );
 	} else {
 		Com_sprintf( out, outSize, "%s%s", row->nick, row->local ? " *" : "" );
 	}
@@ -3148,17 +3192,13 @@ static void CL_ImGuiRaceBuildRunnerLine( const srRaceRow_t *row, char *out, int 
 
 static void CL_ImGuiDrawRaceOverlayList( srRaceRow_t *rows, int rowCount, bool compact, float scale ) {
 	ImDrawList *draw = ImGui::GetWindowDrawList();
-	ImFont *font = ImGui::GetFont();
 	float width = ImGui::GetContentRegionAvail().x;
 	float rowH = ( compact ? 22.0f : 26.0f ) * scale;
 	float gap = 3.0f * scale;
 	float pad = 5.0f * scale;
 	float lineH = ImGui::GetTextLineHeight();
-	float fontSize = ImGui::GetFontSize();
-	float igtFontSize = fontSize * 0.76f;
 	ImU32 textCol = IM_COL32( 226, 238, 218, 238 );
 	ImU32 dimCol = IM_COL32( 154, 172, 146, 220 );
-	ImU32 igtCol = IM_COL32( 168, 187, 158, 196 );
 	ImU32 goldCol = IM_COL32( 255, 214, 76, 255 );
 	int rowIndex;
 
@@ -3172,66 +3212,29 @@ static void CL_ImGuiDrawRaceOverlayList( srRaceRow_t *rows, int rowCount, bool c
 		ImU32 timerCol = row->finished ? goldCol : textCol;
 		char rankText[12];
 		char runnerText[96];
-		char cheatText[32];
+		char timeText[32];
 		int rank = row->rank > 0 ? row->rank : rowIndex + 1;
-		bool drawState = CL_ImGuiRaceDrawOverlayState( row->state );
-		bool drawCheat;
-		float rankW = 20.0f * scale;
-		float markerW = 11.0f * scale;
+		float rankW = 17.0f * scale;
 		float topY = rowMin.y + ( rowH - lineH ) * 0.5f;
 		float right = rowMax.x - pad;
-		float timeColW = ( compact ? 92.0f : 104.0f ) * scale;
-		float timeW = ImGui::CalcTextSize( row->rgt ).x;
-		float igtW = ( row->stageIgt[0] && font ) ? font->CalcTextSizeA( igtFontSize, FLT_MAX, 0.0f, row->stageIgt ).x : 0.0f;
-		float timeGap = row->stageIgt[0] ? 5.0f * scale : 0.0f;
-		float chipColW = 0.0f;
-		float chipW;
-		float chipX;
-		float nameX = rowMin.x + pad + rankW + markerW;
+		float timeColW = ( compact ? 58.0f : 72.0f ) * scale;
+		float timeW;
+		float nameX = rowMin.x + pad + rankW + 2.0f * scale;
 		float nameRight;
-		ImVec2 markerCenter;
-		float markerRadius = 3.4f * scale;
-		float rgtX;
-		float igtX;
-		float igtY;
 
 		if ( topY < rowMin.y + 2.0f * scale ) topY = rowMin.y + 2.0f * scale;
-		if ( timeColW < timeW + igtW + timeGap ) timeColW = timeW + igtW + timeGap;
-		CL_ImGuiRaceBuildCheatText( row->cheatFlags, cheatText, sizeof( cheatText ), true );
-		drawCheat = cheatText[0] ? true : false;
-		chipW = drawCheat ? CL_ImGuiRaceAlertChipWidth( cheatText, scale ) : ( drawState ? CL_ImGuiRaceStateChipWidth( row->state, true, scale ) : 0.0f );
-		if ( drawState || drawCheat ) {
-			chipColW = ( compact ? 38.0f : 48.0f ) * scale;
-			if ( chipColW < chipW ) chipColW = chipW;
-			chipX = right - timeColW - 6.0f * scale - chipColW + ( chipColW - chipW ) * 0.5f;
-			nameRight = right - timeColW - chipColW - 12.0f * scale;
-		} else {
-			chipX = right - timeColW;
-			nameRight = right - timeColW - 7.0f * scale;
-		}
+		Q_strncpyz( timeText, row->stageIgt[0] ? row->stageIgt : "--", sizeof( timeText ) );
+		timeW = ImGui::CalcTextSize( timeText ).x;
+		if ( timeColW < timeW ) timeColW = timeW;
+		nameRight = right - timeColW - 7.0f * scale;
 		if ( nameRight < nameX ) nameRight = nameX;
 
 		draw->AddRectFilled( rowMin, rowMax, bg, 4.0f * scale );
 		Com_sprintf( rankText, sizeof( rankText ), "%d", rank );
 		CL_ImGuiRaceBuildRunnerLine( row, runnerText, sizeof( runnerText ) );
 		CL_ImGuiAddTextShadow( draw, ImVec2( rowMin.x + pad, topY ), rank == 1 ? goldCol : dimCol, rankText, true );
-		markerCenter = ImVec2( rowMin.x + pad + rankW + markerW * 0.36f, rowMin.y + rowH * 0.50f );
-		draw->AddCircleFilled( markerCenter, markerRadius + 1.2f * scale, IM_COL32( 0, 0, 0, 150 ), 14 );
-		draw->AddCircleFilled( markerCenter, markerRadius, runnerCol, 14 );
-		draw->AddCircle( markerCenter, markerRadius + 0.5f * scale, IM_COL32( 230, 245, 216, 90 ), 14, 1.0f * scale );
 		CL_ImGuiAddEllipsizedText( draw, ImVec2( nameX, topY ), ImVec2( nameX, rowMin.y ), ImVec2( nameRight, rowMax.y ), runnerCol, runnerText, true );
-		if ( drawCheat ) {
-			CL_ImGuiRaceDrawAlertChipAt( draw, ImVec2( chipX, topY - 1.0f * scale ), cheatText, scale );
-		} else if ( drawState ) {
-			CL_ImGuiRaceDrawStateChipAt( draw, ImVec2( chipX, topY - 1.0f * scale ), row->state, true, scale );
-		}
-		rgtX = right - timeW;
-		if ( row->stageIgt[0] && font ) {
-			igtX = rgtX - timeGap - igtW;
-			igtY = topY + lineH - igtFontSize - 1.0f * scale;
-			draw->AddText( font, igtFontSize, ImVec2( igtX, igtY ), igtCol, row->stageIgt );
-		}
-		CL_ImGuiAddTextRight( draw, right, topY, timerCol, row->rgt, true );
+		CL_ImGuiAddTextRight( draw, right, topY, timerCol, timeText, true );
 		ImGui::Dummy( ImVec2( width, rowH + gap ) );
 	}
 }
@@ -3240,7 +3243,7 @@ static void CL_ImGuiDrawRaceRowsTable( const char *tableId, srRaceRow_t *rows, i
 	ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_PadOuterX;
 	float rowHeight = compact ? 24.0f : 28.0f;
 	bool showProgress = Cvar_VariableIntegerValue( "ls_race_overlay_progress" ) != 0;
-	int columnCount = compact ? 6 : ( showProgress ? 9 : 6 );
+	int columnCount = compact ? 5 : ( showProgress ? 8 : 5 );
 	if ( height > 0.0f ) flags |= ImGuiTableFlags_ScrollY;
 	if ( !compact ) flags |= ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX;
 	ImGui::PushStyleVar( ImGuiStyleVar_CellPadding, compact ? ImVec2( 5.0f, 3.0f ) : ImVec2( 7.0f, 5.0f ) );
@@ -3252,11 +3255,10 @@ static void CL_ImGuiDrawRaceRowsTable( const char *tableId, srRaceRow_t *rows, i
 	if ( ImGui::BeginTable( tableId, columnCount, flags, ImVec2( 0, height ) ) ) {
 		ImGui::TableSetupColumn( "#", ImGuiTableColumnFlags_WidthFixed, compact ? 30.0f : 42.0f );
 		ImGui::TableSetupColumn( compact ? "Runner" : "Runner", ImGuiTableColumnFlags_WidthStretch, compact ? 1.20f : 1.35f );
-		ImGui::TableSetupColumn( "Stage", ImGuiTableColumnFlags_WidthStretch, compact ? 1.05f : 1.15f );
+		ImGui::TableSetupColumn( "Map", ImGuiTableColumnFlags_WidthStretch, compact ? 1.25f : 1.30f );
 		if ( compact ) {
 			ImGui::TableSetupColumn( showProgress ? "St/Pts" : "St", ImGuiTableColumnFlags_WidthFixed, showProgress ? 54.0f : 42.0f );
-			ImGui::TableSetupColumn( "RGT", ImGuiTableColumnFlags_WidthFixed, 64.0f );
-			ImGui::TableSetupColumn( "IGT", ImGuiTableColumnFlags_WidthFixed, 56.0f );
+			ImGui::TableSetupColumn( "IGT", ImGuiTableColumnFlags_WidthFixed, 64.0f );
 		} else {
 			ImGui::TableSetupColumn( "State", ImGuiTableColumnFlags_WidthFixed, 76.0f );
 			if ( showProgress ) {
@@ -3264,8 +3266,7 @@ static void CL_ImGuiDrawRaceRowsTable( const char *tableId, srRaceRow_t *rows, i
 				ImGui::TableSetupColumn( "Zones", ImGuiTableColumnFlags_WidthFixed, 74.0f );
 				ImGui::TableSetupColumn( "Pts", ImGuiTableColumnFlags_WidthFixed, 50.0f );
 			}
-			ImGui::TableSetupColumn( "RGT", ImGuiTableColumnFlags_WidthFixed, 92.0f );
-			ImGui::TableSetupColumn( "IGT", ImGuiTableColumnFlags_WidthFixed, 88.0f );
+			ImGui::TableSetupColumn( "IGT", ImGuiTableColumnFlags_WidthFixed, 92.0f );
 		}
 		ImGui::TableSetupScrollFreeze( 0, 1 );
 		ImGui::TableHeadersRow();
@@ -3294,8 +3295,8 @@ static void CL_ImGuiDrawRaceRowsTable( const char *tableId, srRaceRow_t *rows, i
 				ImGui::TextColored( ImVec4( 1.0f, 0.28f, 0.22f, 1.0f ), "%s", cheatText );
 			}
 			ImGui::TableSetColumnIndex( 2 );
-			if ( row->progress > 0 ) Com_sprintf( stageText, sizeof( stageText ), "%02d %s", row->progress, row->stage[0] ? row->stage : row->map );
-			else Q_strncpyz( stageText, row->stage[0] ? row->stage : row->map, sizeof( stageText ) );
+			if ( row->progress > 0 ) Com_sprintf( stageText, sizeof( stageText ), "%02d %s", row->progress, ( row->map[0] && Q_stricmp( row->map, "-" ) ) ? row->map : row->stage );
+			else Q_strncpyz( stageText, ( row->map[0] && Q_stricmp( row->map, "-" ) ) ? row->map : row->stage, sizeof( stageText ) );
 			ImGui::TextUnformatted( stageText );
 			ImGui::TableSetColumnIndex( 3 );
 			if ( compact ) {
@@ -3307,9 +3308,7 @@ static void CL_ImGuiDrawRaceRowsTable( const char *tableId, srRaceRow_t *rows, i
 					CL_ImGuiRaceStateChip( row->state, true );
 				}
 				ImGui::TableSetColumnIndex( 4 );
-				ImGui::TextColored( row->finished ? ImVec4( 1.0f, 0.82f, 0.26f, 1.0f ) : ImVec4( 0.86f, 0.93f, 0.82f, 1.0f ), "%s", row->rgt );
-				ImGui::TableSetColumnIndex( 5 );
-				ImGui::TextColored( ImVec4( 0.67f, 0.76f, 0.62f, 0.96f ), "%s", row->stageIgt );
+				ImGui::TextColored( row->finished ? ImVec4( 1.0f, 0.82f, 0.26f, 1.0f ) : ImVec4( 0.86f, 0.93f, 0.82f, 1.0f ), "%s", row->stageIgt );
 				continue;
 			}
 			CL_ImGuiRaceStateChip( row->state, false );
@@ -3326,9 +3325,7 @@ static void CL_ImGuiDrawRaceRowsTable( const char *tableId, srRaceRow_t *rows, i
 			} else {
 				ImGui::TableSetColumnIndex( 4 );
 			}
-			ImGui::TextColored( row->finished ? ImVec4( 1.0f, 0.82f, 0.26f, 1.0f ) : ImVec4( 0.86f, 0.93f, 0.82f, 1.0f ), "%s", row->rgt );
-			ImGui::TableSetColumnIndex( showProgress ? 8 : 5 );
-			ImGui::TextColored( ImVec4( 0.67f, 0.76f, 0.62f, 0.96f ), "%s", row->stageIgt );
+			ImGui::TextColored( row->finished ? ImVec4( 1.0f, 0.82f, 0.26f, 1.0f ) : ImVec4( 0.86f, 0.93f, 0.82f, 1.0f ), "%s", row->stageIgt );
 		}
 		ImGui::EndTable();
 	}
@@ -3337,7 +3334,7 @@ static void CL_ImGuiDrawRaceRowsTable( const char *tableId, srRaceRow_t *rows, i
 }
 
 static void CL_ImGuiDrawRaceCenterCountdown( void ) {
-	lsRaceUiSnapshot_t race;
+	const lsRaceUiSnapshot_t &race = *CL_ImGuiRaceSnapshotThisFrame();
 	char text[32];
 	ImDrawList *draw;
 	ImFont *font;
@@ -3359,7 +3356,6 @@ static void CL_ImGuiDrawRaceCenterCountdown( void ) {
 	ImU32 gold = IM_COL32( 255, 211, 86, 255 );
 	ImU32 shadow = IM_COL32( 0, 0, 0, 170 );
 
-	LS_RaceBuildSnapshot( &race );
 	Q_strncpyz( text, race.countdownText, sizeof( text ) );
 	if ( !text[0] ) return;
 	draw = ImGui::GetForegroundDrawList();
@@ -3387,7 +3383,7 @@ static void CL_ImGuiDrawRaceCenterCountdown( void ) {
 }
 
 static void CL_ImGuiDrawRaceOverlay( void ) {
-	lsRaceUiSnapshot_t race;
+	const lsRaceUiSnapshot_t &race = *CL_ImGuiRaceSnapshotThisFrame();
 	srRaceRow_t rows[8];
 	int rowCount, rowIndex;
 	char state[32];
@@ -3407,15 +3403,21 @@ static void CL_ImGuiDrawRaceOverlay( void ) {
 	bool compactOverlay;
 	char readySummary[32];
 	bool hasActiveFlags;
+	bool editMode;
+	bool dragHovered = false;
+	bool dragActive = false;
+	bool resizeHovered = false;
+	bool resizeActive = false;
 
-	LS_RaceBuildSnapshot( &race );
 	rowCount = race.playerCount;
 	if ( rowCount > IM_ARRAYSIZE( rows ) ) rowCount = IM_ARRAYSIZE( rows );
 	for ( rowIndex = 0; rowIndex < rowCount; ++rowIndex ) {
 		rows[rowIndex] = race.players[rowIndex];
 		CL_ImGuiRacePrettyToken( rows[rowIndex].stage );
+		CL_ImGuiRacePrettyToken( rows[rowIndex].map );
 	}
 	compactOverlay = true;
+	editMode = s_imguiOpen && Cvar_VariableIntegerValue( "ui_speedrun_layout_edit" ) != 0;
 	Q_strncpyz( state, race.state, sizeof( state ) );
 	Q_strncpyz( timer, race.timer, sizeof( timer ) );
 	Q_strncpyz( ready, race.ready, sizeof( ready ) );
@@ -3455,7 +3457,8 @@ static void CL_ImGuiDrawRaceOverlay( void ) {
 	headerColor = ImGui::ColorConvertU32ToFloat4( CL_ImGuiColorU32( "ls_clr_title", ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), alpha ) );
 	timerColor = ImGui::ColorConvertU32ToFloat4( CL_ImGuiColorU32( "ls_clr_timer", ImVec4( 0.94f, 0.98f, 0.88f, 1.0f ), alpha ) );
 
-	flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs;
+	flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground;
+	if ( !editMode ) flags |= ImGuiWindowFlags_NoInputs;
 	ImGui::SetNextWindowPos( ImVec2( x, y ), ImGuiCond_Always );
 	ImGui::SetNextWindowSize( ImVec2( width, height ), ImGuiCond_Always );
 	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 8.0f * scale, 6.0f * scale ) );
@@ -3466,8 +3469,43 @@ static void CL_ImGuiDrawRaceOverlay( void ) {
 	draw = ImGui::GetWindowDrawList();
 	pos = ImGui::GetWindowPos();
 	size = ImGui::GetWindowSize();
+	if ( editMode ) {
+		ImVec2 dragSize = ImVec2( size.x, ( 24.0f * scale < size.y ) ? 24.0f * scale : size.y );
+		ImVec2 gripSize = ImVec2( 20.0f * scale, 20.0f * scale );
+		ImVec2 gripMin = ImVec2( pos.x + size.x - gripSize.x - 4.0f * scale, pos.y + size.y - gripSize.y - 4.0f * scale );
+		ImGui::SetCursorScreenPos( pos );
+		ImGui::InvisibleButton( "race_overlay_drag", dragSize );
+		dragHovered = ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenBlockedByActiveItem );
+		dragActive = ImGui::IsItemActive();
+		if ( dragActive ) {
+			s_liveSplitEditActive = true;
+			if ( ImGui::IsMouseDragging( 0 ) ) {
+				ImVec2 d = ImGui::GetIO().MouseDelta;
+				Cvar_SetValue( "ls_race_overlay_x", Com_Clamp( 0.0f, 640.0f, Cvar_VariableValue( "ls_race_overlay_x" ) + d.x / screenX ) );
+				Cvar_SetValue( "ls_race_overlay_y", Com_Clamp( 0.0f, 480.0f, Cvar_VariableValue( "ls_race_overlay_y" ) + d.y / screenY ) );
+			}
+		}
+		ImGui::SetCursorScreenPos( gripMin );
+		ImGui::InvisibleButton( "race_overlay_resize", gripSize );
+		resizeHovered = ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenBlockedByActiveItem );
+		resizeActive = ImGui::IsItemActive();
+		if ( resizeActive ) {
+			s_liveSplitEditActive = true;
+			if ( ImGui::IsMouseDragging( 0 ) ) {
+				ImVec2 d = ImGui::GetIO().MouseDelta;
+				Cvar_SetValue( "ls_race_overlay_w", Com_Clamp( 110.0f, 500.0f, Cvar_VariableValue( "ls_race_overlay_w" ) + d.x / screenX ) );
+				Cvar_SetValue( "ls_race_overlay_scale", Com_Clamp( 0.35f, 1.80f, Cvar_VariableValue( "ls_race_overlay_scale" ) + d.y / screenY / 120.0f ) );
+			}
+		}
+		ImGui::SetCursorScreenPos( ImVec2( pos.x + 8.0f * scale, pos.y + 6.0f * scale ) );
+	}
 	draw->AddRectFilledMultiColor( pos, ImVec2( pos.x + size.x, pos.y + size.y ), colBg2, colBg2, colBg, colBg );
 	CL_ImGuiAddRectLines( draw, pos.x, pos.y, size.x, size.y, colBorder, 1.0f * scale );
+	if ( editMode ) {
+		ImU32 editCol = ( dragHovered || dragActive || resizeHovered || resizeActive ) ? IM_COL32( 245, 220, 80, 240 ) : IM_COL32( 120, 230, 72, 150 );
+		CL_ImGuiAddRectLines( draw, pos.x, pos.y, size.x, size.y, editCol, 1.4f * scale );
+		draw->AddTriangleFilled( ImVec2( pos.x + size.x - 4.0f * scale, pos.y + size.y - 17.0f * scale ), ImVec2( pos.x + size.x - 4.0f * scale, pos.y + size.y - 4.0f * scale ), ImVec2( pos.x + size.x - 17.0f * scale, pos.y + size.y - 4.0f * scale ), editCol );
+	}
 
 	{
 		ImVec2 headerPos = ImGui::GetCursorScreenPos();
@@ -3494,10 +3532,9 @@ static void CL_ImGuiDrawRaceOverlay( void ) {
 }
 
 static bool CL_ImGuiShouldDrawRaceChat( void ) {
-	lsRaceUiSnapshot_t race;
+	const lsRaceUiSnapshot_t &race = *CL_ImGuiRaceSnapshotThisFrame();
 	int now;
 	int i;
-	LS_RaceBuildSnapshot( &race );
 	if ( Cvar_VariableIntegerValue( "ls_race_chat" ) == 0 && !s_raceChatOpen ) return false;
 	if ( s_raceChatOpen ) return true;
 	now = Sys_Milliseconds();
@@ -3540,7 +3577,7 @@ static bool CL_ImGuiRaceSubmitChatInput( char *input, int inputSize ) {
 }
 
 static void CL_ImGuiDrawRaceChatOverlay( void ) {
-	lsRaceUiSnapshot_t race;
+	const lsRaceUiSnapshot_t &race = *CL_ImGuiRaceSnapshotThisFrame();
 	ImDrawList *draw = ImGui::GetForegroundDrawList();
 	ImFont *font = ImGui::GetFont();
 	float sx = cls.glconfig.vidWidth / 640.0f;
@@ -3572,7 +3609,6 @@ static void CL_ImGuiDrawRaceChatOverlay( void ) {
 	ImU32 border = CL_ImGuiGuiAccentU32( 0.74f );
 	ImU32 inputText = CL_ImGuiColorU32( "ls_race_chat_input_text", inputTextFallback );
 
-	LS_RaceBuildSnapshot( &race );
 	for ( i = LS_RACE_UI_CHAT_LINES - 1; i >= 0; --i ) {
 		if ( race.chat[i].text[0] && count < IM_ARRAYSIZE( lines ) ) {
 			int age = race.chat[i].timeMs > 0 ? now - race.chat[i].timeMs : 0;
@@ -4489,9 +4525,186 @@ static const char *CL_ImGuiDemoCategoryName( int category ) {
 	}
 }
 
+static const char *CL_ImGuiFormatDemoSize( int bytes, char *out, int outSize ) {
+	double value;
+	const char *unit;
+	if ( bytes < 0 ) {
+		Q_strncpyz( out, "...", outSize );
+		return out;
+	}
+	value = (double)bytes;
+	unit = "B";
+	if ( value >= 1024.0 ) {
+		value /= 1024.0;
+		unit = "KB";
+	}
+	if ( value >= 1024.0 ) {
+		value /= 1024.0;
+		unit = "MB";
+	}
+	if ( value >= 1024.0 ) {
+		value /= 1024.0;
+		unit = "GB";
+	}
+	if ( unit[0] == 'B' ) {
+		Com_sprintf( out, outSize, "%d B", bytes );
+	} else {
+		Com_sprintf( out, outSize, "%.1f %s", value, unit );
+	}
+	return out;
+}
+
+static const char *CL_ImGuiFormatDemoDuration( int durationMs, char *out, int outSize ) {
+	int totalSec, hours, minutes, seconds;
+	if ( durationMs < 0 ) {
+		Q_strncpyz( out, "...", outSize );
+		return out;
+	}
+	totalSec = durationMs / 1000;
+	hours = totalSec / 3600;
+	minutes = ( totalSec / 60 ) % 60;
+	seconds = totalSec % 60;
+	if ( hours > 0 ) {
+		Com_sprintf( out, outSize, "%d:%02d:%02d", hours, minutes, seconds );
+	} else {
+		Com_sprintf( out, outSize, "%d:%02d", minutes, seconds );
+	}
+	return out;
+}
+
+static void CL_ImGuiScanDemoMetadata( int index ) {
+	int fileSize, durationMs, mapCount;
+	if ( index < 0 || index >= s_demoCount ) {
+		return;
+	}
+	if ( s_demoMetaState[index] != SRGUI_DEMOMETA_PENDING ) {
+		return;
+	}
+	fileSize = -1;
+	durationMs = -1;
+	mapCount = 0;
+	if ( CL_DemoGetMetadata( s_demoList[index], &fileSize, &durationMs, &mapCount ) ) {
+		s_demoSizeBytes[index] = fileSize;
+		s_demoDurationMs[index] = durationMs;
+		s_demoMapCount[index] = mapCount;
+		s_demoMetaState[index] = SRGUI_DEMOMETA_READY;
+	} else {
+		s_demoMetaState[index] = SRGUI_DEMOMETA_FAILED;
+	}
+	s_demoMetaRevision++;
+}
+
+static void CL_ImGuiScanDemoMetadataBudget( int maxScans ) {
+	int attempts, scanned;
+	if ( s_demoCount <= 0 || maxScans <= 0 ) {
+		return;
+	}
+	if ( s_demoMetaScanCursor < 0 || s_demoMetaScanCursor >= s_demoCount ) {
+		s_demoMetaScanCursor = 0;
+	}
+	scanned = 0;
+	for ( attempts = 0; attempts < s_demoCount && scanned < maxScans; ++attempts ) {
+		int index = ( s_demoMetaScanCursor + attempts ) % s_demoCount;
+		if ( s_demoMetaState[index] == SRGUI_DEMOMETA_PENDING ) {
+			CL_ImGuiScanDemoMetadata( index );
+			s_demoMetaScanCursor = ( index + 1 ) % s_demoCount;
+			scanned++;
+		}
+	}
+}
+
+static bool CL_ImGuiDemoMatchesFilter( int index );
+
+static int CL_ImGuiDemoCompareValue( int a, int b, int column ) {
+	int av = 0;
+	int bv = 0;
+	switch ( column ) {
+	case SRGUI_DEMO_SORT_NEWEST:
+		if ( s_demoMTime[a] != s_demoMTime[b] ) return s_demoMTime[b] - s_demoMTime[a];
+		return -Q_stricmp( s_demoList[a], s_demoList[b] );
+	case 2:
+		av = s_demoCategory[a];
+		bv = s_demoCategory[b];
+		break;
+	case 3:
+		av = ( s_demoMetaState[a] == SRGUI_DEMOMETA_READY ) ? s_demoSizeBytes[a] : -1;
+		bv = ( s_demoMetaState[b] == SRGUI_DEMOMETA_READY ) ? s_demoSizeBytes[b] : -1;
+		break;
+	case 4:
+		av = ( s_demoMetaState[a] == SRGUI_DEMOMETA_READY ) ? s_demoDurationMs[a] : -1;
+		bv = ( s_demoMetaState[b] == SRGUI_DEMOMETA_READY ) ? s_demoDurationMs[b] : -1;
+		break;
+	case 5:
+		av = ( s_demoMetaState[a] == SRGUI_DEMOMETA_READY ) ? s_demoMapCount[a] : -1;
+		bv = ( s_demoMetaState[b] == SRGUI_DEMOMETA_READY ) ? s_demoMapCount[b] : -1;
+		break;
+	default:
+		return Q_stricmp( s_demoList[a], s_demoList[b] );
+	}
+	if ( av < 0 && bv >= 0 ) return 1;
+	if ( av >= 0 && bv < 0 ) return -1;
+	if ( av < bv ) return -1;
+	if ( av > bv ) return 1;
+	return Q_stricmp( s_demoList[a], s_demoList[b] );
+}
+
+static int QDECL CL_ImGuiDemoSortCompare( const void *lhs, const void *rhs ) {
+	int a = *(const int *)lhs;
+	int b = *(const int *)rhs;
+	int cmp = CL_ImGuiDemoCompareValue( a, b, s_demoSortColumn );
+	if ( cmp == 0 ) return 0;
+	return s_demoSortAscending ? cmp : -cmp;
+}
+
+static int CL_ImGuiBuildSortedDemoIndices( int *indices, int maxIndices ) {
+	int i, count = 0;
+	bool sortUsesMeta;
+	bool cacheValid;
+	if ( !indices || maxIndices <= 0 ) return 0;
+	sortUsesMeta = s_demoSortColumn >= 3 && s_demoSortColumn <= 5;
+	cacheValid = s_demoSortedListRevision == s_demoListRevision &&
+		s_demoSortedSortColumn == s_demoSortColumn &&
+		s_demoSortedAscending == s_demoSortAscending &&
+		s_demoSortedFilter == s_demoFilter &&
+		s_demoSortedCountKey == s_demoCount &&
+		!Q_stricmp( s_demoSortedSearch, s_demoSearch ) &&
+		( !sortUsesMeta || s_demoSortedMetaRevision == s_demoMetaRevision );
+	if ( cacheValid ) {
+		count = s_demoSortedCount < maxIndices ? s_demoSortedCount : maxIndices;
+		for ( i = 0; i < count; ++i ) {
+			indices[i] = s_demoSortedCache[i];
+		}
+		return count;
+	}
+
+	for ( i = 0; i < s_demoCount && count < SRGUI_MAX_DEMOS; ++i ) {
+		if ( CL_ImGuiDemoMatchesFilter( i ) ) {
+			s_demoSortedCache[count++] = i;
+		}
+	}
+	if ( count > 1 ) {
+		qsort( s_demoSortedCache, count, sizeof( s_demoSortedCache[0] ), CL_ImGuiDemoSortCompare );
+	}
+	s_demoSortedCount = count;
+	s_demoSortedListRevision = s_demoListRevision;
+	s_demoSortedMetaRevision = s_demoMetaRevision;
+	s_demoSortedSortColumn = s_demoSortColumn;
+	s_demoSortedAscending = s_demoSortAscending;
+	s_demoSortedFilter = s_demoFilter;
+	s_demoSortedCountKey = s_demoCount;
+	Q_strncpyz( s_demoSortedSearch, s_demoSearch, sizeof( s_demoSortedSearch ) );
+
+	count = s_demoSortedCount < maxIndices ? s_demoSortedCount : maxIndices;
+	for ( i = 0; i < count; ++i ) {
+		indices[i] = s_demoSortedCache[i];
+	}
+	return count;
+}
+
 static void CL_ImGuiLoadDemos( void ) {
 	char listBuf[131072];
 	char ext[32];
+	char demoQpath[MAX_QPATH + 16];
 	char *name;
 	int count;
 	int i;
@@ -4503,16 +4716,24 @@ static void CL_ImGuiLoadDemos( void ) {
 		count = SRGUI_MAX_DEMOS;
 	}
 	s_demoCount = 0;
+	s_demoMetaScanCursor = 0;
+	s_demoPage = 0;
 	name = listBuf;
 	Com_sprintf( ext, sizeof( ext ), ".dm_%d", PROTOCOL_VERSION );
 	for ( i = 0; i < count; ++i ) {
 		len = strlen( name );
 		if ( len > 0 ) {
+			Com_sprintf( demoQpath, sizeof( demoQpath ), "demos/%s", name );
 			Q_strncpyz( s_demoList[s_demoCount], name, sizeof( s_demoList[s_demoCount] ) );
 			if ( len > (int)strlen( ext ) && !Q_stricmp( s_demoList[s_demoCount] + len - strlen( ext ), ext ) ) {
 				s_demoList[s_demoCount][len - strlen( ext )] = '\0';
 			}
 			s_demoCategory[s_demoCount] = CL_ImGuiDemoCategory( s_demoList[s_demoCount] );
+			s_demoMTime[s_demoCount] = FS_GetFileMTime( demoQpath );
+			s_demoSizeBytes[s_demoCount] = -1;
+			s_demoDurationMs[s_demoCount] = -1;
+			s_demoMapCount[s_demoCount] = 0;
+			s_demoMetaState[s_demoCount] = SRGUI_DEMOMETA_PENDING;
 			s_demoCount++;
 		}
 		name += len + 1;
@@ -4523,6 +4744,9 @@ static void CL_ImGuiLoadDemos( void ) {
 	if ( s_demoSelected < 0 && s_demoCount > 0 ) {
 		s_demoSelected = 0;
 	}
+	s_demoListRevision++;
+	s_demoMetaRevision++;
+	s_demoSortedListRevision = -1;
 }
 
 static bool CL_ImGuiDemoMatchesFilter( int index ) {
@@ -4558,18 +4782,67 @@ static void CL_ImGuiPlaySelectedDemo( void ) {
 	}
 }
 
-static void CL_ImGuiDrawDemoStats( void ) {
-	float counts[4] = { 0, 0, 0, 0 };
+static void CL_ImGuiDrawDemoStats( int visibleCount ) {
+	int counts[4] = { 0, 0, 0, 0 };
 	int i;
 	for ( i = 0; i < s_demoCount; ++i ) {
 		if ( s_demoCategory[i] >= 0 && s_demoCategory[i] < 4 ) {
-			counts[s_demoCategory[i]] += 1.0f;
+			counts[s_demoCategory[i]]++;
 		}
 	}
-	ImGui::BeginChild( "demo_stats", ImVec2( 0, 88 ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
-	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Demo Statistics" );
-	ImGui::PlotHistogram( "##demo_hist", counts, 4, 0, "FG / Mission / IL / Other", 0.0f, counts[0] + counts[1] + counts[2] + counts[3] > 0.0f ? FLT_MAX : 1.0f, ImVec2( 0, 42 ) );
-	ImGui::TextDisabled( "FG %.0f   Mission %.0f   IL %.0f   Other %.0f", counts[0], counts[1], counts[2], counts[3] );
+	CL_ImGuiBeginAutoBox( "demo_stats" );
+	if ( ImGui::BeginTable( "demo_stats_table", 6, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV ) ) {
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "Total" ); ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%d", s_demoCount );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "Visible" ); ImGui::Text( "%d", visibleCount );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "Full Game" ); ImGui::Text( "%d", counts[SRGUI_DEMOCAT_FULLGAME] );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "Mission" ); ImGui::Text( "%d", counts[SRGUI_DEMOCAT_MISSION] );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "IL" ); ImGui::Text( "%d", counts[SRGUI_DEMOCAT_IL] );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "Other" ); ImGui::Text( "%d", counts[SRGUI_DEMOCAT_OTHER] );
+		ImGui::EndTable();
+	}
+	ImGui::EndChild();
+}
+
+static void CL_ImGuiDrawDemoPagination( int visibleCount, int pageCount ) {
+	int p;
+	int lastDrawn = -1;
+	char label[32];
+	int first = visibleCount > 0 ? s_demoPage * SRGUI_DEMOS_PER_PAGE + 1 : 0;
+	int last = ( s_demoPage + 1 ) * SRGUI_DEMOS_PER_PAGE;
+	if ( last > visibleCount ) last = visibleCount;
+	CL_ImGuiBeginAutoBox( "demo_pages" );
+	ImGui::TextDisabled( "Showing %d-%d of %d", first, last, visibleCount );
+	if ( pageCount > 1 ) {
+		CL_ImGuiSameLineIfFits( 96.0f );
+		ImGui::BeginDisabled( s_demoPage <= 0 );
+		if ( ImGui::SmallButton( "Prev##demo_page_prev" ) ) s_demoPage--;
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::BeginDisabled( s_demoPage >= pageCount - 1 );
+		if ( ImGui::SmallButton( "Next##demo_page_next" ) ) s_demoPage++;
+		ImGui::EndDisabled();
+		for ( p = 0; p < pageCount; ++p ) {
+			if ( p == 0 || p == pageCount - 1 || abs( p - s_demoPage ) <= 2 ) {
+				if ( lastDrawn >= 0 && p - lastDrawn > 1 ) {
+					ImGui::SameLine();
+					ImGui::TextDisabled( "..." );
+				}
+				ImGui::SameLine();
+				Com_sprintf( label, sizeof( label ), "%d##demo_page_%d", p + 1, p );
+				if ( p == s_demoPage ) {
+					ImGui::BeginDisabled( true );
+					ImGui::SmallButton( label );
+					ImGui::EndDisabled();
+				} else if ( ImGui::SmallButton( label ) ) {
+					s_demoPage = p;
+				}
+				lastDrawn = p;
+			}
+		}
+	}
+	if ( s_demoPage < 0 ) s_demoPage = 0;
+	if ( s_demoPage >= pageCount ) s_demoPage = pageCount > 0 ? pageCount - 1 : 0;
 	ImGui::EndChild();
 }
 
@@ -4601,6 +4874,30 @@ static bool CL_ImGuiParseRecordRow( const char *text, char *map, int mapSize, ch
 	char goldBuf[32];
 	char pbBuf[32];
 	int att, comp;
+	const char *p1 = strchr( text, '|' );
+	if ( p1 ) {
+		const char *p2 = strchr( p1 + 1, '|' );
+		const char *p3 = p2 ? strchr( p2 + 1, '|' ) : NULL;
+		const char *p4 = p3 ? strchr( p3 + 1, '|' ) : NULL;
+		int len;
+		if ( p2 && p3 && p4 ) {
+			len = (int)( p1 - text );
+			if ( len >= mapSize ) len = mapSize - 1;
+			memcpy( map, text, len );
+			map[len] = '\0';
+			len = (int)( p2 - ( p1 + 1 ) );
+			if ( len >= goldSize ) len = goldSize - 1;
+			memcpy( gold, p1 + 1, len );
+			gold[len] = '\0';
+			len = (int)( p3 - ( p2 + 1 ) );
+			if ( len >= pbSize ) len = pbSize - 1;
+			memcpy( pb, p2 + 1, len );
+			pb[len] = '\0';
+			*attempts = atoi( p3 + 1 );
+			*completions = atoi( p4 + 1 );
+			return true;
+		}
+	}
 	if ( sscanf( text, "%63s %31s %31s %d/%d", nameBuf, goldBuf, pbBuf, &att, &comp ) != 5 ) {
 		return false;
 	}
@@ -4623,7 +4920,139 @@ static bool CL_ImGuiParseRecordSummary( const char *text, int *attempts, int *co
 	return true;
 }
 
-static void CL_ImGuiDrawRecordStats( const float *attempts, const float *completions, int count ) {
+static void CL_ImGuiFormatRecordTimeMs( int ms, char *out, int outSize ) {
+	int hours, minutes, seconds, hundredths;
+	if ( !out || outSize <= 0 ) return;
+	if ( ms <= 0 ) {
+		Q_strncpyz( out, "---", outSize );
+		return;
+	}
+	hours = ms / 3600000;
+	minutes = ( ms / 60000 ) % 60;
+	seconds = ( ms / 1000 ) % 60;
+	hundredths = ( ms % 1000 ) / 10;
+	if ( hours > 0 ) {
+		Com_sprintf( out, outSize, "%d:%02d:%02d.%02d", hours, minutes, seconds, hundredths );
+	} else {
+		Com_sprintf( out, outSize, "%d:%02d.%02d", minutes, seconds, hundredths );
+	}
+}
+
+static int CL_ImGuiParseRecordPbChart( const char *text, int *values, int maxValues ) {
+	int count = 0;
+	const char *p = text;
+	if ( !text || !values || maxValues <= 0 ) return 0;
+	while ( *p && count < maxValues ) {
+		while ( *p == ',' || *p == ' ' || *p == '\t' ) p++;
+		if ( !*p ) break;
+		values[count++] = atoi( p );
+		while ( *p && *p != ',' ) p++;
+	}
+	return count;
+}
+
+static ImVec4 CL_ImGuiColorVec4( const char *name, const ImVec4 &fallback, float alphaMul = 1.0f ) {
+	return ImGui::ColorConvertU32ToFloat4( CL_ImGuiColorU32( name, fallback, alphaMul ) );
+}
+
+static void CL_ImGuiDrawRecordPbChart( const int *values, int count ) {
+	ImGuiStyle &style = ImGui::GetStyle();
+	ImDrawList *draw;
+	ImVec2 canvasPos;
+	ImVec2 canvasSize;
+	ImVec2 plotMin;
+	ImVec2 plotMax;
+	ImVec2 mouse;
+	int i;
+	int bestMs, worstMs;
+	int hoverIndex = -1;
+	int hoverMs = 0;
+	float hoverDistSq = 1000000.0f;
+	char label[32];
+	ImU32 bgTop = CL_ImGuiColorU32( "ls_clr_bg2", ImVec4( 0.02f, 0.03f, 0.02f, 0.96f ), 1.0f );
+	ImU32 bgBottom = CL_ImGuiColorU32( "ls_clr_bg", ImVec4( 0.04f, 0.05f, 0.04f, 0.94f ), 1.0f );
+	ImU32 grid = CL_ImGuiColorU32( "ls_clr_sep", ImVec4( 0.22f, 0.38f, 0.12f, 0.18f ), 0.90f );
+	ImU32 axis = CL_ImGuiColorU32( "ls_clr_column_label", ImVec4( 0.42f, 0.48f, 0.38f, 0.42f ), 0.90f );
+	ImU32 border = CL_ImGuiColorU32( "ls_clr_border", ImVec4( 0.20f, 0.35f, 0.15f, 0.50f ), 1.0f );
+	ImU32 line = CL_ImGuiColorU32( "ls_clr_pb_value", ImVec4( 0.82f, 0.90f, 0.72f, 1.00f ), 1.0f );
+	ImU32 lineGlow = CL_ImGuiColorU32( "ls_clr_title", ImVec4( 0.58f, 0.92f, 0.34f, 1.00f ), 0.30f );
+	ImU32 point = CL_ImGuiColorU32( "ls_clr_gold", ImVec4( 1.00f, 0.85f, 0.20f, 1.00f ), 1.0f );
+	ImU32 pointCore = CL_ImGuiColorU32( "ls_clr_bg", ImVec4( 0.04f, 0.05f, 0.04f, 1.00f ), 1.0f );
+	ImU32 hoverRing = CL_ImGuiColorU32( "ls_clr_timer", ImVec4( 0.94f, 0.98f, 0.88f, 1.00f ), 1.0f );
+
+	ImGui::TextColored( CL_ImGuiColorVec4( "ls_clr_title", ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ) ), "PB Progression" );
+	canvasSize = ImVec2( ImGui::GetContentRegionAvail().x, 178.0f );
+	if ( canvasSize.x < 240.0f ) canvasSize.x = 240.0f;
+	canvasPos = ImGui::GetCursorScreenPos();
+	ImGui::InvisibleButton( "##records_pb_chart", canvasSize );
+	draw = ImGui::GetWindowDrawList();
+	draw->AddRectFilledMultiColor( canvasPos, ImVec2( canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y ), bgTop, bgTop, bgBottom, bgBottom );
+	draw->AddRect( canvasPos, ImVec2( canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y ), border, style.ChildRounding );
+
+	if ( count <= 0 ) {
+		draw->AddText( ImVec2( canvasPos.x + 14.0f, canvasPos.y + canvasSize.y * 0.5f - ImGui::GetTextLineHeight() * 0.5f ), ImGui::GetColorU32( ImGuiCol_TextDisabled ), "No PB history" );
+		return;
+	}
+
+	bestMs = values[0];
+	worstMs = values[0];
+	for ( i = 1; i < count; ++i ) {
+		if ( values[i] < bestMs ) bestMs = values[i];
+		if ( values[i] > worstMs ) worstMs = values[i];
+	}
+	if ( worstMs <= bestMs ) worstMs = bestMs + 1;
+
+	plotMin = ImVec2( canvasPos.x + 78.0f, canvasPos.y + 16.0f );
+	plotMax = ImVec2( canvasPos.x + canvasSize.x - 14.0f, canvasPos.y + canvasSize.y - 24.0f );
+	if ( plotMax.x <= plotMin.x + 1.0f ) plotMax.x = plotMin.x + 1.0f;
+
+	for ( i = 0; i < 3; ++i ) {
+		float y = plotMin.y + ( plotMax.y - plotMin.y ) * (float)i / 2.0f;
+		int labelMs = i == 0 ? worstMs : ( i == 1 ? ( worstMs + bestMs ) / 2 : bestMs );
+		CL_ImGuiFormatRecordTimeMs( labelMs, label, sizeof( label ) );
+		draw->AddLine( ImVec2( plotMin.x, y ), ImVec2( plotMax.x, y ), grid );
+		draw->AddText( ImVec2( canvasPos.x + 12.0f, y - ImGui::GetTextLineHeight() * 0.5f ), ImGui::GetColorU32( ImGuiCol_TextDisabled ), label );
+	}
+	draw->AddLine( ImVec2( plotMin.x, plotMin.y ), ImVec2( plotMin.x, plotMax.y ), axis );
+	draw->AddLine( ImVec2( plotMin.x, plotMax.y ), ImVec2( plotMax.x, plotMax.y ), axis );
+
+	mouse = ImGui::GetIO().MousePos;
+	for ( i = 0; i < count; ++i ) {
+		float x = count > 1 ? plotMin.x + ( plotMax.x - plotMin.x ) * (float)i / (float)( count - 1 ) : ( plotMin.x + plotMax.x ) * 0.5f;
+		float y = plotMin.y + ( plotMax.y - plotMin.y ) * (float)( worstMs - values[i] ) / (float)( worstMs - bestMs );
+		if ( i > 0 ) {
+			float px = count > 1 ? plotMin.x + ( plotMax.x - plotMin.x ) * (float)( i - 1 ) / (float)( count - 1 ) : x;
+			float py = plotMin.y + ( plotMax.y - plotMin.y ) * (float)( worstMs - values[i - 1] ) / (float)( worstMs - bestMs );
+			draw->AddLine( ImVec2( px, py ), ImVec2( x, y ), lineGlow, 5.0f );
+			draw->AddLine( ImVec2( px, py ), ImVec2( x, y ), line, 2.2f );
+		}
+		draw->AddCircleFilled( ImVec2( x, y ), 4.6f, point );
+		draw->AddCircleFilled( ImVec2( x, y ), 2.2f, pointCore );
+		if ( ImGui::IsItemHovered() ) {
+			float dx = mouse.x - x;
+			float dy = mouse.y - y;
+			float distSq = dx * dx + dy * dy;
+			if ( distSq < hoverDistSq && distSq <= 64.0f ) {
+				hoverDistSq = distSq;
+				hoverIndex = i + 1;
+				hoverMs = values[i];
+			}
+		}
+	}
+
+	if ( ImGui::IsItemHovered() && hoverMs > 0 ) {
+		float x = count > 1 ? plotMin.x + ( plotMax.x - plotMin.x ) * (float)( hoverIndex - 1 ) / (float)( count - 1 ) : ( plotMin.x + plotMax.x ) * 0.5f;
+		float y = plotMin.y + ( plotMax.y - plotMin.y ) * (float)( worstMs - hoverMs ) / (float)( worstMs - bestMs );
+		draw->AddCircle( ImVec2( x, y ), 7.5f, hoverRing, 24, 1.6f );
+		CL_ImGuiFormatRecordTimeMs( hoverMs, label, sizeof( label ) );
+		ImGui::BeginTooltip();
+		if ( hoverIndex > 0 ) ImGui::Text( "PB #%d", hoverIndex );
+		ImGui::TextColored( CL_ImGuiColorVec4( "ls_clr_timer", ImVec4( 0.94f, 0.98f, 0.88f, 1.0f ) ), "%s", label );
+		ImGui::EndTooltip();
+	}
+}
+
+static void CL_ImGuiDrawRecordStats( const float *attempts, const float *completions, int count, const int *pbChart, int pbChartCount ) {
 	float totalAttempts = 0.0f;
 	float totalCompletions = 0.0f;
 	int i;
@@ -4631,18 +5060,9 @@ static void CL_ImGuiDrawRecordStats( const float *attempts, const float *complet
 		totalAttempts += attempts[i];
 		totalCompletions += completions[i];
 	}
-	ImGui::BeginChild( "record_stats", ImVec2( 0, 156 ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
 	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "Records Statistics" );
 	ImGui::TextDisabled( "Visible rows: %d    Attempts: %.0f    Completions: %.0f", count, totalAttempts, totalCompletions );
-	if ( count > 0 && totalAttempts > 0.0f ) {
-		ImGui::PlotHistogram( "Attempts", attempts, count, 0, NULL, 0.0f, FLT_MAX, ImVec2( 0, 46 ) );
-		ImGui::PlotHistogram( "Completions", completions, count, 0, NULL, 0.0f, totalCompletions > 0.0f ? FLT_MAX : 1.0f, ImVec2( 0, 46 ) );
-	} else if ( count > 0 ) {
-		ImGui::TextWrapped( "Records were loaded, but these rows have no attempts yet. Start/refresh a category with saved split history to fill the charts." );
-	} else {
-		ImGui::TextDisabled( "Refresh records to populate charts." );
-	}
-	ImGui::EndChild();
+	CL_ImGuiDrawRecordPbChart( pbChart, pbChartCount );
 }
 
 static void CL_ImGuiSectionHeader( const char *title, const char *hint ) {
@@ -5656,78 +6076,190 @@ static void CL_ImGuiDrawHelpPage( void ) {
 	}
 }
 
+static void CL_ImGuiDemoControlButton( const char *label, const char *command ) {
+	if ( ImGui::Button( label, ImVec2( -FLT_MIN, 0 ) ) ) {
+		Cbuf_AddText( command );
+		Cbuf_AddText( "\n" );
+	}
+	CL_ImGuiOptionTooltip( label, command, NULL );
+}
+
 static void CL_ImGuiDrawDemosPage( void ) {
 	int i;
-	int visibleCount = 0;
+	int visibleCount;
+	int pageCount;
+	int pageStart;
+	int pageEnd;
+	int sortedIndices[SRGUI_MAX_DEMOS];
+	float tableHeight;
 	static const char *filterLabels[] = { "All", "Full Game", "Mission", "Individual Level", "Other" };
 	static const int filterValues[] = { -1, SRGUI_DEMOCAT_FULLGAME, SRGUI_DEMOCAT_MISSION, SRGUI_DEMOCAT_IL, SRGUI_DEMOCAT_OTHER };
 
-	CL_ImGuiSectionHeader( "Demo Browser", "Lists demos from demos/*.dm_49 and uses the normal demo command to play them." );
-	if ( ImGui::Button( "Refresh Demos", ImVec2( 130, 0 ) ) || s_demoCount == 0 ) {
+	CL_ImGuiSectionHeader( "Demo Browser", NULL );
+	if ( s_demoCount == 0 ) {
 		CL_ImGuiLoadDemos();
 	}
-	CL_ImGuiSameLineIfFits( 138.0f );
-	if ( ImGui::Button( "Play Selected", ImVec2( 130, 0 ) ) ) {
+
+	CL_ImGuiBeginAutoBox( "demo_toolbar" );
+	if ( ImGui::Button( "Refresh", ImVec2( 96, 0 ) ) ) {
+		CL_ImGuiLoadDemos();
+	}
+	CL_ImGuiSameLineIfFits( 112.0f );
+	ImGui::BeginDisabled( s_demoSelected < 0 || s_demoSelected >= s_demoCount );
+	if ( ImGui::Button( "Play", ImVec2( 86, 0 ) ) ) {
 		CL_ImGuiPlaySelectedDemo();
 	}
-	CL_ImGuiSameLineIfFits( 158.0f );
-	if ( ImGui::Button( "Open demos folder", ImVec2( 150, 0 ) ) ) {
+	ImGui::EndDisabled();
+	CL_ImGuiSameLineIfFits( 128.0f );
+	if ( ImGui::Button( "Folder", ImVec2( 94, 0 ) ) ) {
 		Cbuf_AddText( "dir demos\n" );
 	}
-	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::SetNextItemWidth( 190.0f );
 	if ( ImGui::BeginCombo( "Filter", filterLabels[s_demoFilter == -1 ? 0 : s_demoFilter + 1] ) ) {
 		for ( i = 0; i < IM_ARRAYSIZE( filterLabels ); ++i ) {
 			bool selected = s_demoFilter == filterValues[i];
 			if ( ImGui::Selectable( filterLabels[i], selected ) ) {
 				s_demoFilter = filterValues[i];
+				s_demoPage = 0;
 			}
 			if ( selected ) ImGui::SetItemDefaultFocus();
 		}
 		ImGui::EndCombo();
 	}
-	CL_ImGuiSameLineIfFits( 218.0f );
-	ImGui::SetNextItemWidth( 210.0f );
-	ImGui::InputTextWithHint( "Search", "demo name...", s_demoSearch, sizeof( s_demoSearch ) );
-	ImGui::BeginChild( "demo_list", ImVec2( 0, 178 ), true );
-	ImGui::Columns( 2, NULL, false );
-	ImGui::TextDisabled( "Demo" );
-	ImGui::NextColumn();
-	ImGui::TextDisabled( "Type" );
-	ImGui::NextColumn();
-	ImGui::Separator();
-	for ( i = 0; i < s_demoCount; ++i ) {
-		if ( !CL_ImGuiDemoMatchesFilter( i ) ) {
-			continue;
-		}
-		visibleCount++;
-		ImGui::PushID( i );
-		if ( ImGui::Selectable( s_demoList[i], s_demoSelected == i, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick ) ) {
-			s_demoSelected = i;
-			if ( ImGui::IsMouseDoubleClicked( 0 ) ) {
-				CL_ImGuiPlaySelectedDemo();
-			}
-		}
-		ImGui::NextColumn();
-		ImGui::TextDisabled( "%s", CL_ImGuiDemoCategoryName( s_demoCategory[i] ) );
-		ImGui::NextColumn();
-		ImGui::PopID();
-	}
-	ImGui::Columns( 1 );
-	if ( visibleCount == 0 ) {
-		ImGui::TextDisabled( "No demos match the current filter/search." );
+	CL_ImGuiSameLineIfFits( 252.0f );
+	ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x > 260.0f ? 240.0f : -FLT_MIN );
+	if ( ImGui::InputTextWithHint( "Search", "demo name", s_demoSearch, sizeof( s_demoSearch ) ) ) {
+		s_demoPage = 0;
 	}
 	ImGui::EndChild();
-	ImGui::TextDisabled( "Selected: %s", ( s_demoSelected >= 0 && s_demoSelected < s_demoCount ) ? s_demoList[s_demoSelected] : "none" );
-	ImGui::Separator();
-	CL_ImGuiDrawDemoStats();
-	ImGui::Separator();
-	CL_ImGuiActionCard( "Pause / Resume", "Freeze or resume demo playback.", "Pause", "demo_pause", ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ) );
-	CL_ImGuiActionCard( "Speed Control", "Step demo speed up or down while reviewing runs.", "Speed Up", "demo_speedup", ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ) );
-	CL_ImGuiCommandButton( "Slow Down", "demo_slowdown", "reduce playback speed" );
-	CL_ImGuiCommandButton( "Skip Forward", "demo_skipforward", "jump ahead" );
-	CL_ImGuiCommandButton( "Rewind", "demo_skipbackward", "jump backward" );
-	CL_ImGuiCommandButton( "Freecam", "demo_freecam", "toggle free camera" );
-	CL_ImGuiCommandButton( "Toggle HUD", "demo_togglehud", "hide/show HUD" );
+
+	CL_ImGuiScanDemoMetadata( s_demoSelected );
+	CL_ImGuiScanDemoMetadataBudget( ( s_demoSortColumn >= 3 && s_demoSortColumn <= 5 ) ? 8 : 1 );
+	visibleCount = CL_ImGuiBuildSortedDemoIndices( sortedIndices, SRGUI_MAX_DEMOS );
+	CL_ImGuiDrawDemoStats( visibleCount );
+	pageCount = ( visibleCount + SRGUI_DEMOS_PER_PAGE - 1 ) / SRGUI_DEMOS_PER_PAGE;
+	if ( pageCount < 1 ) pageCount = 1;
+	if ( s_demoPage >= pageCount ) s_demoPage = pageCount - 1;
+	if ( s_demoPage < 0 ) s_demoPage = 0;
+	CL_ImGuiDrawDemoPagination( visibleCount, pageCount );
+	pageStart = s_demoPage * SRGUI_DEMOS_PER_PAGE;
+	pageEnd = pageStart + SRGUI_DEMOS_PER_PAGE;
+	if ( pageEnd > visibleCount ) pageEnd = visibleCount;
+
+	tableHeight = ImGui::GetContentRegionAvail().y * 0.46f;
+	if ( tableHeight < 220.0f ) tableHeight = 220.0f;
+	if ( tableHeight > 360.0f ) tableHeight = 360.0f;
+	ImGui::PushStyleColor( ImGuiCol_TableHeaderBg, ImVec4( 0.16f, 0.27f, 0.12f, 0.95f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableRowBg, ImVec4( 0.03f, 0.05f, 0.035f, 0.55f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableRowBgAlt, ImVec4( 0.07f, 0.11f, 0.06f, 0.68f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableBorderStrong, ImVec4( 0.22f, 0.38f, 0.16f, 0.90f ) );
+	ImGui::PushStyleColor( ImGuiCol_TableBorderLight, ImVec4( 0.14f, 0.24f, 0.11f, 0.72f ) );
+	if ( ImGui::BeginTable( "demo_table", 6, ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortTristate, ImVec2( 0, tableHeight ) ) ) {
+		ImGuiTableSortSpecs *sortSpecs;
+		int row = 0;
+		ImGui::TableSetupColumn( "#", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 42.0f );
+		ImGui::TableSetupColumn( "Demo", ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_PreferSortAscending, 1.0f );
+		ImGui::TableSetupColumn( "Type", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortAscending, 118.0f );
+		ImGui::TableSetupColumn( "Size", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 86.0f );
+		ImGui::TableSetupColumn( "Duration", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 86.0f );
+		ImGui::TableSetupColumn( "Maps", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 56.0f );
+		ImGui::TableSetupScrollFreeze( 0, 1 );
+		ImGui::TableHeadersRow();
+		sortSpecs = ImGui::TableGetSortSpecs();
+		if ( sortSpecs && sortSpecs->SpecsCount > 0 ) {
+			const ImGuiTableColumnSortSpecs *spec = &sortSpecs->Specs[0];
+			if ( s_demoSortColumn != spec->ColumnIndex || s_demoSortAscending != ( spec->SortDirection != ImGuiSortDirection_Descending ) ) {
+				s_demoPage = 0;
+			}
+			s_demoSortColumn = spec->ColumnIndex;
+			s_demoSortAscending = spec->SortDirection != ImGuiSortDirection_Descending;
+			sortSpecs->SpecsDirty = false;
+		} else if ( sortSpecs && sortSpecs->SpecsDirty ) {
+			s_demoSortColumn = SRGUI_DEMO_SORT_NEWEST;
+			s_demoSortAscending = true;
+			s_demoPage = 0;
+			sortSpecs->SpecsDirty = false;
+		}
+		for ( i = pageStart; i < pageEnd; ++i ) {
+			char sizeBuf[32];
+			char durationBuf[32];
+			int demoIndex = sortedIndices[i];
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex( 0 );
+			row++;
+			ImGui::TextDisabled( "%04d", i + 1 );
+			ImGui::TableSetColumnIndex( 1 );
+			ImGui::PushID( demoIndex );
+			if ( ImGui::Selectable( s_demoList[demoIndex], s_demoSelected == demoIndex, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick ) ) {
+				s_demoSelected = demoIndex;
+				if ( ImGui::IsMouseDoubleClicked( 0 ) ) {
+					CL_ImGuiPlaySelectedDemo();
+				}
+			}
+			ImGui::PopID();
+			ImGui::TableSetColumnIndex( 2 );
+			ImGui::TextDisabled( "%s", CL_ImGuiDemoCategoryName( s_demoCategory[demoIndex] ) );
+			ImGui::TableSetColumnIndex( 3 );
+			if ( s_demoMetaState[demoIndex] == SRGUI_DEMOMETA_FAILED ) {
+				ImGui::TextDisabled( "-" );
+			} else {
+				ImGui::TextDisabled( "%s", CL_ImGuiFormatDemoSize( s_demoSizeBytes[demoIndex], sizeBuf, sizeof( sizeBuf ) ) );
+			}
+			ImGui::TableSetColumnIndex( 4 );
+			if ( s_demoMetaState[demoIndex] == SRGUI_DEMOMETA_FAILED ) {
+				ImGui::TextDisabled( "-" );
+			} else {
+				ImGui::TextDisabled( "%s", CL_ImGuiFormatDemoDuration( s_demoDurationMs[demoIndex], durationBuf, sizeof( durationBuf ) ) );
+			}
+			ImGui::TableSetColumnIndex( 5 );
+			if ( s_demoMetaState[demoIndex] == SRGUI_DEMOMETA_READY ) {
+				ImGui::TextDisabled( "%d", s_demoMapCount[demoIndex] );
+			} else if ( s_demoMetaState[demoIndex] == SRGUI_DEMOMETA_FAILED ) {
+				ImGui::TextDisabled( "-" );
+			} else {
+				ImGui::TextDisabled( "..." );
+			}
+		}
+		if ( row == 0 ) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex( 1 );
+			ImGui::TextDisabled( "No demos" );
+		}
+		ImGui::EndTable();
+	}
+	ImGui::PopStyleColor( 5 );
+
+	CL_ImGuiBeginAutoBox( "demo_selected" );
+	ImGui::TextDisabled( "Selected" );
+	if ( s_demoSelected >= 0 && s_demoSelected < s_demoCount ) {
+		char sizeBuf[32];
+		char durationBuf[32];
+		CL_ImGuiScanDemoMetadata( s_demoSelected );
+		ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%s", s_demoList[s_demoSelected] );
+		ImGui::TextDisabled( "%s", CL_ImGuiDemoCategoryName( s_demoCategory[s_demoSelected] ) );
+		ImGui::TextDisabled( "Size: %s", s_demoMetaState[s_demoSelected] == SRGUI_DEMOMETA_FAILED ? "-" : CL_ImGuiFormatDemoSize( s_demoSizeBytes[s_demoSelected], sizeBuf, sizeof( sizeBuf ) ) );
+		ImGui::TextDisabled( "Duration: %s", s_demoMetaState[s_demoSelected] == SRGUI_DEMOMETA_FAILED ? "-" : CL_ImGuiFormatDemoDuration( s_demoDurationMs[s_demoSelected], durationBuf, sizeof( durationBuf ) ) );
+		if ( s_demoMetaState[s_demoSelected] == SRGUI_DEMOMETA_READY ) {
+			ImGui::TextDisabled( "Maps: %d", s_demoMapCount[s_demoSelected] );
+		}
+	} else {
+		ImGui::TextDisabled( "none" );
+	}
+	ImGui::EndChild();
+
+	CL_ImGuiBeginAutoBox( "demo_controls" );
+	if ( ImGui::BeginTable( "demo_controls_table", 4, ImGuiTableFlags_SizingStretchSame ) ) {
+		const char *labels[] = { "Pause", "Speed +", "Speed -", "Rewind", "Forward", "Frame -", "Frame +", "Freecam", "HUD", "Binds", "Prev Map", "Next Map" };
+		const char *commands[] = { "demo_pause", "demo_speedup", "demo_slowdown", "demo_skipbackward", "demo_skipforward", "demo_stepframeback", "demo_stepframe", "demo_freecam", "demo_togglehud", "demo_togglebinds", "demo_prevmap", "demo_nextmap" };
+		for ( i = 0; i < IM_ARRAYSIZE( labels ); ++i ) {
+			if ( i % 4 == 0 ) ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			CL_ImGuiDemoControlButton( labels[i], commands[i] );
+		}
+		ImGui::EndTable();
+	}
+	ImGui::EndChild();
 }
 
 static void CL_ImGuiDrawGhostPage( void ) {
@@ -6283,24 +6815,50 @@ static void CL_ImGuiDrawRecordsPage( void ) {
 	char rowName[32];
 	char rowText[256];
 	char statsText[256];
+	char titleText[256];
+	char metricPB[32];
+	char metricRgtPB[32];
+	char metricSob[32];
+	char metricRate[32];
+	char chartText[256];
 	char cmd[96];
 	int i;
 	int recordCount = 0;
+	int pbChart[24] = { 0 };
+	int pbChartCount = 0;
 	int summaryAtt = 0;
 	int summaryComp = 0;
-	float attempts[10] = { 0 };
-	float completions[10] = { 0 };
+	int goldCount = 0;
+	int totalRows = 0;
+	float attempts[40] = { 0 };
+	float completions[40] = { 0 };
 	static int selectedRecordRow = -1;
+	static bool requestedInitialRefresh = false;
 	static const char *modeLabels[] = { "Full Game", "Chapter", "Individual Level" };
 	static const int modeValues[] = { 0, 1, 2 };
 	static const char *diffLabels[] = { "Don't hurt me.", "Bring 'em on!", "I am Death incarnate!" };
 	static const int diffValues[] = { 1, 2, 3 };
 	static const char *missionLabels[] = { "1: Ominous Rumors", "2: Vengeance", "3: Deadly Designs", "4: Deathshead", "5: Resurrection" };
 	static const int missionValues[] = { 1, 2, 3, 4, 5 };
+	static const char *variantLabels[] = { "Any%", "100%", "HL1 Any%", "HL1 100%" };
+	static const int variantValues[] = { 0, 1, 2, 3 };
 	bool raceLocked = CL_ImGuiRaceSettingsLocked();
 
 	CL_ImGuiSectionHeader( "Records / Splits Viewer", NULL );
+	Cvar_VariableStringBuffer( "ls_sv_title", titleText, sizeof( titleText ) );
 	Cvar_VariableStringBuffer( "ls_sv_stats", statsText, sizeof( statsText ) );
+	Cvar_VariableStringBuffer( "ls_sv_pb", metricPB, sizeof( metricPB ) );
+	Cvar_VariableStringBuffer( "ls_sv_rgt_pb", metricRgtPB, sizeof( metricRgtPB ) );
+	Cvar_VariableStringBuffer( "ls_sv_sob", metricSob, sizeof( metricSob ) );
+	Cvar_VariableStringBuffer( "ls_sv_completion_rate", metricRate, sizeof( metricRate ) );
+	Cvar_VariableStringBuffer( "ls_sv_pb_chart", chartText, sizeof( chartText ) );
+	pbChartCount = CL_ImGuiParseRecordPbChart( chartText, pbChart, IM_ARRAYSIZE( pbChart ) );
+	goldCount = Cvar_VariableIntegerValue( "ls_sv_golds" );
+	totalRows = Cvar_VariableIntegerValue( "ls_sv_total_rows" );
+	if ( !requestedInitialRefresh || !titleText[0] ) {
+		Cbuf_AddText( "livesplit_sv_refresh\n" );
+		requestedInitialRefresh = true;
+	}
 	CL_ImGuiParseRecordSummary( statsText, &summaryAtt, &summaryComp );
 	CL_ImGuiBeginAutoBox( "records_controls" );
 	if ( raceLocked ) {
@@ -6308,72 +6866,80 @@ static void CL_ImGuiDrawRecordsPage( void ) {
 	}
 	ImGui::BeginDisabled( raceLocked );
 	CL_ImGuiCommandComboCvarName( "View Mode", "ls_mode", "0", modeLabels, modeValues, IM_ARRAYSIZE( modeValues ), "livesplit_sv_mode" );
-	CL_ImGuiCommandComboCvarName( "Difficulty", "g_gameskill", "2", diffLabels, diffValues, IM_ARRAYSIZE( diffValues ), "livesplit_sv_diff" );
+	CL_ImGuiCommandComboCvarName( "Difficulty", "ls_sv_diff", "3", diffLabels, diffValues, IM_ARRAYSIZE( diffValues ), "livesplit_sv_diff" );
 	CL_ImGuiCommandComboCvarName( "Chapter", "ls_mission", "1", missionLabels, missionValues, IM_ARRAYSIZE( missionValues ), "livesplit_sv_mission" );
 	ImGui::EndDisabled();
+	CL_ImGuiCommandComboCvarName( "Category", "ls_sv_variant", "0", variantLabels, variantValues, IM_ARRAYSIZE( variantValues ), "livesplit_sv_variant" );
 	if ( ImGui::Button( "Refresh", ImVec2( 108, 0 ) ) ) Cbuf_AddText( "livesplit_sv_refresh\n" );
-	CL_ImGuiSameLineIfFits( 116.0f );
-	if ( ImGui::Button( "Page Up", ImVec2( 108, 0 ) ) ) Cbuf_AddText( "livesplit_sv_pgup\n" );
-	CL_ImGuiSameLineIfFits( 116.0f );
-	if ( ImGui::Button( "Page Down", ImVec2( 108, 0 ) ) ) Cbuf_AddText( "livesplit_sv_pgdn\n" );
 	ImGui::EndChild();
 	ImGui::Separator();
-	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%s", Cvar_VariableString( "ls_sv_title" ) );
-	ImGui::TextDisabled( "%s", statsText );
-	if ( summaryAtt > 0 || summaryComp > 0 ) {
-		ImGui::SameLine();
-		ImGui::TextColored( ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ), "Category: %d/%d", summaryAtt, summaryComp );
+	ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%s", titleText[0] ? titleText : "Records" );
+	ImGui::TextDisabled( "%s", statsText[0] ? statsText : "Refresh records to load saved splits." );
+	if ( ImGui::BeginTable( "records_metrics", 6, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV ) ) {
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "PB" ); ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%s", metricPB );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "RGT PB" ); ImGui::TextColored( ImVec4( 0.72f, 0.86f, 1.0f, 1.0f ), "%s", metricRgtPB );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "SOB" ); ImGui::TextColored( ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ), "%s", metricSob );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "Attempts" ); ImGui::Text( "%d", summaryAtt );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "Completions" ); ImGui::Text( "%d", summaryComp );
+		ImGui::TableNextColumn(); ImGui::TextDisabled( "Golds" ); ImGui::Text( "%d/%d", goldCount, totalRows );
+		ImGui::EndTable();
 	}
-	ImGui::TextDisabled( "%s", Cvar_VariableString( "ls_sv_pages" ) );
+	ImGui::TextDisabled( "Completion rate: %s    %s", metricRate, Cvar_VariableString( "ls_sv_pages" ) );
 	ImGui::Separator();
 	ImGui::PushStyleColor( ImGuiCol_TableHeaderBg, ImVec4( 0.16f, 0.27f, 0.12f, 0.95f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableRowBg, ImVec4( 0.03f, 0.05f, 0.035f, 0.55f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableRowBgAlt, ImVec4( 0.07f, 0.11f, 0.06f, 0.68f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableBorderStrong, ImVec4( 0.22f, 0.38f, 0.16f, 0.90f ) );
 	ImGui::PushStyleColor( ImGuiCol_TableBorderLight, ImVec4( 0.14f, 0.24f, 0.11f, 0.72f ) );
-	if ( ImGui::BeginTable( "records_table", 5, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY, ImVec2( 0, 246 ) ) ) {
-		ImGui::TableSetupColumn( "Map", ImGuiTableColumnFlags_WidthStretch, 1.35f );
+	if ( ImGui::BeginTable( "records_table", 6, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable ) ) {
+		ImGui::TableSetupColumn( "#", ImGuiTableColumnFlags_WidthFixed, 34.0f );
+		ImGui::TableSetupColumn( "Map", ImGuiTableColumnFlags_WidthStretch, 1.45f );
 		ImGui::TableSetupColumn( "Gold", ImGuiTableColumnFlags_WidthFixed, 78.0f );
 		ImGui::TableSetupColumn( "PB Seg", ImGuiTableColumnFlags_WidthFixed, 78.0f );
 		ImGui::TableSetupColumn( "Att", ImGuiTableColumnFlags_WidthFixed, 48.0f );
 		ImGui::TableSetupColumn( "Comp", ImGuiTableColumnFlags_WidthFixed, 52.0f );
 		ImGui::TableHeadersRow();
-	for ( i = 0; i < 10; ++i ) {
+		for ( i = 0; i < 40; ++i ) {
 		int att, comp;
 		char map[64], gold[32], pb[32];
 		Com_sprintf( rowName, sizeof( rowName ), "ls_sv_r%d", i );
 		Cvar_VariableStringBuffer( rowName, rowText, sizeof( rowText ) );
 		if ( rowText[0] ) {
 			if ( CL_ImGuiParseRecordRow( rowText, map, sizeof( map ), gold, sizeof( gold ), pb, sizeof( pb ), &att, &comp ) ) {
-				attempts[recordCount] = (float)att;
-				completions[recordCount] = (float)comp;
-				recordCount++;
+				if ( recordCount < 40 ) {
+					attempts[recordCount] = (float)att;
+					completions[recordCount] = (float)comp;
+				}
 				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex( 0 );
+				ImGui::TableSetColumnIndex( 0 ); ImGui::TextDisabled( "%02d", recordCount + 1 );
+				ImGui::TableSetColumnIndex( 1 );
 				ImGui::PushID( i );
 				if ( ImGui::Selectable( map, selectedRecordRow == i, ImGuiSelectableFlags_SpanAllColumns ) ) {
 					selectedRecordRow = i;
 				}
 				ImGui::PopID();
-				ImGui::TableSetColumnIndex( 1 ); ImGui::TextColored( ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ), "%s", gold );
-				ImGui::TableSetColumnIndex( 2 ); ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%s", pb );
-				ImGui::TableSetColumnIndex( 3 ); ImGui::Text( "%d", att );
-				ImGui::TableSetColumnIndex( 4 ); ImGui::Text( "%d", comp );
+				ImGui::TableSetColumnIndex( 2 ); ImGui::TextColored( ImVec4( 0.95f, 0.74f, 0.28f, 1.0f ), "%s", gold );
+				ImGui::TableSetColumnIndex( 3 ); ImGui::TextColored( ImVec4( 0.58f, 0.92f, 0.34f, 1.0f ), "%s", pb );
+				ImGui::TableSetColumnIndex( 4 ); ImGui::Text( "%d", att );
+				ImGui::TableSetColumnIndex( 5 ); ImGui::Text( "%d", comp );
+				recordCount++;
 			} else {
 				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex( 0 );
+				ImGui::TableSetColumnIndex( 1 );
 				ImGui::TextDisabled( "%s", rowText );
 			}
 		}
-	}
+		}
 		ImGui::EndTable();
 	}
 	ImGui::PopStyleColor( 5 );
+	if ( selectedRecordRow >= recordCount ) selectedRecordRow = -1;
 	if ( recordCount == 0 ) {
 		ImGui::TextDisabled( "No visible record rows. Click Refresh or change mode/difficulty." );
 	}
 	ImGui::Separator();
-	CL_ImGuiDrawRecordStats( attempts, completions, recordCount );
+	CL_ImGuiDrawRecordStats( attempts, completions, recordCount, pbChart, pbChartCount );
 	ImGui::Separator();
 	ImGui::TextDisabled( "Reset commands apply to the currently selected category state." );
 	ImGui::BeginDisabled( selectedRecordRow < 0 );
@@ -7153,10 +7719,6 @@ extern "C" void CL_SpeedrunImGui_Draw( void ) {
 	raceCountdownVisible = CL_ImGuiShouldDrawRaceCountdown();
 	raceChatVisible = CL_ImGuiShouldDrawRaceChat();
 	keystrokesVisible = CL_ImGuiShouldDrawKeystrokesOverlay();
-	if ( !s_imguiInitialized && s_imguiEnabled ) {
-		CL_ImGuiLazyInit();
-		CL_ImGuiEnsureDeviceObjects();
-	}
 	liveSplitVisible = CL_ImGuiShouldDrawLiveSplitOverlay();
 	if ( !CL_SpeedrunImGui_HasPanelOpen() && !liveSplitVisible && !zoneTimerVisible && !raceVisible && !raceCountdownVisible && !raceChatVisible && !keystrokesVisible ) {
 		return;
@@ -7320,12 +7882,14 @@ extern "C" int CL_SpeedrunImGui_WndProc( void *hWnd, unsigned int uMsg, unsigned
 				CL_SpeedrunImGui_Close();
 				return 1;
 			}
-			io.AddKeyEvent( CL_ImGuiMapVK( wParam ), true );
+			CL_ImGuiUpdateKeyModifiers( io );
+			CL_ImGuiAddKeyEvent( io, wParam, true );
 			return 1;
 		case WM_KEYUP:
 		case WM_SYSKEYUP:
 			if ( s_raceChatOpen && Sys_Milliseconds() < s_raceChatSuppressInputUntilMs ) return 1;
-			io.AddKeyEvent( CL_ImGuiMapVK( wParam ), false );
+			CL_ImGuiUpdateKeyModifiers( io );
+			CL_ImGuiAddKeyEvent( io, wParam, false );
 			return 1;
 		}
 	}

@@ -56,12 +56,17 @@ static void CL_ImGuiRaceControlStylePop( void ) {
 
 static void CL_ImGuiRaceControlHeader( const lsRaceUiSnapshot_t *race, int rowCount ) {
 	char playersText[16];
+	const char *status;
+	bool warning;
 	int statCols = ImGui::GetContentRegionAvail().x < 720.0f ? 3 : 6;
 	Com_sprintf( playersText, sizeof( playersText ), "%d", rowCount );
+	status = race->status[0] ? race->status : "Idle";
+	warning = strstr( status, "Cannot" ) || strstr( status, "Invalid" ) || strstr( status, "rejected" ) || strstr( status, "timeout" ) || strstr( status, "unavailable" );
 	CL_ImGuiBeginAutoBox( "race_control_header" );
 	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "Race Control" );
 	CL_ImGuiSameLineIfFits( 180.0f );
-	ImGui::TextDisabled( "%s", race->status[0] ? race->status : "Idle" );
+	if ( warning ) ImGui::TextColored( ImVec4( 1.0f, 0.35f, 0.24f, 1.0f ), "%s", status );
+	else ImGui::TextDisabled( "%s", status );
 	if ( ImGui::BeginTable( "race_control_stats", statCols, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
 		ImGui::TableNextRow();
 		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Role", race->role[0] ? race->role : "Idle" );
@@ -141,61 +146,17 @@ static void CL_ImGuiRaceDrawChatComposer( bool canChat ) {
 	CL_ImGuiOptionTooltip( "Race chat", "ls_race_say", canChat ? "Sends a message to the active Race lobby." : "Join or host a race before chatting." );
 }
 
-static void CL_ImGuiRaceDrawHostBox( const float raceColorFallback[4], bool canHost, bool canStart, bool canLeave, bool canChat, bool canEditSettings ) {
-	static const char *modeLabels[] = { "Full Game", "Chapter", "Individual Level" };
-	static const int modeValues[] = { 0, 1, 2 };
-	static const char *missionLabels[] = { "1: Ominous Rumors", "2: Vengeance", "3: Deadly Designs", "4: Deathshead", "5: Resurrection" };
-	static const int missionValues[] = { 1, 2, 3, 4, 5 };
-	static const char *diffLabels[] = { "Don't hurt me.", "Bring 'em on!", "I am Death incarnate!" };
-	static const int diffValues[] = { 1, 2, 3 };
-	int mode = Cvar_VariableIntegerValue( "ls_mode" );
-	bool hl1 = Cvar_VariableIntegerValue( "bh_movement" ) != 0;
-	CL_ImGuiBeginAutoBox( "race_control_host" );
-	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "Host" );
-	CL_ImGuiInputCvarName( "Name", "name", "Player", ImGuiInputTextFlags_CharsNoBlank );
-	CL_ImGuiColorCvarName( "Color", "ls_race_color", raceColorFallback );
-	if ( !canEditSettings ) {
-		ImGui::TextDisabled( "Race settings are locked after start." );
-	}
-	ImGui::BeginDisabled( !canEditSettings );
-	CL_ImGuiComboCvarName( "Run Mode", "ls_mode", "0", modeLabels, modeValues, IM_ARRAYSIZE( modeValues ) );
-	if ( mode == 1 ) {
-		CL_ImGuiComboCvarName( "Chapter", "ls_mission", "1", missionLabels, missionValues, IM_ARRAYSIZE( missionValues ) );
-	}
-	if ( mode == 2 ) {
-		CL_ImGuiStringComboCvarName( "IL Map", "ls_map", "escape1", s_mapLabels, s_mapValues, IM_ARRAYSIZE( s_mapValues ) );
-	}
-	CL_ImGuiBoolCvarName( "100% Category", "ls_100pct", "0" );
-	CL_ImGuiCommandComboCvarName( "Difficulty", "g_gameskill", "2", diffLabels, diffValues, IM_ARRAYSIZE( diffValues ), "livesplit_sv_diff" );
-	CL_ImGuiBoolCvarName( "HL1 Bhop Physics", "bh_movement", "0" );
-	ImGui::BeginDisabled( !hl1 );
-	CL_ImGuiBoolCvarName( "Auto Jump", "bh_autojump", "0" );
-	ImGui::EndDisabled();
-	CL_ImGuiBoolCvarName( "Anti-Cheat", "ls_race_anticheat", "1" );
-	ImGui::EndDisabled();
-	CL_ImGuiIntSliderCvarName( "Countdown", "ls_race_countdown", "5", 1, 30 );
-	CL_ImGuiBoolCvarName( "Hide Address", "ls_race_hide_ip", "1" );
-	if ( ImGui::BeginTable( "race_host_buttons", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
-		ImGui::TableNextRow();
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Host", "ls_race_host", 0.0f, canHost, "Leave the current race before hosting a new lobby." );
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Start", "ls_race_start", 0.0f, canStart, "Only the host can start while the lobby is waiting." );
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Leave", "ls_race_leave", 0.0f, canLeave, "You are not in a race lobby." );
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Chat", "ls_race_open_chat", 0.0f, canChat, "Join or host a race before opening Race chat." );
-		ImGui::EndTable();
-	}
-	ImGui::EndChild();
-}
-
 static void CL_ImGuiRaceDrawJoinBox( bool hideIp, bool isHost, bool isClient, bool canJoinManual, bool canConnect, bool canRefresh ) {
 	CL_ImGuiBeginAutoBox( "race_control_join" );
 	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "Join" );
 	CL_ImGuiInputCvarName( "Host IP", "ls_race_ip", "127.0.0.1", ImGuiInputTextFlags_CharsNoBlank | ( hideIp ? ImGuiInputTextFlags_Password : 0 ) );
 	CL_ImGuiIntInputCvarName( "UDP Port", "ls_race_port", "27960", 1, 65535 );
+	CL_ImGuiInputCvarName( "Password", "ls_race_password", "", ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_Password );
 	if ( ImGui::BeginTable( "race_join_buttons", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
 		ImGui::TableNextRow();
 		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Join Manual", "ls_race_join", 0.0f, canJoinManual, isHost ? "Leave hosted lobby before joining another race." : "Leave the current race before joining another lobby." );
 		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( isClient ? "Reconnect" : "Connect", "ls_race_connect", 0.0f, canConnect, "Hosts cannot connect to themselves." );
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Refresh LAN", "ls_race_refresh", 0.0f, canRefresh, "LAN scan is unavailable while hosting." );
+		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Scan", "ls_race_refresh", 0.0f, canRefresh, "Scans LAN and the Host IP/UDP port range for external Race Host lobbies." );
 		ImGui::EndTable();
 	}
 	ImGui::TextDisabled( "%s", Cvar_VariableString( "ls_race_found_status" ) );
@@ -238,15 +199,13 @@ static void CL_ImGuiRaceDrawLobbyList( int foundCount, bool canJoinFound ) {
 	ImGui::EndChild();
 }
 
-static void CL_ImGuiRaceDrawSnapshotBox( const lsRaceUiSnapshot_t *race, bool canStart, bool canLeave, bool canChat ) {
+static void CL_ImGuiRaceDrawSnapshotBox( const lsRaceUiSnapshot_t *race, bool canLeave, bool canChat ) {
 	CL_ImGuiBeginAutoBox( "race_control_state" );
 	CL_ImGuiMiniStat( "Stage", race->stage[0] ? race->stage : "-" );
 	CL_ImGuiMiniStat( "Stage IGT", race->stageIgt[0] ? race->stageIgt : "--" );
 	CL_ImGuiMiniStat( "Checks", race->flags[0] ? race->flags : "sv_cheats 0 | god off | noclip off" );
 	if ( race->countdownText[0] ) CL_ImGuiMiniStat( "Countdown", race->countdownText );
 	ImGui::Separator();
-	CL_ImGuiRaceCommandButton( "Start", "ls_race_start", 104.0f, canStart, "Only the host can start while the lobby is waiting." );
-	CL_ImGuiSameLineIfFits( 112.0f );
 	CL_ImGuiRaceCommandButton( "Open Chat", "ls_race_open_chat", 104.0f, canChat, "Join or host a race before opening Race chat." );
 	CL_ImGuiSameLineIfFits( 108.0f );
 	CL_ImGuiRaceCommandButton( "Leave", "ls_race_leave", 96.0f, canLeave, "You are not in a race lobby." );
@@ -254,15 +213,11 @@ static void CL_ImGuiRaceDrawSnapshotBox( const lsRaceUiSnapshot_t *race, bool ca
 }
 
 static void CL_ImGuiDrawRaceControlWindow( void ) {
-	static const float raceColorFallback[4] = { 0.31f, 0.70f, 1.00f, 1.00f };
 	static int selectedTab = 0;
 	lsRaceUiSnapshot_t race;
 	srRaceRow_t rows[8];
 	bool isHost;
 	bool isClient;
-	bool isLobby;
-	bool canHost;
-	bool canStart;
 	bool canLeave;
 	bool canChat;
 	bool canJoinManual;
@@ -285,11 +240,8 @@ static void CL_ImGuiDrawRaceControlWindow( void ) {
 	}
 	isHost = !Q_stricmp( race.role, "Host" );
 	isClient = !Q_stricmp( race.role, "Client" );
-	isLobby = !Q_stricmp( race.state, "Lobby" );
 	hideIp = Cvar_VariableIntegerValue( "ls_race_hide_ip" ) != 0;
 	foundCount = Cvar_VariableIntegerValue( "ls_race_found_count" );
-	canHost = race.active == 0;
-	canStart = isHost && isLobby;
 	canLeave = race.active != 0;
 	canChat = race.active != 0;
 	canJoinManual = !isHost && race.active == 0;
@@ -343,11 +295,10 @@ static void CL_ImGuiDrawRaceControlWindow( void ) {
 	}
 
 	if ( selectedTab == 0 ) {
-		CL_ImGuiRaceDrawHostBox( raceColorFallback, canHost, canStart, canLeave, canChat, race.active == 0 || ( isHost && isLobby ) );
-		ImGui::Spacing();
 		CL_ImGuiRaceDrawJoinBox( hideIp, isHost, isClient, canJoinManual, canConnect, canRefresh );
 		ImGui::Spacing();
 		CL_ImGuiRaceDrawLobbyList( foundCount, canJoinFound );
+		ImGui::TextDisabled( "Hosting and starting Race lobbies is handled by the external Race Host app." );
 	} else if ( selectedTab == 1 ) {
 		float tableHeight = ImGui::GetContentRegionAvail().y * 0.45f;
 		if ( tableHeight < 260.0f ) tableHeight = 260.0f;
@@ -356,9 +307,9 @@ static void CL_ImGuiDrawRaceControlWindow( void ) {
 		CL_ImGuiRaceDrawChatLog( &race, 132.0f );
 		CL_ImGuiRaceDrawChatComposer( canChat );
 		ImGui::Spacing();
-		CL_ImGuiRaceDrawSnapshotBox( &race, canStart, canLeave, canChat );
+		CL_ImGuiRaceDrawSnapshotBox( &race, canLeave, canChat );
 	} else if ( selectedTab == 2 ) {
-		CL_ImGuiRaceDrawSnapshotBox( &race, canStart, canLeave, canChat );
+		CL_ImGuiRaceDrawSnapshotBox( &race, canLeave, canChat );
 		ImGui::Spacing();
 		CL_ImGuiBeginAutoBox( "race_control_network" );
 		CL_ImGuiMiniStat( "LAN Status", Cvar_VariableString( "ls_race_found_status" ) );
