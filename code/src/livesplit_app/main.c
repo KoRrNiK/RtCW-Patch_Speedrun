@@ -12,7 +12,9 @@ Build:  cl /O2 /W3 /Fe:RtCW_LiveSplit.exe main.c /link user32.lib gdi32.lib
 ===========================================================================
 */
 
+#ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>

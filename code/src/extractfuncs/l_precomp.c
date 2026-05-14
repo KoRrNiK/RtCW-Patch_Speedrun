@@ -43,6 +43,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <limits.h>
 #include <string.h>
 #include <stdarg.h>
+#include <ctype.h>
 #include <time.h>
 #include <math.h>
 #include "l_memory.h"
@@ -781,7 +782,7 @@ void PC_AddBuiltinDefines( source_t *source ) {
 int PC_ExpandBuiltinDefine( source_t *source, define_t *define,
 							token_t **firsttoken, token_t **lasttoken ) {
 	token_t token;
-	unsigned long t;    //	time_t t; //to prevent LCC warning
+	time_t t;
 	char *curtime;
 
 	memcpy( &token, &source->token, sizeof( token_t ) );
@@ -804,7 +805,7 @@ int PC_ExpandBuiltinDefine( source_t *source, define_t *define,
 	{
 		strcpy( token.string, source->scriptstack->filename );
 		token.type = TT_NAME;
-		token.subtype = strlen( token.string );
+		token.subtype = (int)strlen( token.string );
 		*firsttoken = &token;
 		*lasttoken = &token;
 		break;
@@ -817,9 +818,8 @@ int PC_ExpandBuiltinDefine( source_t *source, define_t *define,
 		strncat( token.string, curtime + 4, 7 );
 		strncat( token.string + 7, curtime + 20, 4 );
 		strcat( token.string, "\"" );
-		free( curtime );
 		token.type = TT_NAME;
-		token.subtype = strlen( token.string );
+		token.subtype = (int)strlen( token.string );
 		*firsttoken = &token;
 		*lasttoken = &token;
 		break;
@@ -831,9 +831,8 @@ int PC_ExpandBuiltinDefine( source_t *source, define_t *define,
 		strcpy( token.string, "\"" );
 		strncat( token.string, curtime + 11, 8 );
 		strcat( token.string, "\"" );
-		free( curtime );
 		token.type = TT_NAME;
-		token.subtype = strlen( token.string );
+		token.subtype = (int)strlen( token.string );
 		*firsttoken = &token;
 		*lasttoken = &token;
 		break;

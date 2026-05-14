@@ -39,6 +39,10 @@ If you have questions concerning this license or the applicable additional terms
 #include <direct.h>
 #include <io.h>
 #include <conio.h>
+#if defined( _M_X64 )
+#include <intrin.h>
+#include <xmmintrin.h>
+#endif
 
 /*
 ================
@@ -111,13 +115,22 @@ Sys_SnapVector
 ================
 */
 long fastftol( float f ) {
+#if defined( _M_X64 )
+	return _mm_cvtss_si32( _mm_set_ss( f ) );
+#else
 	static int tmp;
 	__asm fld f
 	__asm fistp tmp
 	__asm mov eax, tmp
+#endif
 }
 
 void Sys_SnapVector( float *v ) {
+#if defined( _M_X64 )
+	v[0] = (float)fastftol( v[0] );
+	v[1] = (float)fastftol( v[1] );
+	v[2] = (float)fastftol( v[2] );
+#else
 	int i;
 	float f;
 
@@ -142,6 +155,7 @@ void Sys_SnapVector( float *v ) {
 	v++;
 	*v = fastftol(*v);
 	*/
+#endif
 }
 
 /*
@@ -159,6 +173,15 @@ void Sys_SnapVector( float *v ) {
 ** --------------------------------------------------------------------------------
 */
 static void CPUID( int func, unsigned regs[4] ) {
+#if defined( _M_X64 )
+	int cpuInfo[4];
+
+	__cpuid( cpuInfo, func );
+	regs[0] = (unsigned)cpuInfo[0];
+	regs[1] = (unsigned)cpuInfo[1];
+	regs[2] = (unsigned)cpuInfo[2];
+	regs[3] = (unsigned)cpuInfo[3];
+#else
 	unsigned regEAX, regEBX, regECX, regEDX;
 
 	__asm mov eax, func
@@ -173,9 +196,13 @@ static void CPUID( int func, unsigned regs[4] ) {
 	regs[1] = regEBX;
 	regs[2] = regECX;
 	regs[3] = regEDX;
+#endif
 }
 
 static int IsPentium( void ) {
+#if defined( _M_X64 )
+	return qtrue;
+#else
 	__asm
 	{
 		pushfd                      // save eflags
@@ -205,6 +232,7 @@ err:
 	return qfalse;
 good:
 	return qtrue;
+#endif
 }
 
 static int Is3DNOW( void ) {

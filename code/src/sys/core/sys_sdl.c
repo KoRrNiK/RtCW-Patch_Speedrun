@@ -430,8 +430,8 @@ void Sys_ListFilteredFiles( const char *basedir, char *subdirs, char *filter, ch
 static qboolean strgtr( const char *s0, const char *s1 ) {
 	int l0, l1, i;
 
-	l0 = strlen( s0 );
-	l1 = strlen( s1 );
+	l0 = (int)strlen( s0 );
+	l1 = (int)strlen( s1 );
 
 	if ( l1 < l0 ) {
 		l0 = l1;
@@ -714,11 +714,11 @@ static HINSTANCE Sys_TryLoadDllPath( const char *path, DWORD *lastError ) {
 	return NULL;
 }
 
-void * QDECL Sys_LoadDll( const char *name, int( QDECL **entryPoint ) ( int, ... ),
-						  int ( QDECL *systemcalls )( int, ... ) ) {
+void * QDECL Sys_LoadDll( const char *name, vmArg_t( QDECL **entryPoint ) ( int, ... ),
+						  vmArg_t ( QDECL *systemcalls )( vmArg_t, ... ) ) {
 	static int lastWarning = 0;
 	HINSTANCE libHandle;
-	void ( QDECL * dllEntry )( int ( QDECL *syscallptr )( int, ... ) );
+	void ( QDECL * dllEntry )( vmArg_t ( QDECL *syscallptr )( vmArg_t, ... ) );
 	char    *basepath;
 	char    *cdpath;
 	char    *gamedir;
@@ -732,9 +732,21 @@ void * QDECL Sys_LoadDll( const char *name, int( QDECL **entryPoint ) ( int, ...
 	char filename[MAX_QPATH];
 
 #ifdef WOLF_SP_DEMO
-	Com_sprintf( filename, sizeof( filename ), "%sx86_d.dll", name );
+	Com_sprintf( filename, sizeof( filename ), "%s%s_d.dll", name,
+#ifdef _WIN64
+				  "x64"
 #else
-	Com_sprintf( filename, sizeof( filename ), "%sx86.dll", name );
+				  "x86"
+#endif
+				  );
+#else
+	Com_sprintf( filename, sizeof( filename ), "%s%s.dll", name,
+#ifdef _WIN64
+				  "x64"
+#else
+				  "x86"
+#endif
+				  );
 #endif
 
 // Knightmare- removed this
@@ -813,8 +825,8 @@ void * QDECL Sys_LoadDll( const char *name, int( QDECL **entryPoint ) ( int, ...
 
 found_dll:
 
-	dllEntry = ( void ( QDECL * )( int ( QDECL * )( int, ... ) ) )GetProcAddress( libHandle, "dllEntry" );
-	*entryPoint = ( int ( QDECL * )( int,... ) )GetProcAddress( libHandle, "vmMain" );
+	dllEntry = ( void ( QDECL * )( vmArg_t ( QDECL * )( vmArg_t, ... ) ) )GetProcAddress( libHandle, "dllEntry" );
+	*entryPoint = ( vmArg_t ( QDECL * )( int,... ) )GetProcAddress( libHandle, "vmMain" );
 	if ( !*entryPoint || !dllEntry ) {
 		Com_Printf( "^1Sys_LoadDll(%s): missing vmMain or dllEntry in %s\n", name, filename );
 		FreeLibrary( libHandle );
@@ -1216,7 +1228,7 @@ sysEvent_t Sys_GetEvent( void ) {
 		char    *b;
 		int len;
 
-		len = strlen( s ) + 1;
+		len = (int)strlen( s ) + 1;
 		b = Z_Malloc( len );
 		Q_strncpyz( b, s, len - 1 );
 		Sys_QueEvent( 0, SE_CONSOLE, 0, 0, len, b );
@@ -1301,9 +1313,16 @@ void Sys_Init( void ) {
 
 	g_wv.osversion.dwOSVersionInfoSize = sizeof( g_wv.osversion );
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4996)
+#endif
 	if ( !GetVersionEx( &g_wv.osversion ) ) {
 		Sys_Error( "Couldn't get OS info" );
 	}
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 	if ( g_wv.osversion.dwMajorVersion < 4 ) {
 		Sys_Error( "Wolf requires Windows version 4 or greater" );
@@ -1329,8 +1348,8 @@ void Sys_Init( void ) {
 	}
 
 	// save out a couple things in rom cvars for the renderer to access
-	Cvar_Get( "win_hinstance", va( "%i", (int)g_wv.hInstance ), CVAR_ROM );
-	Cvar_Get( "win_wndproc", va( "%i", (int)MainWndProc ), CVAR_ROM );
+	Cvar_Get( "win_hinstance", va( "%p", (void *)g_wv.hInstance ), CVAR_ROM );
+	Cvar_Get( "win_wndproc", va( "%p", (void *)MainWndProc ), CVAR_ROM );
 
 	//
 	// figure out our CPU
