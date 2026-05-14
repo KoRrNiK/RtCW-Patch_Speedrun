@@ -451,8 +451,9 @@ static void ProjectDlightTexture( void ) {
 
 	for ( l = 0 ; l < backEnd.refdef.num_dlights ; l++ ) {
 		dlight_t    *dl;
+		unsigned int lightBit = 1u << l;
 
-		if ( !( tess.dlightBits & ( 1 << l ) ) ) {
+		if ( !( tess.dlightBits & lightBit ) ) {
 			continue;   // this surface definately doesn't have any of this light
 		}
 		texCoords = texCoordsArray[0];
@@ -1399,6 +1400,23 @@ void RB_StageIteratorGeneric( void ) {
 /*
 ** RB_StageIteratorVertexLitTexture
 */
+static qboolean RB_FastPathNeedsGenericEntityAlpha( void ) {
+	if ( !backEnd.currentEntity ) {
+		return qfalse;
+	}
+
+	if ( backEnd.currentEntity->e.fadeStartTime ) {
+		return qtrue;
+	}
+
+	if ( ( backEnd.currentEntity->e.renderfx & RF_ENTITY_ALPHA ) &&
+		 backEnd.currentEntity->e.shaderRGBA[3] < 255 ) {
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
 void RB_StageIteratorVertexLitTexture( void ) {
 	shaderCommands_t *input;
 	shader_t        *shader;
@@ -1406,6 +1424,11 @@ void RB_StageIteratorVertexLitTexture( void ) {
 	input = &tess;
 
 	shader = input->shader;
+
+	if ( RB_FastPathNeedsGenericEntityAlpha() ) {
+		RB_StageIteratorGeneric();
+		return;
+	}
 
 	//
 	// compute colors
@@ -1466,7 +1489,8 @@ void RB_StageIteratorVertexLitTexture( void ) {
 	//
 	// now do any dynamic lighting needed
 	//
-	if ( tess.dlightBits && tess.shader->sort <= SS_OPAQUE ) {
+	if ( tess.dlightBits && tess.shader->sort <= SS_OPAQUE
+		 && !( tess.shader->surfaceFlags & ( SURF_NODLIGHT | SURF_SKY ) ) ) {
 		ProjectDlightTexture();
 	}
 
@@ -1485,14 +1509,14 @@ void RB_StageIteratorVertexLitTexture( void ) {
 		GLimp_LogComment( "glUnlockArraysEXT\n" );
 	}
 
-	if ( qglPNTrianglesiATI && tess.ATI_tess )
-#ifdef __MACOS__ //DAJ ATI{
+	if ( qglPNTrianglesiATI && tess.ATI_tess ) {
+#ifdef __MACOS__ //DAJ ATI
 		qglPNTrianglesiATI( GL_PN_TRIANGLES_ATI, 0 );
-	}
 #else
-	{ qglDisable( GL_PN_TRIANGLES_ATI );    // ATI PN-Triangles extension
-	}
+		qglDisable( GL_PN_TRIANGLES_ATI );    // ATI PN-Triangles extension
 #endif
+		qglDisableClientState( GL_NORMAL_ARRAY );
+	}
 }
 
 //define	REPLACE_MODE
@@ -1531,6 +1555,7 @@ void RB_StageIteratorLightmappedMultitexture( void ) {
 #else
 		qglEnable( GL_PN_TRIANGLES_ATI ); // ATI PN-Triangles extension
 #endif
+		qglEnableClientState( GL_NORMAL_ARRAY );
 		qglNormalPointer( GL_FLOAT, 16, input->normal );
 	}
 
@@ -1598,7 +1623,8 @@ void RB_StageIteratorLightmappedMultitexture( void ) {
 	//
 	// now do any dynamic lighting needed
 	//
-	if ( tess.dlightBits && tess.shader->sort <= SS_OPAQUE ) {
+	if ( tess.dlightBits && tess.shader->sort <= SS_OPAQUE
+		 && !( tess.shader->surfaceFlags & ( SURF_NODLIGHT | SURF_SKY ) ) ) {
 		ProjectDlightTexture();
 	}
 
@@ -1617,14 +1643,14 @@ void RB_StageIteratorLightmappedMultitexture( void ) {
 		GLimp_LogComment( "glUnlockArraysEXT\n" );
 	}
 
-	if ( qglPNTrianglesiATI && tess.ATI_tess )
-#ifdef __MACOS__ //DAJ ATI{
+	if ( qglPNTrianglesiATI && tess.ATI_tess ) {
+#ifdef __MACOS__ //DAJ ATI
 		qglPNTrianglesiATI( GL_PN_TRIANGLES_ATI, 0 );
-	}
 #else
-	{ qglDisable( GL_PN_TRIANGLES_ATI );    // ATI PN-Triangles extension
-	}
+		qglDisable( GL_PN_TRIANGLES_ATI );    // ATI PN-Triangles extension
 #endif
+		qglDisableClientState( GL_NORMAL_ARRAY );
+	}
 }
 
 /*

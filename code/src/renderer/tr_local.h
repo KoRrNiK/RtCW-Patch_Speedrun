@@ -620,7 +620,7 @@ typedef struct srfGridMesh_s {
 	surfaceType_t surfaceType;
 
 	// dynamic lighting information
-	int dlightBits[SMP_FRAMES];
+	unsigned int dlightBits[SMP_FRAMES];
 
 	// culling information
 	vec3_t meshBounds[2];
@@ -650,7 +650,7 @@ typedef struct {
 	cplane_t plane;
 
 	// dynamic lighting information
-	int dlightBits[SMP_FRAMES];
+	unsigned int dlightBits[SMP_FRAMES];
 
 	// triangle definitions (no normals at points)
 	int numPoints;
@@ -666,7 +666,7 @@ typedef struct {
 	surfaceType_t surfaceType;
 
 	// dynamic lighting information
-	int dlightBits[SMP_FRAMES];
+	unsigned int dlightBits[SMP_FRAMES];
 
 	// culling information (FIXME: use this!)
 	vec3_t bounds[2];
@@ -703,6 +703,8 @@ BRUSH MODELS
 
 typedef struct msurface_s {
 	int viewCount;                      // if == tr.viewCount, already added
+	unsigned int visibleDlightBits;     // accumulated dlights for the current view
+	int drawSurfIndex;                  // drawsurf slot for late dlight promotion
 	struct shader_s     *shader;
 	int fogIndex;
 
@@ -1097,6 +1099,7 @@ extern cvar_t   *r_drawSun;             // controls drawing of sun quad
 										// "2" also draw lens flare effect centered on sun
 extern cvar_t   *r_dynamiclight;        // dynamic lights enabled/disabled
 extern cvar_t   *r_dlightScale;         // global user attenuation of dlights
+extern cvar_t   *r_dlightWorldCull;     // cull dynamic lights through world BSP nodes
 extern cvar_t   *r_dlightBacks;         // dlight non-facing surfaces for continuity
 
 extern cvar_t  *r_norefresh;            // bypasses the ref rendering
@@ -1244,7 +1247,7 @@ void R_DecomposeSort( unsigned sort, int *entityNum, shader_t **shader,
 					  int *fogNum, int *dlightMap, int *atiTess );
 
 // GR - add tessellation flag
-void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader, int fogIndex, int dlightMap, int atiTess );
+int R_AddDrawSurf( surfaceType_t *surface, shader_t *shader, int fogIndex, int dlightMap, int atiTess );
 
 
 #define CULL_IN     0       // completely unclipped
@@ -1419,7 +1422,7 @@ typedef struct shaderCommands_s
 	vec4_t normal[SHADER_MAX_VERTEXES];
 	vec2_t texCoords[SHADER_MAX_VERTEXES][2];
 	color4ub_t vertexColors[SHADER_MAX_VERTEXES];
-	int vertexDlightBits[SHADER_MAX_VERTEXES];
+	unsigned int vertexDlightBits[SHADER_MAX_VERTEXES];
 
 	stageVars_t svars;
 
@@ -1429,7 +1432,7 @@ typedef struct shaderCommands_s
 	float shaderTime;
 	int fogNum;
 
-	int dlightBits;         // or together of all vertexDlightBits
+	unsigned int dlightBits;         // or together of all vertexDlightBits
 
 	int numIndexes;
 	int numVertexes;

@@ -347,7 +347,7 @@ void RB_SurfaceTriangles( srfTriangles_t *srf ) {
 	drawVert_t  *dv;
 	float       *xyz, *normal, *texCoords;
 	byte        *color;
-	int dlightBits;
+	unsigned int dlightBits;
 	qboolean needsNormal;
 
 	dlightBits = srf->dlightBits[backEnd.smpFrame];
@@ -1105,7 +1105,7 @@ void RB_SurfaceFace( srfSurfaceFace_t *surf ) {
 	int ndx;
 	int Bob;
 	int numPoints;
-	int dlightBits;
+	unsigned int dlightBits;
 
 	RB_CHECKOVERFLOW( surf->numPoints, surf->numIndices );
 
@@ -1201,8 +1201,8 @@ void RB_SurfaceGrid( srfGridMesh_t *cv ) {
 	float lodError;
 	int lodWidth, lodHeight;
 	int numVertexes;
-	int dlightBits;
-	int     *vDlightBits;
+	unsigned int dlightBits;
+	unsigned int *vDlightBits;
 	qboolean needsNormal;
 
 	dlightBits = cv->dlightBits[backEnd.smpFrame];

@@ -1558,7 +1558,7 @@ recurse:
 R_AddDrawSurf
 =================
 */
-void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
+int R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 					int fogIndex, int dlightMap, int atiTess ) {
 	int index;
 
@@ -1573,6 +1573,7 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 									  | tr.shiftedEntityNum | ( fogIndex << QSORT_FOGNUM_SHIFT ) | (int)dlightMap;
 	tr.refdef.drawSurfs[index].surface = surface;
 	tr.refdef.numDrawSurfs++;
+	return index;
 }
 
 /*
