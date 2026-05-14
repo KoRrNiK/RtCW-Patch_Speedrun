@@ -328,7 +328,7 @@ void BotImport_BSPModelMinsMaxsOrigin( int modelnum, vec3_t angles, vec3_t outmi
 BotImport_GetMemory
 ==================
 */
-void *BotImport_GetMemory( int size ) {
+void *BotImport_GetMemory( size_t size ) {
 	return malloc( size );
 }
 
@@ -547,7 +547,7 @@ BotImport_AICast_VisibleFromPos
 */
 qboolean BotImport_AICast_VisibleFromPos(   vec3_t srcpos, int srcnum,
 											vec3_t destpos, int destnum, qboolean updateVisPos ) {
-	return VM_Call( gvm, AICAST_VISIBLEFROMPOS, (int)srcpos, srcnum, (int)destpos, destnum, updateVisPos );
+	return VM_Call( gvm, AICAST_VISIBLEFROMPOS, (vmArg_t)srcpos, srcnum, (vmArg_t)destpos, destnum, updateVisPos );
 }
 
 /*
@@ -556,7 +556,7 @@ BotImport_AICast_CheckAttackAtPos
 ===============
 */
 qboolean BotImport_AICast_CheckAttackAtPos( int entnum, int enemy, vec3_t pos, qboolean ducking, qboolean allowHitWorld ) {
-	return VM_Call( gvm, AICAST_CHECKATTACKATPOS, entnum, enemy, (int)pos, ducking, allowHitWorld );
+	return VM_Call( gvm, AICAST_CHECKATTACKATPOS, entnum, enemy, (vmArg_t)pos, ducking, allowHitWorld );
 }
 // done.
 

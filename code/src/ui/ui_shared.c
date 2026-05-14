@@ -292,7 +292,7 @@ const char *String_Alloc( const char *p ) {
 		str = str->next;
 	}
 
-	len = strlen( p );
+	len = (int)strlen( p );
 	if ( len + strPoolIndex + 1 < STRING_POOL_SIZE ) {
 		int ph = strPoolIndex;
 		strcpy( &strPool[strPoolIndex], p );
@@ -1087,7 +1087,7 @@ qboolean IsVisible( int flags ) {
 
 static void UIShared_GetScaleMetrics( float *xscaleOut, float *yscaleOut, float *minscaleOut, float *xleftOut, float *xrightOut ) {
 	float xscale, yscale, minscale;
-	float xleft, xright, safeLeft, safeRight;
+	float xleft, xright, safeLeft = 0.0f, safeRight = 0.0f;
 	int left, right, total, maxTotal;
 	qboolean blackbarSafe;
 	int scr_surroundlayout = DC->getCVarValue( "scr_surroundlayout" );
@@ -2631,7 +2631,7 @@ qboolean Item_TextField_HandleKey( itemDef_t *item, int key ) {
 
 		memset( buff, 0, sizeof( buff ) );
 		DC->getCVarString( item->cvar, buff, sizeof( buff ) );
-		realLen = strlen( buff );
+		realLen = (int)strlen( buff );
 		len = realLen;
 		if ( editPtr->maxChars && len > editPtr->maxChars ) {
 			len = editPtr->maxChars;
@@ -3359,7 +3359,7 @@ void Menu_HandleKey( menuDef_t *menu, int key, qboolean down ) {
 				if ( g_editItem->cvar ) {
 					DC->getCVarString( g_editItem->cvar, buff, sizeof( buff ) );
 				}
-				bLen = strlen( buff );
+				bLen = (int)strlen( buff );
 
 				offset = ( g_editItem->text && *g_editItem->text ) ? 8 : 0;
 				textStartX = g_editItem->textRect.x + g_editItem->textRect.w + offset;
@@ -3508,7 +3508,7 @@ void Menu_HandleKey( menuDef_t *menu, int key, qboolean down ) {
 						if ( item->cvar ) {
 							DC->getCVarString( item->cvar, buff, sizeof( buff ) );
 						}
-						len = strlen( buff );
+						len = (int)strlen( buff );
 
 						offset = ( item->text && *item->text ) ? 8 : 0;
 						textStartX = item->textRect.x + item->textRect.w + offset;
@@ -3579,7 +3579,7 @@ void Menu_HandleKey( menuDef_t *menu, int key, qboolean down ) {
 					if ( item->cvar ) {
 						DC->getCVarString( item->cvar, buff2, sizeof( buff2 ) );
 					}
-					item->cursorPos = strlen( buff2 );
+					item->cursorPos = (int)strlen( buff2 );
 					if ( editPtr2->maxPaintChars && item->cursorPos > editPtr2->maxPaintChars ) {
 						editPtr2->paintOffset = item->cursorPos - editPtr2->maxPaintChars;
 					}

@@ -568,7 +568,7 @@ typedef struct cast_state_s
 
 } cast_state_t;
 //
-#define CSFOFS( x ) ( (int)&( ( (cast_state_t *)0 )->x ) )
+#define CSFOFS( x ) ( (int)offsetof( cast_state_t, x ) )
 //
 typedef struct aicast_predictmove_s
 {

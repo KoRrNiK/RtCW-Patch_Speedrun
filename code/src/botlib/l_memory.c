@@ -118,9 +118,9 @@ void UnlinkMemoryBlock( memoryblock_t *block ) {
 // Changes Globals:		-
 //===========================================================================
 #ifdef MEMDEBUG
-void *GetMemoryDebug( unsigned long size, char *label, char *file, int line )
+void *GetMemoryDebug( size_t size, char *label, char *file, int line )
 #else
-void *GetMemory( unsigned long size )
+void *GetMemory( size_t size )
 #endif //MEMDEBUG
 {
 	void *ptr;
@@ -133,7 +133,7 @@ void *GetMemory( unsigned long size )
 	block = (memoryblock_t *) ptr;
 	block->id = MEM_ID;
 	block->ptr = (char *) ptr + sizeof( memoryblock_t );
-	block->size = size + sizeof( memoryblock_t );
+	block->size = (int)( size + sizeof( memoryblock_t ) );
 #ifdef MEMDEBUG
 	block->label = label;
 	block->file = file;
@@ -152,9 +152,9 @@ void *GetMemory( unsigned long size )
 // Changes Globals:		-
 //===========================================================================
 #ifdef MEMDEBUG
-void *GetClearedMemoryDebug( unsigned long size, char *label, char *file, int line )
+void *GetClearedMemoryDebug( size_t size, char *label, char *file, int line )
 #else
-void *GetClearedMemory( unsigned long size )
+void *GetClearedMemory( size_t size )
 #endif //MEMDEBUG
 {
 	void *ptr;
@@ -173,19 +173,19 @@ void *GetClearedMemory( unsigned long size )
 // Changes Globals:		-
 //===========================================================================
 #ifdef MEMDEBUG
-void *GetHunkMemoryDebug( unsigned long size, char *label, char *file, int line )
+void *GetHunkMemoryDebug( size_t size, char *label, char *file, int line )
 #else
-void *GetHunkMemory( unsigned long size )
+void *GetHunkMemory( size_t size )
 #endif //MEMDEBUG
 {
 	void *ptr;
 	memoryblock_t *block;
 
-	ptr = botimport.HunkAlloc( size + sizeof( memoryblock_t ) );
+	ptr = botimport.HunkAlloc( (int)( size + sizeof( memoryblock_t ) ) );
 	block = (memoryblock_t *) ptr;
 	block->id = HUNK_ID;
 	block->ptr = (char *) ptr + sizeof( memoryblock_t );
-	block->size = size + sizeof( memoryblock_t );
+	block->size = (int)( size + sizeof( memoryblock_t ) );
 #ifdef MEMDEBUG
 	block->label = label;
 	block->file = file;
@@ -204,9 +204,9 @@ void *GetHunkMemory( unsigned long size )
 // Changes Globals:		-
 //===========================================================================
 #ifdef MEMDEBUG
-void *GetClearedHunkMemoryDebug( unsigned long size, char *label, char *file, int line )
+void *GetClearedHunkMemoryDebug( size_t size, char *label, char *file, int line )
 #else
-void *GetClearedHunkMemory( unsigned long size )
+void *GetClearedHunkMemory( size_t size )
 #endif //MEMDEBUG
 {
 	void *ptr;
@@ -360,9 +360,9 @@ void DumpMemory( void ) {
 // Changes Globals:		-
 //===========================================================================
 #ifdef MEMDEBUG
-void *GetMemoryDebug( unsigned long size, char *label, char *file, int line )
+void *GetMemoryDebug( size_t size, char *label, char *file, int line )
 #else
-void *GetMemory( unsigned long size )
+void *GetMemory( size_t size )
 #endif //MEMDEBUG
 {
 	void *ptr;
@@ -383,9 +383,9 @@ void *GetMemory( unsigned long size )
 // Changes Globals:		-
 //===========================================================================
 #ifdef MEMDEBUG
-void *GetClearedMemoryDebug( unsigned long size, char *label, char *file, int line )
+void *GetClearedMemoryDebug( size_t size, char *label, char *file, int line )
 #else
-void *GetClearedMemory( unsigned long size )
+void *GetClearedMemory( size_t size )
 #endif //MEMDEBUG
 {
 	void *ptr;
@@ -406,15 +406,15 @@ return ptr;
 // Changes Globals:		-
 //===========================================================================
 #ifdef MEMDEBUG
-void *GetHunkMemoryDebug( unsigned long size, char *label, char *file, int line )
+void *GetHunkMemoryDebug( size_t size, char *label, char *file, int line )
 #else
-void *GetHunkMemory( unsigned long size )
+void *GetHunkMemory( size_t size )
 #endif //MEMDEBUG
 {
 	void *ptr;
 	unsigned long int *memid;
 
-	ptr = botimport.HunkAlloc( size + sizeof( unsigned long int ) );
+	ptr = botimport.HunkAlloc( (int)( size + sizeof( unsigned long int ) ) );
 	if ( !ptr ) {
 		return NULL;
 	}
@@ -429,9 +429,9 @@ void *GetHunkMemory( unsigned long size )
 // Changes Globals:		-
 //===========================================================================
 #ifdef MEMDEBUG
-void *GetClearedHunkMemoryDebug( unsigned long size, char *label, char *file, int line )
+void *GetClearedHunkMemoryDebug( size_t size, char *label, char *file, int line )
 #else
-void *GetClearedHunkMemory( unsigned long size )
+void *GetClearedHunkMemory( size_t size )
 #endif //MEMDEBUG
 {
 	void *ptr;

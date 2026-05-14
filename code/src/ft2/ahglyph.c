@@ -934,7 +934,7 @@ void  ah_outline_compute_edges( AH_Outline*  outline ) {
 			}
 		}
 
-		*p_num_edges = edge_limit - edges;
+		*p_num_edges = (FT_Int)( edge_limit - edges );
 
 
 		/*********************************************************************/
@@ -1208,7 +1208,7 @@ void  ah_outline_scale_blue_edges( AH_Outline*       outline,
 	FT_Int delta;
 
 
-	delta = globals->scaled.blue_refs - globals->design.blue_refs;
+	delta = (FT_Int)( globals->scaled.blue_refs - globals->design.blue_refs );
 
 	for ( ; edge < limit; edge++ )
 	{

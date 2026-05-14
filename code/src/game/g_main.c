@@ -433,7 +433,7 @@ This must be the very first function compiled into the .q3vm file
 #if defined( __MACOS__ )
 #pragma export on
 #endif
-int vmMain( int command, int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6 ) {
+vmArg_t vmMain( int command, vmArg_t arg0, vmArg_t arg1, vmArg_t arg2, vmArg_t arg3, vmArg_t arg4, vmArg_t arg5, vmArg_t arg6 ) {
 #if defined( __MACOS__ )
 #pragma export off
 #endif
@@ -445,7 +445,7 @@ int vmMain( int command, int arg0, int arg1, int arg2, int arg3, int arg4, int a
 		G_ShutdownGame( arg0 );
 		return 0;
 	case GAME_CLIENT_CONNECT:
-		return (int)ClientConnect( arg0, arg1, arg2 );
+		return (vmArg_t)ClientConnect( arg0, arg1, arg2 );
 	case GAME_CLIENT_THINK:
 		ClientThink( arg0 );
 		return 0;
@@ -590,7 +590,7 @@ void G_CheckForCursorHints( gentity_t *ent ) {
 	float dist;
 	gentity_t   *checkEnt, *traceEnt = 0;
 	playerState_t *ps;
-	int hintType, hintDist, hintVal, oldHintType;
+	int hintType, hintDist, hintVal;
 	qboolean zooming, indirectHit;      // indirectHit means the checkent was not the ent hit by the trace (checkEnt!=traceEnt)
 	int trace_contents;                 // DHM - Nerve
 

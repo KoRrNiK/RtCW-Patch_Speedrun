@@ -613,7 +613,7 @@ Bool  End_Profile( RAS_ARG ) {
 	PProfile oldProfile;
 
 
-	h = ras.top - ras.cProfile->offset;
+	h = (Long)( ras.top - ras.cProfile->offset );
 
 	if ( h < 0 ) {
 		FT_ERROR( ( "End_Profile: negative height encountered!\n" ) );
@@ -897,7 +897,7 @@ Bool  Line_Up( RAS_ARGS Long x1,
 	} else
 	{
 		e1 = TRUNC( y1 );
-		f1 = FRAC( y1 );
+		f1 = (Short)FRAC( y1 );
 	}
 
 	if ( y2 > maxy ) {
@@ -1077,7 +1077,7 @@ Bool  Bezier_Up( RAS_ARGS Int degree,
 	} else
 	{
 		e  = CEILING( y1 );
-		f1 = FRAC( y1 );
+		f1 = (Short)FRAC( y1 );
 		e0 = e;
 
 		if ( f1 == 0 ) {
@@ -2632,7 +2632,7 @@ Bool  Draw_Sweep( RAS_ARG ) {
 		Q = P->link;
 
 		bottom = (Short)P->start;
-		top    = (Short)P->start + P->height - 1;
+		top    = (Short)( (Short)P->start + P->height - 1 );
 
 		if ( min_Y > bottom ) {
 			min_Y = bottom;
@@ -2663,7 +2663,7 @@ Bool  Draw_Sweep( RAS_ARG ) {
 
 	while ( P )
 	{
-		P->countL = P->start - min_Y;
+		P->countL = (UShort)( P->start - min_Y );
 		P = P->link;
 	}
 

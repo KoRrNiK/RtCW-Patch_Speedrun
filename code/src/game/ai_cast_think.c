@@ -1105,6 +1105,7 @@ void AICast_PredictMovement( cast_state_t *cs, int numframes, float frametime, a
 	trace_t tr;
 	vec3_t end, startHitVec, thisHitVec, lastOrg, projPoint;
 	qboolean checkReachMarker;
+	qboolean pmValid;
 	gentity_t   *ent = &g_entities[cs->entityNum];
 	bot_input_t bi;
 
@@ -1119,8 +1120,12 @@ void AICast_PredictMovement( cast_state_t *cs, int numframes, float frametime, a
 	}
 
 	ps.eFlags |= EF_DUMMY_PMOVE;
+	memset( &pm, 0, sizeof( pm ) );
+	pm.ps = &ps;
+	pm.tracemask = g_entities[cs->entityNum].clipmask;
 
 	move->stopevent = PREDICTSTOP_NONE;
+	pmValid = qfalse;
 
 	if ( checkHitEnt >= 0 && !Q_stricmp( g_entities[checkHitEnt].classname, "ai_marker" ) ) {
 		checkReachMarker = qtrue;
@@ -1155,6 +1160,7 @@ void AICast_PredictMovement( cast_state_t *cs, int numframes, float frametime, a
 
 		// perform a pmove
 		Pmove( &pm );
+		pmValid = qtrue;
 
 		if ( checkHitEnt >= 0 ) {
 			// if we've hit the checkent, abort
@@ -1207,6 +1213,14 @@ void AICast_PredictMovement( cast_state_t *cs, int numframes, float frametime, a
 	}
 
 done:
+	if ( !pmValid ) {
+		VectorCopy( ps.origin, move->endpos );
+		move->frames = 0;
+		VectorCopy( ps.velocity, move->velocity );
+		move->numtouch = 0;
+		move->groundEntityNum = ps.groundEntityNum;
+		return;
+	}
 
 	// hack, if we are above ground, chances are it's because we only did one frame, and gravity isn't applied until
 	// after the frame, so try and drop us down some
@@ -1244,7 +1258,7 @@ qboolean AICast_GetAvoid( cast_state_t *cs, bot_goal_t *goal, vec3_t outpos, qbo
 	usercmd_t ucmd;
 	qboolean enemyVisible;
 	float angleDiff;
-	int starttraveltime = 0, besttraveltime, traveltime;         // TTimo: init
+	int starttraveltime = 0, besttraveltime, traveltime = 0;         // TTimo: init
 	int invert;
 	float inc;
 	qboolean averting = qfalse;

@@ -31,12 +31,12 @@ If you have questions concerning this license or the applicable additional terms
 // this file is only included when building a dll
 // syscalls.asm is included instead when building a qvm
 
-static int ( QDECL * syscall )( int arg, ... ) = ( int ( QDECL * )( int, ... ) ) - 1;
+static vmArg_t ( QDECL * syscall )( vmArg_t arg, ... ) = ( vmArg_t ( QDECL * )( vmArg_t, ... ) ) - 1;
 
 #if defined( __MACOS__ )
 #pragma export on
 #endif
-void dllEntry( int ( QDECL *syscallptr )( int arg,... ) ) {
+void dllEntry( vmArg_t ( QDECL *syscallptr )( vmArg_t arg,... ) ) {
 #if defined( __MACOS__ )
 #pragma export off
 #endif

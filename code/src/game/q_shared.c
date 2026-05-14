@@ -88,7 +88,7 @@ COM_StripFilename
 */
 void COM_StripFilename( char *in, char *out ) {
 	char *end;
-	Q_strncpyz( out, in, strlen( in ) );
+	Q_strncpyz( out, in, (int)strlen( in ) + 1 );
 	end = COM_SkipPath( out );
 	*end = 0;
 }
@@ -977,7 +977,7 @@ char *Q_strupr( char *s1 ) {
 void Q_strcat( char *dest, int size, const char *src ) {
 	int l1;
 
-	l1 = strlen( dest );
+	l1 = (int)strlen( dest );
 	if ( l1 >= size ) {
 		Com_Error( ERR_FATAL, "Q_strcat: already overflowed" );
 	}
@@ -1048,7 +1048,7 @@ void QDECL Com_sprintf( char *dest, int size, const char *fmt, ... ) {
 }
 
 // Ridah, ripped from l_bsp.c
-int Q_strncasecmp( char *s1, char *s2, int n ) {
+int Q_strncasecmp( const char *s1, const char *s2, int n ) {
 	int c1, c2;
 
 	do
@@ -1076,7 +1076,7 @@ int Q_strncasecmp( char *s1, char *s2, int n ) {
 	return 0;       // strings are equal
 }
 
-int Q_strcasecmp( char *s1, char *s2 ) {
+int Q_strcasecmp( const char *s1, const char *s2 ) {
 	return Q_strncasecmp( s1, s2, 99999 );
 }
 // done.
@@ -1108,7 +1108,7 @@ char    * QDECL va( char *format, ... ) {
 	Q_vsnprintf( temp_buffer, sizeof(temp_buffer), format, argptr );	// Knightmare- buffer overflow fix
 	va_end( argptr );
 
-	if ( ( len = strlen( temp_buffer ) ) >= MAX_VA_STRING ) {
+	if ( ( len = (int)strlen( temp_buffer ) ) >= MAX_VA_STRING ) {
 		Com_Error( ERR_DROP, "Attempted to overrun string in call to va()\n" );
 	}
 

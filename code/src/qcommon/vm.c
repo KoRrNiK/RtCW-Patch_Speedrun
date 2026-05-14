@@ -58,7 +58,7 @@ void VM_VmProfile_f( void );
 // converts a VM pointer to a C pointer and
 // checks to make sure that the range is acceptable
 void    *VM_VM2C( vmptr_t p, int length ) {
-	return (void *)p;
+	return (void *)(intptr_t)p;
 }
 
 void VM_Debug( int level ) {
@@ -170,7 +170,7 @@ const char *VM_SymbolForCompiledPointer( vm_t *vm, void *code ) {
 
 	// find which original instruction it is after
 	for ( i = 0 ; i < vm->codeLength ; i++ ) {
-		if ( (void *)vm->instructionPointers[i] > code ) {
+		if ( (void *)(intptr_t)vm->instructionPointers[i] > code ) {
 			break;
 		}
 	}
@@ -271,7 +271,7 @@ void VM_LoadSymbols( vm_t *vm ) {
 			Com_Printf( "WARNING: incomplete line at end of file\n" );
 			break;
 		}
-		chars = strlen( token );
+		chars = (int)strlen( token );
 		sym = Hunk_Alloc( sizeof( *sym ) + chars, h_high );
 		*prev = sym;
 		prev = &sym->next;
@@ -331,10 +331,10 @@ Dlls will call this directly
 
 ============
 */
-int QDECL VM_DllSyscall( int arg, ... ) {
-#if ( ( defined __linux__ ) && ( defined __powerpc__ ) )
+vmArg_t QDECL VM_DllSyscall( vmArg_t arg, ... ) {
+#if ( ( defined __linux__ ) && ( defined __powerpc__ ) ) || defined( _WIN64 )
 	// rcg010206 - see commentary above
-	int args[16];
+	vmArg_t args[16];
 	int i;
 	va_list ap;
 
@@ -342,7 +342,7 @@ int QDECL VM_DllSyscall( int arg, ... ) {
 
 	va_start( ap, arg );
 	for ( i = 1; i < sizeof( args ) / sizeof( args[i] ); i++ )
-		args[i] = va_arg( ap, int );
+		args[i] = va_arg( ap, vmArg_t );
 	va_end( ap );
 
 	return currentVM->systemCall( args );
@@ -369,7 +369,7 @@ vm_t *VM_Restart( vm_t *vm ) {
 	// DLL's can't be restarted in place
 	if ( vm->dllHandle ) {
 		char name[MAX_QPATH];
-		int ( *systemCall )( int *parms );
+		vmArg_t ( *systemCall )( vmArg_t *parms );
 
 		systemCall = vm->systemCall;
 		Q_strncpyz( name, vm->name, sizeof( name ) );
@@ -439,7 +439,7 @@ it will attempt to load as a system dll
 
 #define STACK_SIZE  0x20000
 
-vm_t *VM_Create( const char *module, int ( *systemCalls )(int *),
+vm_t *VM_Create( const char *module, vmArg_t ( *systemCalls )( vmArg_t * ),
 				 vmInterpret_t interpret ) {
 	vm_t        *vm;
 	vmHeader_t  *header;
@@ -627,7 +627,7 @@ void VM_Clear( void ) {
 	lastVM = NULL;
 }
 
-void *VM_ArgPtr( int intValue ) {
+void *VM_ArgPtr( vmArg_t intValue ) {
 	if ( !intValue ) {
 		return NULL;
 	}
@@ -637,13 +637,13 @@ void *VM_ArgPtr( int intValue ) {
 	}
 
 	if ( currentVM->entryPoint ) {
-		return ( void * )( currentVM->dataBase + intValue );
+		return ( void * )intValue;
 	} else {
-		return ( void * )( currentVM->dataBase + ( intValue & currentVM->dataMask ) );
+		return ( void * )( currentVM->dataBase + ( (int)intValue & currentVM->dataMask ) );
 	}
 }
 
-void *VM_ExplicitArgPtr( vm_t *vm, int intValue ) {
+void *VM_ExplicitArgPtr( vm_t *vm, vmArg_t intValue ) {
 	if ( !intValue ) {
 		return NULL;
 	}
@@ -655,10 +655,23 @@ void *VM_ExplicitArgPtr( vm_t *vm, int intValue ) {
 
 	//
 	if ( vm->entryPoint ) {
-		return ( void * )( vm->dataBase + intValue );
+		return ( void * )intValue;
 	} else {
-		return ( void * )( vm->dataBase + ( intValue & vm->dataMask ) );
+		return ( void * )( vm->dataBase + ( (int)intValue & vm->dataMask ) );
 	}
+}
+
+vmArg_t VM_CallSystem( vm_t *vm, int *intArgs ) {
+	vmArg_t args[16];
+	int i;
+
+	if ( !vm || !intArgs ) {
+		return 0;
+	}
+	for ( i = 0; i < (int)( sizeof( args ) / sizeof( args[0] ) ); i++ ) {
+		args[i] = intArgs[i];
+	}
+	return vm->systemCall( args );
 }
 
 
@@ -688,13 +701,13 @@ locals from sp
 #define MAX_STACK   256
 #define STACK_MASK  ( MAX_STACK - 1 )
 
-int QDECL VM_Call( vm_t *vm, int callnum, ... ) {
+vmArg_t QDECL VM_Call( vm_t *vm, int callnum, ... ) {
 	vm_t    *oldVM;
-	int r;
+	vmArg_t r;
 	//rcg010207 see dissertation at top of VM_DllSyscall() in this file.
-#if ( ( defined __linux__ ) && ( defined __powerpc__ ) )
+#if ( ( defined __linux__ ) && ( defined __powerpc__ ) ) || defined( _WIN64 )
 	int i;
-	int args[16];
+	vmArg_t args[16];
 	va_list ap;
 #endif
 
@@ -714,10 +727,10 @@ int QDECL VM_Call( vm_t *vm, int callnum, ... ) {
 	// if we have a dll loaded, call it directly
 	if ( vm->entryPoint ) {
 		//rcg010207 -  see dissertation at top of VM_DllSyscall() in this file.
-#if ( ( defined __linux__ ) && ( defined __powerpc__ ) )
+#if ( ( defined __linux__ ) && ( defined __powerpc__ ) ) || defined( _WIN64 )
 		va_start( ap, callnum );
 		for ( i = 0; i < sizeof( args ) / sizeof( args[i] ); i++ )
-			args[i] = va_arg( ap, int );
+			args[i] = va_arg( ap, vmArg_t );
 		va_end( ap );
 
 		r = vm->entryPoint( callnum,  args[0],  args[1],  args[2], args[3],
@@ -852,11 +865,11 @@ void VM_LogSyscalls( int *args ) {
 		f = fopen( "syscalls.log", "w" );
 	}
 	callnum++;
-	fprintf( f, "%i: %i (%i) = %i %i %i %i\n", callnum, args - (int *)currentVM->dataBase,
+	fprintf( f, "%i: %td (%i) = %i %i %i %i\n", callnum, args - (int *)currentVM->dataBase,
 			 args[0], args[1], args[2], args[3], args[4] );
 }
 
-#ifdef __MACOS__
+#if defined( __MACOS__ ) || defined( _WIN64 )
 #define DLL_ONLY    //DAJ
 #endif
 #ifdef DLL_ONLY // bk010215 - for DLL_ONLY dedicated servers/builds w/o VM

@@ -481,7 +481,7 @@ int StringContains( char *str1, char *str2, int casesensitive ) {
 		return -1;
 	}
 
-	len = strlen( str1 ) - strlen( str2 );
+	len = (int)strlen( str1 ) - (int)strlen( str2 );
 	index = 0;
 	for ( i = 0; i <= len; i++, str1++, index++ )
 	{
@@ -514,7 +514,7 @@ int StringContains( char *str1, char *str2, int casesensitive ) {
 char *StringContainsWord( char *str1, char *str2, int casesensitive ) {
 	int len, i, j;
 
-	len = strlen( str1 ) - strlen( str2 );
+	len = (int)strlen( str1 ) - (int)strlen( str2 );
 	for ( i = 0; i <= len; i++, str1++ )
 	{
 		//if not at the start of the string
@@ -704,7 +704,7 @@ bot_synonymlist_t *BotLoadSynonyms( char *filename ) {
 							FreeSource( source );
 							return NULL;
 						} //end if
-						size += sizeof( bot_synonym_t ) + strlen( token.string ) + 1;
+						size += (int)( sizeof( bot_synonym_t ) + strlen( token.string ) + 1 );
 						if ( pass ) {
 							synonym = (bot_synonym_t *) ptr;
 							ptr += sizeof( bot_synonym_t );
@@ -1017,7 +1017,7 @@ bot_randomlist_t *BotLoadRandomStrings( char *filename ) {
 				FreeSource( source );
 				return NULL;
 			} //end if
-			size += sizeof( bot_randomlist_t ) + strlen( token.string ) + 1;
+			size += (int)( sizeof( bot_randomlist_t ) + strlen( token.string ) + 1 );
 			if ( pass ) {
 				random = (bot_randomlist_t *) ptr;
 				ptr += sizeof( bot_randomlist_t );
@@ -1043,7 +1043,7 @@ bot_randomlist_t *BotLoadRandomStrings( char *filename ) {
 					FreeSource( source );
 					return NULL;
 				} //end if
-				size += sizeof( bot_randomstring_t ) + strlen( chatmessagestring ) + 1;
+				size += (int)( sizeof( bot_randomstring_t ) + strlen( chatmessagestring ) + 1 );
 				if ( pass ) {
 					randomstring = (bot_randomstring_t *) ptr;
 					ptr += sizeof( bot_randomstring_t );
@@ -1433,7 +1433,7 @@ int StringsMatch( bot_matchpiece_t *pieces, bot_match_t *match ) {
 	if ( !mp && ( lastvariable >= 0 || !strlen( strptr ) ) ) {
 		//if the last piece was a variable string
 		if ( lastvariable >= 0 ) {
-			match->variables[lastvariable].length = strlen( match->variables[lastvariable].ptr );
+			match->variables[lastvariable].length = (int)strlen( match->variables[lastvariable].ptr );
 		} //end if
 		return qtrue;
 	} //end if
@@ -2027,7 +2027,7 @@ bot_chat_t *BotLoadInitialChat( char *chatfile, char *chatname ) {
 								//the number of chat messages increased
 								chattype->numchatmessages++;
 							} //end if
-							size += sizeof( bot_chatmessage_t ) + strlen( chatmessagestring ) + 1;
+							size += (int)( sizeof( bot_chatmessage_t ) + strlen( chatmessagestring ) + 1 );
 						} //end if
 					} //end while
 				} //end if
@@ -2212,7 +2212,7 @@ int BotExpandChatMessage( char *outmessage, char *message, unsigned long mcontex
 						return qfalse;
 					}     //end if
 					strcpy( &outputbuf[len], temp );
-					len += strlen( temp );
+					len += (int)strlen( temp );
 				}     //end if
 				break;
 			}     //end case
@@ -2239,7 +2239,7 @@ int BotExpandChatMessage( char *outmessage, char *message, unsigned long mcontex
 					return qfalse;
 				}     //end if
 				strcpy( &outputbuf[len], ptr );
-				len += strlen( ptr );
+				len += (int)strlen( ptr );
 				expansion = qtrue;
 				break;
 			}     //end case
@@ -2408,35 +2408,35 @@ void BotInitialChat( int chatstate, char *type, int mcontext, char *var0, char *
 	memset( variables, 0, sizeof( variables ) );
 	if ( var0 ) {
 		variables[0].ptr = var0;
-		variables[0].length = strlen( var0 );
+		variables[0].length = (int)strlen( var0 );
 	}
 	if ( var1 ) {
 		variables[1].ptr = var1;
-		variables[1].length = strlen( var1 );
+		variables[1].length = (int)strlen( var1 );
 	}
 	if ( var2 ) {
 		variables[2].ptr = var2;
-		variables[2].length = strlen( var2 );
+		variables[2].length = (int)strlen( var2 );
 	}
 	if ( var3 ) {
 		variables[3].ptr = var3;
-		variables[3].length = strlen( var3 );
+		variables[3].length = (int)strlen( var3 );
 	}
 	if ( var4 ) {
 		variables[4].ptr = var4;
-		variables[4].length = strlen( var4 );
+		variables[4].length = (int)strlen( var4 );
 	}
 	if ( var5 ) {
 		variables[5].ptr = var5;
-		variables[5].length = strlen( var5 );
+		variables[5].length = (int)strlen( var5 );
 	}
 	if ( var6 ) {
 		variables[6].ptr = var6;
-		variables[6].length = strlen( var6 );
+		variables[6].length = (int)strlen( var6 );
 	}
 	if ( var7 ) {
 		variables[7].ptr = var7;
-		variables[7].length = strlen( var7 );
+		variables[7].length = (int)strlen( var7 );
 	}
 	//
 	BotConstructChatMessage( cs, message, mcontext, variables, 0, qfalse );
@@ -2590,35 +2590,35 @@ int BotReplyChat( int chatstate, char *message, int mcontext, int vcontext, char
 	if ( bestchatmessage ) {
 		if ( var0 ) {
 			bestmatch.variables[0].ptr = var0;
-			bestmatch.variables[0].length = strlen( var0 );
+			bestmatch.variables[0].length = (int)strlen( var0 );
 		}
 		if ( var1 ) {
 			bestmatch.variables[1].ptr = var1;
-			bestmatch.variables[1].length = strlen( var1 );
+			bestmatch.variables[1].length = (int)strlen( var1 );
 		}
 		if ( var2 ) {
 			bestmatch.variables[2].ptr = var2;
-			bestmatch.variables[2].length = strlen( var2 );
+			bestmatch.variables[2].length = (int)strlen( var2 );
 		}
 		if ( var3 ) {
 			bestmatch.variables[3].ptr = var3;
-			bestmatch.variables[3].length = strlen( var3 );
+			bestmatch.variables[3].length = (int)strlen( var3 );
 		}
 		if ( var4 ) {
 			bestmatch.variables[4].ptr = var4;
-			bestmatch.variables[4].length = strlen( var4 );
+			bestmatch.variables[4].length = (int)strlen( var4 );
 		}
 		if ( var5 ) {
 			bestmatch.variables[5].ptr = var5;
-			bestmatch.variables[5].length = strlen( var5 );
+			bestmatch.variables[5].length = (int)strlen( var5 );
 		}
 		if ( var6 ) {
 			bestmatch.variables[6].ptr = var6;
-			bestmatch.variables[6].length = strlen( var6 );
+			bestmatch.variables[6].length = (int)strlen( var6 );
 		}
 		if ( var7 ) {
 			bestmatch.variables[7].ptr = var7;
-			bestmatch.variables[7].length = strlen( var7 );
+			bestmatch.variables[7].length = (int)strlen( var7 );
 		}
 		if ( LibVarGetValue( "bot_testrchat" ) ) {
 			for ( m = bestrchat->firstchatmessage; m; m = m->next )
@@ -2650,7 +2650,7 @@ int BotChatLength( int chatstate ) {
 	if ( !cs ) {
 		return 0;
 	}
-	return strlen( cs->chatmessage );
+	return (int)strlen( cs->chatmessage );
 } //end of the function BotChatLength
 //===========================================================================
 //

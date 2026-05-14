@@ -38,6 +38,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #define BOTLIB_API_VERSION      2
 
+#include <stddef.h>
+
 struct aas_clientmove_s;
 struct aas_entityinfo_s;
 struct bot_consolemessage_s;
@@ -205,7 +207,7 @@ typedef struct botlib_import_s
 	//send a bot client command
 	void ( *BotClientCommand )( int client, char *command );
 	//memory allocation
-	void        *( *GetMemory )( int size );
+	void        *( *GetMemory )( size_t size );
 	void ( *FreeMemory )( void *ptr );
 	void        *( *HunkAlloc )( int size );
 	//file system access

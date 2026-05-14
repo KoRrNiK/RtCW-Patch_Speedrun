@@ -948,6 +948,16 @@ typedef struct routecacheheader_s
 #define RCID                        ( ( 'C' << 24 ) + ( 'R' << 16 ) + ( 'E' << 8 ) + 'M' )
 #define RCVERSION                   15
 
+static void AAS_RouteCacheFilename( char *filename, int filenameSize ) {
+#ifdef _WIN64
+	// Route caches store raw aas_routingcache_t blocks, so the file layout is
+	// pointer-size dependent. Keep 64-bit caches separate from the 32-bit data.
+	Com_sprintf( filename, filenameSize, "maps/%s_x64.rcd", ( *aasworld ).mapname );
+#else
+	Com_sprintf( filename, filenameSize, "maps/%s.rcd", ( *aasworld ).mapname );
+#endif
+}
+
 void AAS_DecompressVis( byte *in, int numareas, byte *decompressed );
 int AAS_CompressVis( byte *vis, int numareas, byte *dest );
 
@@ -958,6 +968,12 @@ void AAS_WriteRouteCache( void ) {
 	char filename[MAX_QPATH];
 	routecacheheader_t routecacheheader;
 	byte *buf;
+
+#ifdef _WIN64
+	// The legacy route-cache format serializes raw pointer-sized structs.
+	// Rebuild routing in memory on 64-bit until the cache has a portable format.
+	return;
+#endif
 
 	buf = (byte *) GetClearedMemory( ( *aasworld ).numareas * 2 * sizeof( byte ) );   // in case it ends up bigger than the decompressedvis, which is rare but possible
 
@@ -995,7 +1011,7 @@ void AAS_WriteRouteCache( void ) {
 		} //end for
 	}
 	  // open the file for writing
-	Com_sprintf( filename, MAX_QPATH, "maps/%s.rcd", ( *aasworld ).mapname );
+	AAS_RouteCacheFilename( filename, MAX_QPATH );
 	botimport.FS_FOpenFile( filename, &fp, FS_WRITE );
 	if ( !fp ) {
 		AAS_Error( "Unable to open file: %s\n", filename );
@@ -1115,7 +1131,13 @@ int AAS_ReadRouteCache( void ) {
 	routecacheheader_t routecacheheader;
 	aas_routingcache_t *cache;
 
-	Com_sprintf( filename, MAX_QPATH, "maps/%s.rcd", ( *aasworld ).mapname );
+#ifdef _WIN64
+	// The legacy route-cache format serializes raw pointer-sized structs.
+	// Rebuild routing in memory on 64-bit until the cache has a portable format.
+	return qfalse;
+#endif
+
+	AAS_RouteCacheFilename( filename, MAX_QPATH );
 	botimport.FS_FOpenFile( filename, &fp, FS_READ );
 	if ( !fp ) {
 		return qfalse;
@@ -2112,7 +2134,7 @@ void AAS_DecompressVis( byte *in, int numareas, byte *decompressed ) {
 
 	//row = (numareas+7)>>3;
 	out = decompressed;
-	end = ( byte * )( (int)decompressed + numareas );
+	end = decompressed + numareas;
 
 	do
 	{

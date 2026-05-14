@@ -54,8 +54,8 @@ If you have questions concerning this license or the applicable additional terms
 //#define DEBUG_AI_WEAP
 
 //structure field offsets
-#define WEAPON_OFS( x ) (int)&( ( (weaponinfo_t *)0 )->x )
-#define PROJECTILE_OFS( x ) (int)&( ( (projectileinfo_t *)0 )->x )
+#define WEAPON_OFS( x ) (int)offsetof( weaponinfo_t, x )
+#define PROJECTILE_OFS( x ) (int)offsetof( projectileinfo_t, x )
 
 //weapon definition
 fielddef_t weaponinfo_fields[] =

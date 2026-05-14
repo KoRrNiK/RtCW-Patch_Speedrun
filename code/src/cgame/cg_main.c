@@ -58,7 +58,7 @@ This must be the very first function compiled into the .q3vm file
 #if defined( __MACOS__ ) // TTimo: guarding
 #pragma export on
 #endif
-int vmMain( int command, int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7, int arg8, int arg9, int arg10, int arg11  ) {
+vmArg_t vmMain( int command, vmArg_t arg0, vmArg_t arg1, vmArg_t arg2, vmArg_t arg3, vmArg_t arg4, vmArg_t arg5, vmArg_t arg6, vmArg_t arg7, vmArg_t arg8, vmArg_t arg9, vmArg_t arg10, vmArg_t arg11  ) {
 #if defined( __MACOS__ )
 #pragma export off
 #endif

@@ -121,6 +121,8 @@ If you have questions concerning this license or the applicable additional terms
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <time.h>
 #include <ctype.h>
 #include <limits.h>
@@ -156,13 +158,17 @@ If you have questions concerning this license or the applicable additional terms
 
 // buildstring will be incorporated into the version string
 #ifdef NDEBUG
-#ifdef _M_IX86
+#ifdef _M_X64
+#define CPUSTRING   "win-x64"
+#elif defined _M_IX86
 #define CPUSTRING   "win-x86"
 #elif defined _M_ALPHA
 #define CPUSTRING   "win-AXP"
 #endif
 #else
-#ifdef _M_IX86
+#ifdef _M_X64
+#define CPUSTRING   "win-x64-debug"
+#elif defined _M_IX86
 #define CPUSTRING   "win-x86-debug"
 #elif defined _M_ALPHA
 #define CPUSTRING   "win-AXP-debug"
@@ -246,6 +252,12 @@ typedef unsigned char byte;
 typedef enum {qfalse, qtrue}    qboolean;
 #if defined( __MACOS__ )
 #define qboolean int    //DAJ
+#endif
+
+#ifdef Q3_VM
+typedef int vmArg_t;
+#else
+typedef intptr_t vmArg_t;
 #endif
 
 typedef int qhandle_t;
@@ -750,8 +762,8 @@ int Q_PrintStrlen( const char *string );
 // removes color sequences from string
 char *Q_CleanStr( char *string );
 // Ridah
-int Q_strncasecmp( char *s1, char *s2, int n );
-int Q_strcasecmp( char *s1, char *s2 );
+int Q_strncasecmp( const char *s1, const char *s2, int n );
+int Q_strcasecmp( const char *s1, const char *s2 );
 // done.
 
 // TTimo
