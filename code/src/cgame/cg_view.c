@@ -1275,7 +1275,7 @@ static void CG_CalcVrect( void ) {
 	cg.refdef.x = ( cgs.glconfig.vidWidth - cg.refdef.width ) / 2;
 	cg.refdef.y = ( cgs.glconfig.vidHeight - cg.refdef.height ) / 2;
 
-	if ( cg_blackbars.integer && !cg.zoomedScope && !cg.zoomedBinoc && !( cg.snap && ( cg.snap->ps.eFlags & EF_ZOOMING ) ) ) {
+	if ( cg_blackbars.integer ) {
 		int left = cg_blackbarLeft.integer;
 		int right = cg_blackbarRight.integer;
 		int total;

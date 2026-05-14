@@ -36,7 +36,6 @@ static qboolean CG_GetBlackbarSafeRange( float *safeLeft, float *safeRight ) {
 	int left, right, total, maxTotal;
 
 	if ( !cg_blackbars.integer ) return qfalse;
-	if ( cg.zoomedScope || cg.zoomedBinoc || ( cg.snap && ( cg.snap->ps.eFlags & EF_ZOOMING ) ) ) return qfalse;
 	left = cg_blackbarLeft.integer;
 	right = cg_blackbarRight.integer;
 	if ( left < 0 ) left = 0;

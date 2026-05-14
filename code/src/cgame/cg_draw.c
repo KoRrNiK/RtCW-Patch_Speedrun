@@ -2156,16 +2156,22 @@ static void CG_DrawWeapReticle( void ) {
 	vec4_t	color = {0, 0, 0, 1};
 	vec4_t	snoopercolor = {0.7, .8, 0.7, 0};    // greenish
 	float	snooperBrightness;
-	float	x = 80, y, w = 240, h = 240;
-	float	sideWidth = 80; // Knightmare added, was 80
+	float	x = 80, y = 0, w = 240, h = 240;
+	float	sideWidth = 0;
+
+	if ( cgs.screenXScale > cgs.screenYScale ) {
+		float yscale = (float)cgs.glconfig.vidHeight / SCREEN_HEIGHT;
+		float screenWidth = CG_Get2DScreenWidth();
+		if ( yscale > 0.0f ) {
+			sideWidth = 0.5f * ( ( screenWidth / yscale ) - 480.0f );
+			if ( sideWidth < 0.0f ) {
+				sideWidth = 0.0f;
+			}
+		}
+	}
 
 	// Knightmare- made this anamorphic
 	CG_AdjustFrom640( &x, &y, &w, &h, ALIGN_SCOPE, qfalse );
-	// Knightmare added
-	if (cgs.screenXScale > cgs.screenYScale)
-	{
-		sideWidth = 0.5 * ((cgs.glconfig.vidWidth - (cgs.screenMinScale * 480)) / cgs.screenMinScale);
-	}
 
 	weap = cg.weaponSelect;
 
@@ -2177,8 +2183,10 @@ static void CG_DrawWeapReticle( void ) {
 	if ( weap == WP_SNIPERRIFLE )
 	{
 		// sides
-		CG_FillSideRect (0, 0, sideWidth, 480, color, ALIGN_LEFT);
-		CG_FillSideRect (640-sideWidth, 0, sideWidth, 480, color, ALIGN_RIGHT);
+		if ( sideWidth > 0.0f ) {
+			CG_FillSideRect (0, 0, sideWidth, 480, color, ALIGN_LEFT);
+			CG_FillSideRect (640-sideWidth, 0, sideWidth, 480, color, ALIGN_RIGHT);
+		}
 
 		// center
 		if ( cgs.media.reticleShaderSimpleQ ) {
@@ -2197,8 +2205,10 @@ static void CG_DrawWeapReticle( void ) {
 	else if ( weap == WP_SNOOPERSCOPE )
 	{
 		// sides
-		CG_FillSideRect (0, 0, sideWidth, 480, color, ALIGN_LEFT);
-		CG_FillSideRect (640-sideWidth, 0, sideWidth, 480, color, ALIGN_RIGHT);
+		if ( sideWidth > 0.0f ) {
+			CG_FillSideRect (0, 0, sideWidth, 480, color, ALIGN_LEFT);
+			CG_FillSideRect (640-sideWidth, 0, sideWidth, 480, color, ALIGN_RIGHT);
+		}
 
 		// center
 
@@ -2233,8 +2243,10 @@ static void CG_DrawWeapReticle( void ) {
 	else if ( weap == WP_FG42SCOPE )
 	{
 		// sides
-		CG_FillSideRect (0, 0, sideWidth, 480, color, ALIGN_LEFT);
-		CG_FillSideRect (640-sideWidth, 0, sideWidth, 480, color, ALIGN_RIGHT);
+		if ( sideWidth > 0.0f ) {
+			CG_FillSideRect (0, 0, sideWidth, 480, color, ALIGN_LEFT);
+			CG_FillSideRect (640-sideWidth, 0, sideWidth, 480, color, ALIGN_RIGHT);
+		}
 
 		// center
 		if ( cgs.media.reticleShaderSimpleQ ) {
@@ -2269,11 +2281,20 @@ static void CG_DrawBinocReticle( void ) {
 	// an alternative.  This gives nice sharp lines at the expense of a few extra polys
 	vec4_t color = {0, 0, 0, 1};
 	float	x = 0, y = 0, w = 320, h = 240;
+	float	sideWidth = 0;
 
 	// Knightmare added: sides
-	if (cgs.screenXScale > cgs.screenYScale)
-	{
-		float sideWidth = 1 + 0.5 * ((cgs.glconfig.vidWidth - (cgs.screenMinScale * 640)) / cgs.screenMinScale);
+	if ( cgs.screenXScale > cgs.screenYScale ) {
+		float yscale = (float)cgs.glconfig.vidHeight / SCREEN_HEIGHT;
+		float screenWidth = CG_Get2DScreenWidth();
+		if ( yscale > 0.0f ) {
+			sideWidth = 0.5f * ( ( screenWidth / yscale ) - 640.0f );
+			if ( sideWidth < 0.0f ) {
+				sideWidth = 0.0f;
+			}
+		}
+	}
+	if ( sideWidth > 0.0f ) {
 		CG_FillSideRect (0, 0, sideWidth, 480, color, ALIGN_LEFT);
 		CG_FillSideRect (640-sideWidth, 0, sideWidth, 480, color, ALIGN_RIGHT);
 	}
@@ -3935,7 +3956,6 @@ static void CG_DrawBlackSidebars( void ) {
 	int rightW;
 
 	if ( !cg_blackbars.integer ) return;
-	if ( cg.zoomedScope || cg.zoomedBinoc || ( cg.snap && ( cg.snap->ps.eFlags & EF_ZOOMING ) ) ) return;
 	if ( cg_blackbarLeft.integer <= 0 && cg_blackbarRight.integer <= 0 ) return;
 
 	trap_Cvar_Update( &cg_blackbarColor );
