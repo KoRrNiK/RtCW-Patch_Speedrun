@@ -319,27 +319,7 @@ static void Race_ApplyModeVisibility( void ) {
 }
 
 void Race_OnSettingsChanged( int writeBack ) {
-    if ( raceHost.mode < 0 || raceHost.mode > 2 ) raceHost.mode = 0;
-    if ( raceHost.mission < 1 ) raceHost.mission = 1;
-    if ( raceHost.mission > raceChapterCount ) raceHost.mission = raceChapterCount;
-    if ( raceHost.difficulty < 1 ) raceHost.difficulty = 1;
-    if ( raceHost.difficulty > 3 ) raceHost.difficulty = 3;
-    raceHost.percent100 = raceHost.percent100 ? 1 : 0;
-    raceHost.hl1Movement = raceHost.hl1Movement ? 1 : 0;
-    raceHost.autoJump = raceHost.autoJump ? 1 : 0;
-    raceHost.antiCheat = raceHost.antiCheat ? 1 : 0;
-    raceHost.autoReadyCheck = raceHost.autoReadyCheck ? 1 : 0;
-    raceHost.queueEnabled = raceHost.queueEnabled ? 1 : 0;
-    raceHost.privateLobby = raceHost.privateLobby ? 1 : 0;
-    if ( raceHost.pauseAlertMs < 0 ) raceHost.pauseAlertMs = 0;
-    if ( gUiCountdownSec < 1 ) gUiCountdownSec = 1;
-    if ( gUiCountdownSec > 30 ) gUiCountdownSec = 30;
-    raceHost.countdownMs = gUiCountdownSec * 1000;
-    Race_SanitizeToken( gUiHostName, raceHost.hostName, sizeof( raceHost.hostName ) );
-    Race_Copy( gUiHostName, sizeof( gUiHostName ), raceHost.hostName );
-    Race_SanitizeToken( gUiIlMap, raceHost.ilMap, sizeof( raceHost.ilMap ) );
-    Race_Copy( gUiIlMap, sizeof( gUiIlMap ), raceHost.ilMap );
-    Race_SanitizeOptionalToken( raceHost.password, raceHost.password, sizeof( raceHost.password ) );
+    Race_NormalizeSettings();
     if ( writeBack && Race_HostIsRunning() ) Race_BroadcastConfig();
 }
 
@@ -923,13 +903,92 @@ static void Race_DrawStatusDot( ImVec4 color ) {
     ImGui::Dummy( ImVec2( 24.0f, frameHeight ) );
 }
 
+static void Race_DrawTooltip( const char *text ) {
+    if ( !text || !text[0] ) return;
+    if ( !ImGui::IsItemHovered() ) return;
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos( ImGui::GetFontSize() * 28.0f );
+    ImGui::TextUnformatted( text );
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
+static void Race_DrawNoticeBanner( const char *text, raceLogKind_t kind ) {
+    ImVec4 color;
+    ImVec4 bg;
+    ImVec2 p0;
+    ImVec2 p1;
+    if ( !text || !text[0] ) return;
+    color = Race_LogColor( kind );
+    if ( gThemeBlend > 0.5f ) {
+        bg = Race_Rgba( 13, 16, 18, 246 );
+    } else {
+        bg = color;
+        bg.w = 0.10f;
+    }
+    ImGui::PushID( text );
+    ImGui::PushStyleColor( ImGuiCol_ChildBg, bg );
+    ImGui::BeginChild( "notice", ImVec2( 0.0f, 56.0f ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+    p0 = ImGui::GetWindowPos();
+    p1 = ImVec2( p0.x + 4.0f, p0.y + ImGui::GetWindowSize().y );
+    ImGui::GetWindowDrawList()->AddRectFilled( p0, p1, ImGui::ColorConvertFloat4ToU32( color ), 4.0f, ImDrawFlags_RoundCornersLeft );
+    ImGui::SetCursorPosX( ImGui::GetCursorPosX() + 6.0f );
+    ImGui::PushStyleColor( ImGuiCol_Text, color );
+    ImGui::TextWrapped( "%s", text );
+    ImGui::PopStyleColor();
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    Race_DrawTooltip( text );
+    ImGui::PopID();
+}
+
+static int Race_DrawPrimaryButton( const char *label, int enabled, float height ) {
+    int pressed;
+    ImVec4 accent = Race_AccentColor();
+    ImGui::BeginDisabled( !enabled );
+    ImGui::PushStyleColor( ImGuiCol_Button, accent );
+    ImGui::PushStyleColor( ImGuiCol_ButtonHovered, Race_ThemeColor( Race_Rgba( 0, 120, 212, 255 ), Race_Rgba( 120, 210, 255, 255 ) ) );
+    ImGui::PushStyleColor( ImGuiCol_ButtonActive, Race_ThemeColor( Race_Rgba( 0, 84, 148, 255 ), Race_Rgba( 54, 180, 230, 255 ) ) );
+    ImGui::PushStyleColor( ImGuiCol_Text, Race_Rgba( 255, 255, 255, 255 ) );
+    pressed = ImGui::Button( label, ImVec2( -1.0f, height ) );
+    ImGui::PopStyleColor( 4 );
+    ImGui::EndDisabled();
+    return pressed;
+}
+
+static void Race_DrawStatusTile( const char *id, const char *label, const char *value, ImVec4 color, const char *hint, float width ) {
+    ImDrawList *drawList;
+    ImVec2 p0;
+    ImVec2 p1;
+    ImGui::BeginChild( id, ImVec2( width, 70.0f ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+    drawList = ImGui::GetWindowDrawList();
+    p0 = ImGui::GetWindowPos();
+    p1 = ImVec2( p0.x + ImGui::GetWindowSize().x, p0.y + 3.0f );
+    drawList->AddRectFilled( p0, p1, ImGui::ColorConvertFloat4ToU32( color ), 6.0f, ImDrawFlags_RoundCornersTop );
+    ImGui::TextDisabled( "%s", label );
+    ImGui::PushStyleColor( ImGuiCol_Text, color );
+    ImGui::PushFont( gImguiFontBold ? gImguiFontBold : gImguiFontUi );
+    ImGui::TextWrapped( "%s", value && value[0] ? value : "-" );
+    ImGui::PopFont();
+    ImGui::PopStyleColor();
+    if ( hint && hint[0] ) ImGui::TextDisabled( "%s", hint );
+    ImGui::EndChild();
+    Race_DrawTooltip( hint );
+}
+
+#include "race_host_ui_safety.inl"
+
 static void Race_DrawSettingsPanel( float height ) {
     static const char *modeLabels[] = { "Full Game", "Chapter", "Individual Level" };
     int hostRunning = Race_HostIsRunning();
     int lobby = ( hostRunning && raceHost.state == RACE_STATE_LOBBY );
     int changed = 0;
+    char hostReason[256];
+    char raceReason[256];
+    int hostSettingsOk = Race_ValidateHostSettings( hostReason, sizeof( hostReason ) );
+    int raceSettingsOk = Race_ValidateRaceSettings( raceReason, sizeof( raceReason ) );
 
-    ImGui::BeginChild( "settings", ImVec2( 360.0f, height ), true );
+    ImGui::BeginChild( "settings", ImVec2( 430.0f, height ), true );
     if ( ImGui::BeginTabBar( "racehost_tabs", ImGuiTabBarFlags_FittingPolicyScroll ) ) {
         if ( ImGui::BeginTabItem( "Host" ) ) {
             gActiveTab = RACE_TAB_HOST;
@@ -960,18 +1019,19 @@ static void Race_DrawSettingsPanel( float height ) {
                 if ( ImGui::InputText( "##lobby_password", raceHost.password, sizeof( raceHost.password ), ImGuiInputTextFlags_Password ) ) changed = 1;
             }
 
+            ImGui::Spacing();
             if ( hostRunning ) {
-                if ( ImGui::Button( "Stop Host", ImVec2( -1.0f, 60.0f ) ) ) Race_StopHost();
+                if ( Race_DrawPrimaryButton( "Stop Host", 1, 58.0f ) ) Race_RequestStopHost();
             } else {
-                if ( ImGui::Button( "Start Host", ImVec2( -1.0f, 60.0f ) ) ) Race_StartHost();
+                if ( Race_DrawPrimaryButton( "Start Host", hostSettingsOk, 58.0f ) ) Race_StartHost();
             }
 
             if ( gHostError[0] ) {
-                ImGui::PushStyleColor( ImGuiCol_Text, Race_LogColor( RACE_LOG_ERROR ) );
-                ImGui::TextWrapped( "%s", gHostError );
-                ImGui::PopStyleColor();
+                Race_DrawNoticeBanner( gHostError, RACE_LOG_ERROR );
+            } else if ( !hostRunning && !hostSettingsOk ) {
+                Race_DrawNoticeBanner( hostReason, RACE_LOG_WARN );
             } else {
-                ImGui::TextDisabled( hostRunning ? "Lobby is online and discoverable." : "Lobby is offline until you start the host." );
+                Race_DrawNoticeBanner( hostRunning ? "Lobby is online and discoverable." : "Lobby is offline until you start the host.", RACE_LOG_INFO );
             }
 
             ImGui::EndTabItem();
@@ -1046,17 +1106,16 @@ static void Race_DrawSettingsPanel( float height ) {
             ImGui::EndDisabled();
 
             ImGui::Separator();
-            ImGui::BeginDisabled( !( lobby && Race_PlayerCount() > 0 ) );
-            if ( ImGui::Button( "Start Race", ImVec2( -1.0f, 60.0f ) ) ) {
+            if ( Race_DrawPrimaryButton( "Start Race", raceSettingsOk, 60.0f ) ) {
                 Race_OnSettingsChanged( 1 );
                 Race_StartRace();
             }
-            ImGui::EndDisabled();
+            if ( !raceSettingsOk ) Race_DrawNoticeBanner( raceReason, RACE_LOG_WARN );
             ImGui::BeginDisabled( !hostRunning || raceHost.state == RACE_STATE_LOBBY );
-            if ( ImGui::Button( "Stop Race", ImVec2( -1.0f, 52.0f ) ) ) Race_StopRace();
+            if ( ImGui::Button( "Stop Race", ImVec2( -1.0f, 52.0f ) ) ) Race_RequestStopRace();
             ImGui::EndDisabled();
             ImGui::BeginDisabled( !hostRunning || raceHost.state == RACE_STATE_RACING || raceHost.state == RACE_STATE_COUNTDOWN );
-            if ( ImGui::Button( "Reset Lobby", ImVec2( -1.0f, 52.0f ) ) ) Race_ResetLobby();
+            if ( ImGui::Button( "Reset Lobby", ImVec2( -1.0f, 52.0f ) ) ) Race_RequestResetLobby();
             ImGui::EndDisabled();
 
             ImGui::EndTabItem();
@@ -1094,6 +1153,9 @@ static void Race_DrawSettingsPanel( float height ) {
             ImGui::Separator();
             ImGui::TextDisabled( "Rules are broadcast to players while the lobby is online." );
             ImGui::TextDisabled( "Queue: %d waiting", Race_QueueCount() );
+            if ( raceHost.privateLobby && !raceHost.password[0] ) {
+                Race_DrawNoticeBanner( "Private lobby is enabled, but the password is empty.", RACE_LOG_WARN );
+            }
             ImGui::EndTabItem();
         }
         if ( ImGui::BeginTabItem( "Runs" ) ) {
@@ -1254,6 +1316,40 @@ static int Race_QueueEntryHasActivePlayer( const raceQueueEntry_t *q ) {
     return 0;
 }
 
+static raceLogKind_t Race_PlayerRiskText( const racePlayer_t *p, DWORD now, char *out, size_t outSize ) {
+    if ( !out || outSize == 0 ) return RACE_LOG_INFO;
+    if ( !p || !p->used ) {
+        Race_Copy( out, outSize, "-" );
+        return RACE_LOG_INFO;
+    }
+    if ( p->kicked ) {
+        Race_Copy( out, outSize, "kicked" );
+        return RACE_LOG_WARN;
+    }
+    if ( p->timedOut ) {
+        Race_Copy( out, outSize, "timeout" );
+        return RACE_LOG_ERROR;
+    }
+    if ( p->left ) {
+        Race_Copy( out, outSize, "left" );
+        return RACE_LOG_WARN;
+    }
+    if ( p->cheatFlags ) {
+        Race_Copy( out, outSize, "AC flag" );
+        return RACE_LOG_ERROR;
+    }
+    if ( p->lastHeardMs && (DWORD)( now - p->lastHeardMs ) > 10000 ) {
+        Race_Copy( out, outSize, "stale" );
+        return RACE_LOG_WARN;
+    }
+    if ( p->paused || p->inMenu ) {
+        Race_Copy( out, outSize, "pause" );
+        return RACE_LOG_WARN;
+    }
+    Race_Copy( out, outSize, "ok" );
+    return RACE_LOG_SUCCESS;
+}
+
 static void Race_DrawPlayersPanel( float height ) {
     int i;
     DWORD now = GetTickCount();
@@ -1272,7 +1368,7 @@ static void Race_DrawPlayersPanel( float height ) {
     ImGui::SameLine();
     if ( Race_HostIsRunning() ) ImGui::TextDisabled( "%d/%d connected, %d queued", Race_PlayerCount(), raceHost.maxPlayers, Race_QueueCount() );
     else ImGui::TextDisabled( "host offline" );
-    if ( ImGui::BeginTable( "players_table", 7,
+    if ( ImGui::BeginTable( "players_table", 8,
         ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY,
         ImVec2( 0.0f, tableHeight ) ) ) {
         ImGui::TableSetupColumn( "Slot", ImGuiTableColumnFlags_WidthFixed, 48.0f );
@@ -1282,6 +1378,7 @@ static void Race_DrawPlayersPanel( float height ) {
         ImGui::TableSetupColumn( "RGT", ImGuiTableColumnFlags_WidthFixed, 82.0f );
         ImGui::TableSetupColumn( "IGT", ImGuiTableColumnFlags_WidthFixed, 82.0f );
         ImGui::TableSetupColumn( "Ping", ImGuiTableColumnFlags_WidthFixed, 64.0f );
+        ImGui::TableSetupColumn( "Guard", ImGuiTableColumnFlags_WidthFixed, 72.0f );
         ImGui::TableHeadersRow();
         for ( i = 0; i < raceHost.maxPlayers; ++i ) {
             racePlayer_t *p = &raceHost.players[i];
@@ -1289,6 +1386,8 @@ static void Race_DrawPlayersPanel( float height ) {
             char timeText[24];
             char igtText[24];
             char pingText[24];
+            char riskText[32];
+            raceLogKind_t riskKind;
             if ( !p->used ) continue;
             if ( p->timeMs > 0 ) Race_FormatTime( p->timeMs, timeText, sizeof( timeText ) );
             else Race_Copy( timeText, sizeof( timeText ), "-" );
@@ -1296,6 +1395,7 @@ static void Race_DrawPlayersPanel( float height ) {
             else Race_Copy( igtText, sizeof( igtText ), "-" );
             snprintf( pingText, sizeof( pingText ), "%dms", gDisplayPingMs[i] );
             snprintf( slotText, sizeof( slotText ), "#%d", p->slot );
+            riskKind = Race_PlayerRiskText( p, now, riskText, sizeof( riskText ) );
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -1316,6 +1416,10 @@ static void Race_DrawPlayersPanel( float height ) {
             ImGui::TextUnformatted( igtText );
             ImGui::TableNextColumn();
             ImGui::TextUnformatted( pingText );
+            ImGui::TableNextColumn();
+            ImGui::PushStyleColor( ImGuiCol_Text, Race_LogColor( riskKind ) );
+            ImGui::TextUnformatted( riskText );
+            ImGui::PopStyleColor();
         }
         ImGui::EndTable();
     }
@@ -1365,6 +1469,8 @@ static float Race_PlayerProgressScore( const racePlayer_t *p ) {
     if ( !p ) return 0.0f;
     return (float)p->stageProgress * 100.0f + Race_PlayerProgressPercent( p );
 }
+
+#include "race_host_ui_inspector.inl"
 
 static void Race_ResetDeltaHistory( void ) {
     memset( gDeltaHistory, 0, sizeof( gDeltaHistory ) );
@@ -1607,6 +1713,7 @@ static void Race_DrawMainUi( void ) {
     float rightHeight;
     float mainHeight;
     float playersHeight;
+    float inspectorHeight;
     float progressHeight;
     float logHeight;
     const float chatHeight = 78.0f;
@@ -1667,22 +1774,19 @@ static void Race_DrawMainUi( void ) {
     ImGui::SameLine();
 
     ImGui::BeginChild( "workspace", ImVec2( 0.0f, mainHeight ), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
-    ImGui::BeginChild( "status_strip", ImVec2( 0.0f, 74.0f ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
-    ImGui::Columns( 4, "status_columns", false );
-    ImGui::TextDisabled( "State" );
-    ImGui::PushStyleColor( ImGuiCol_Text, Race_StateColor( raceHost.state ) );
-    ImGui::TextUnformatted( Race_StateName( raceHost.state ) );
-    ImGui::PopStyleColor();
-    ImGui::NextColumn();
-    ImGui::TextDisabled( "Timer" );
-    ImGui::TextUnformatted( timerText );
-    ImGui::NextColumn();
-    ImGui::TextDisabled( "Players" );
-    ImGui::TextUnformatted( playersText );
-    ImGui::NextColumn();
-    ImGui::TextDisabled( "Bind" );
-    ImGui::TextUnformatted( sessionText );
-    ImGui::Columns( 1 );
+    ImGui::BeginChild( "status_strip", ImVec2( 0.0f, 86.0f ), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+    {
+        float gap = ImGui::GetStyle().ItemSpacing.x;
+        float tileW = ( ImGui::GetContentRegionAvail().x - gap * 3.0f ) * 0.25f;
+        if ( tileW < 130.0f ) tileW = 130.0f;
+        Race_DrawStatusTile( "status_state", "State", Race_StateName( raceHost.state ), Race_StateColor( raceHost.state ), Race_HostIsRunning() ? "host online" : "host offline", tileW );
+        ImGui::SameLine();
+        Race_DrawStatusTile( "status_timer", "Timer", timerText, Race_AccentColor(), raceHost.state == RACE_STATE_LOADING ? readyText : "", tileW );
+        ImGui::SameLine();
+        Race_DrawStatusTile( "status_players", "Players", playersText, Race_ThemeColor( Race_Rgba( 0, 108, 190, 255 ), Race_Rgba( 110, 190, 255, 255 ) ), Race_QueueCount() > 0 ? "queue active" : "", tileW );
+        ImGui::SameLine();
+        Race_DrawStatusTile( "status_bind", "Bind", sessionText, Race_ThemeColor( Race_Rgba( 92, 45, 145, 255 ), Race_Rgba( 207, 176, 255, 255 ) ), targetText, tileW );
+    }
     ImGui::EndChild();
 
     rightHeight = ImGui::GetContentRegionAvail().y;
@@ -1691,17 +1795,30 @@ static void Race_DrawMainUi( void ) {
     } else if ( gActiveTab == RACE_TAB_RUNS ) {
         Race_DrawRunsPanel( rightHeight );
     } else {
-        playersHeight = rightHeight * 0.30f;
-        progressHeight = rightHeight * 0.34f;
-        if ( playersHeight < 190.0f ) playersHeight = 190.0f;
-        if ( progressHeight < 200.0f ) progressHeight = 200.0f;
-        logHeight = rightHeight - playersHeight - progressHeight - chatHeight - ImGui::GetStyle().ItemSpacing.y * 3.0f;
-        if ( logHeight < 180.0f ) {
-            logHeight = 180.0f;
-            playersHeight = rightHeight - logHeight - progressHeight - chatHeight - ImGui::GetStyle().ItemSpacing.y * 3.0f;
-            if ( playersHeight < 160.0f ) playersHeight = 160.0f;
+        float spacing = ImGui::GetStyle().ItemSpacing.y;
+        float stackHeight = rightHeight - chatHeight - spacing * 4.0f;
+        if ( stackHeight < 260.0f ) stackHeight = 260.0f;
+        playersHeight = stackHeight * 0.28f;
+        inspectorHeight = stackHeight * 0.24f;
+        progressHeight = stackHeight * 0.24f;
+        logHeight = stackHeight - playersHeight - inspectorHeight - progressHeight;
+        if ( playersHeight < 120.0f ) playersHeight = 120.0f;
+        if ( inspectorHeight < 120.0f ) inspectorHeight = 120.0f;
+        if ( progressHeight < 130.0f ) progressHeight = 130.0f;
+        logHeight = rightHeight - playersHeight - inspectorHeight - progressHeight - chatHeight - spacing * 4.0f;
+        if ( logHeight < 105.0f ) {
+            float squeeze = 105.0f - logHeight;
+            float reducePlayers = squeeze * 0.35f;
+            float reduceInspector = squeeze * 0.30f;
+            float reduceProgress = squeeze - reducePlayers - reduceInspector;
+            if ( playersHeight - reducePlayers >= 96.0f ) playersHeight -= reducePlayers;
+            if ( inspectorHeight - reduceInspector >= 96.0f ) inspectorHeight -= reduceInspector;
+            if ( progressHeight - reduceProgress >= 106.0f ) progressHeight -= reduceProgress;
+            logHeight = rightHeight - playersHeight - inspectorHeight - progressHeight - chatHeight - spacing * 4.0f;
+            if ( logHeight < 84.0f ) logHeight = 84.0f;
         }
         Race_DrawPlayersPanel( playersHeight );
+        Race_DrawInspectorPanel( inspectorHeight );
         Race_DrawProgressPanel( progressHeight );
         Race_DrawLogPanel( logHeight );
         Race_DrawChatPanel();
@@ -1714,6 +1831,7 @@ static void Race_DrawMainUi( void ) {
         raceHost.mode == 0 ? "Full Game" : raceHost.mode == 1 ? "Chapter" : "IL",
         raceHost.percent100, raceHost.hl1Movement, raceHost.autoJump, raceHost.antiCheat );
 
+    Race_DrawConfirmModal();
     ImGui::End();
 }
 

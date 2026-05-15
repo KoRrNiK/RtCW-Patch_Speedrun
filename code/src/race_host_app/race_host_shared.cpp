@@ -268,6 +268,139 @@ void Race_BuildConfigPath( void ) {
     gConfigPath[sizeof( gConfigPath ) - 1] = '\0';
 }
 
+static int Race_NormalizeBool( int value ) {
+    return value ? 1 : 0;
+}
+
+static int Race_CopyTrimmedSetting( char *dst, size_t dstSize, const char *src, const char *fallback ) {
+    char temp[256];
+    char *trimmed;
+    if ( !dst || dstSize == 0 ) return 0;
+    Race_Copy( temp, sizeof( temp ), src && src[0] ? src : fallback );
+    trimmed = Race_Trim( temp );
+    if ( !trimmed || !trimmed[0] ) trimmed = (char *)( fallback ? fallback : "" );
+    if ( strcmp( dst, trimmed ) ) {
+        Race_Copy( dst, dstSize, trimmed );
+        return 1;
+    }
+    return 0;
+}
+
+int Race_NormalizeSettings( void ) {
+    char sanitized[RACE_NICK_MAX];
+    char map[RACE_MAP_MAX];
+    char password[RACE_PASSWORD_MAX];
+    int changed = 0;
+
+    if ( raceHost.maxPlayers < 1 ) { raceHost.maxPlayers = 1; changed = 1; }
+    if ( raceHost.maxPlayers > RACE_MAX_PLAYERS ) { raceHost.maxPlayers = RACE_MAX_PLAYERS; changed = 1; }
+    if ( gUiPort < 1 ) { gUiPort = 1; changed = 1; }
+    if ( gUiPort > 65535 ) { gUiPort = 65535; changed = 1; }
+    if ( raceHost.port != gUiPort ) { raceHost.port = (unsigned short)gUiPort; changed = 1; }
+
+    changed |= Race_CopyTrimmedSetting( gUiBindAddress, sizeof( gUiBindAddress ), gUiBindAddress, "0.0.0.0" );
+    changed |= Race_CopyTrimmedSetting( raceHost.bindAddress, sizeof( raceHost.bindAddress ), gUiBindAddress, "0.0.0.0" );
+
+    if ( raceHost.mode < RACE_MODE_FULL || raceHost.mode > RACE_MODE_IL ) { raceHost.mode = RACE_MODE_FULL; changed = 1; }
+    if ( raceHost.mission < 1 ) { raceHost.mission = 1; changed = 1; }
+    if ( raceHost.mission > raceChapterCount ) { raceHost.mission = raceChapterCount; changed = 1; }
+    if ( raceHost.difficulty < 1 ) { raceHost.difficulty = 1; changed = 1; }
+    if ( raceHost.difficulty > 3 ) { raceHost.difficulty = 3; changed = 1; }
+    if ( gUiCountdownSec < 1 ) { gUiCountdownSec = 1; changed = 1; }
+    if ( gUiCountdownSec > 30 ) { gUiCountdownSec = 30; changed = 1; }
+    if ( raceHost.countdownMs != gUiCountdownSec * 1000 ) { raceHost.countdownMs = gUiCountdownSec * 1000; changed = 1; }
+    if ( raceHost.pauseAlertMs < 0 ) { raceHost.pauseAlertMs = 0; changed = 1; }
+    if ( raceHost.pauseAlertMs > 600000 ) { raceHost.pauseAlertMs = 600000; changed = 1; }
+
+    if ( raceHost.percent100 != Race_NormalizeBool( raceHost.percent100 ) ) { raceHost.percent100 = Race_NormalizeBool( raceHost.percent100 ); changed = 1; }
+    if ( raceHost.hl1Movement != Race_NormalizeBool( raceHost.hl1Movement ) ) { raceHost.hl1Movement = Race_NormalizeBool( raceHost.hl1Movement ); changed = 1; }
+    if ( raceHost.autoJump != Race_NormalizeBool( raceHost.autoJump ) ) { raceHost.autoJump = Race_NormalizeBool( raceHost.autoJump ); changed = 1; }
+    if ( raceHost.antiCheat != Race_NormalizeBool( raceHost.antiCheat ) ) { raceHost.antiCheat = Race_NormalizeBool( raceHost.antiCheat ); changed = 1; }
+    if ( raceHost.autoReadyCheck != Race_NormalizeBool( raceHost.autoReadyCheck ) ) { raceHost.autoReadyCheck = Race_NormalizeBool( raceHost.autoReadyCheck ); changed = 1; }
+    if ( raceHost.queueEnabled != Race_NormalizeBool( raceHost.queueEnabled ) ) { raceHost.queueEnabled = Race_NormalizeBool( raceHost.queueEnabled ); changed = 1; }
+    if ( raceHost.privateLobby != Race_NormalizeBool( raceHost.privateLobby ) ) { raceHost.privateLobby = Race_NormalizeBool( raceHost.privateLobby ); changed = 1; }
+
+    Race_SanitizeToken( gUiHostName, sanitized, sizeof( sanitized ) );
+    if ( strcmp( raceHost.hostName, sanitized ) ) { Race_Copy( raceHost.hostName, sizeof( raceHost.hostName ), sanitized ); changed = 1; }
+    if ( strcmp( gUiHostName, sanitized ) ) { Race_Copy( gUiHostName, sizeof( gUiHostName ), sanitized ); changed = 1; }
+
+    Race_SanitizeToken( gUiIlMap, map, sizeof( map ) );
+    if ( strcmp( raceHost.ilMap, map ) ) { Race_Copy( raceHost.ilMap, sizeof( raceHost.ilMap ), map ); changed = 1; }
+    if ( strcmp( gUiIlMap, map ) ) { Race_Copy( gUiIlMap, sizeof( gUiIlMap ), map ); changed = 1; }
+
+    Race_SanitizeOptionalToken( raceHost.password, password, sizeof( password ) );
+    if ( strcmp( raceHost.password, password ) ) { Race_Copy( raceHost.password, sizeof( raceHost.password ), password ); changed = 1; }
+
+    return changed;
+}
+
+static int Race_BindIpLooksValid( const char *bindIp ) {
+    if ( !bindIp || !bindIp[0] ) return 0;
+    if ( !_stricmp( bindIp, "any" ) || !_stricmp( bindIp, "all" ) || !strcmp( bindIp, "0.0.0.0" ) ) return 1;
+    return inet_addr( bindIp ) != INADDR_NONE;
+}
+
+int Race_ValidateHostSettings( char *out, size_t outSize ) {
+    const char *bindIp = gUiBindAddress[0] ? gUiBindAddress : raceHost.bindAddress;
+    if ( out && outSize ) out[0] = '\0';
+    if ( gUiPort < 1 || gUiPort > 65535 ) {
+        if ( out && outSize ) snprintf( out, outSize, "UDP port must be between 1 and 65535." );
+        return 0;
+    }
+    if ( !Race_BindIpLooksValid( bindIp ) ) {
+        if ( out && outSize ) snprintf( out, outSize, "Bind IP must be IPv4, for example 0.0.0.0, 127.0.0.1, or your LAN IP." );
+        return 0;
+    }
+    if ( raceHost.privateLobby && !raceHost.password[0] ) {
+        if ( out && outSize ) snprintf( out, outSize, "Private lobby needs a password; otherwise it behaves like a public lobby." );
+        return 0;
+    }
+    if ( !raceHost.hostName[0] && !gUiHostName[0] ) {
+        if ( out && outSize ) snprintf( out, outSize, "Host name cannot be empty." );
+        return 0;
+    }
+    if ( out && outSize ) snprintf( out, outSize, "Host settings are ready." );
+    return 1;
+}
+
+int Race_ValidateRaceSettings( char *out, size_t outSize ) {
+    DWORD now = GetTickCount();
+    int i;
+    if ( out && outSize ) out[0] = '\0';
+    if ( !Race_HostIsRunning() ) {
+        if ( out && outSize ) snprintf( out, outSize, "Start the host before starting a race." );
+        return 0;
+    }
+    if ( raceHost.state != RACE_STATE_LOBBY ) {
+        if ( out && outSize ) snprintf( out, outSize, "Race controls are locked while state is %s.", Race_StateName( raceHost.state ) );
+        return 0;
+    }
+    if ( Race_PlayerCount() < 1 ) {
+        if ( out && outSize ) snprintf( out, outSize, "At least one player must be connected." );
+        return 0;
+    }
+    if ( raceHost.mode == RACE_MODE_IL && !raceHost.ilMap[0] ) {
+        if ( out && outSize ) snprintf( out, outSize, "Individual Level mode needs a map name." );
+        return 0;
+    }
+    if ( raceHost.autoReadyCheck ) {
+        for ( i = 0; i < raceHost.maxPlayers; ++i ) {
+            racePlayer_t *p = &raceHost.players[i];
+            if ( !Race_PlayerBlocksReady( p ) ) continue;
+            if ( p->cheatFlags ) {
+                if ( out && outSize ) snprintf( out, outSize, "%s has anti-cheat flags; clear them before start.", p->nick[0] ? p->nick : "A player" );
+                return 0;
+            }
+            if ( p->lastHeardMs && (DWORD)( now - p->lastHeardMs ) > 10000 ) {
+                if ( out && outSize ) snprintf( out, outSize, "%s telemetry is stale; wait for a fresh update.", p->nick[0] ? p->nick : "A player" );
+                return 0;
+            }
+        }
+    }
+    if ( out && outSize ) snprintf( out, outSize, "Race can start." );
+    return 1;
+}
+
 static void Race_ApplyConfigKeyValue( const char *key, const char *value ) {
     if ( !key || !value ) return;
     if ( !_stricmp( key, "bind_ip" ) || !_stricmp( key, "bind" ) || !_stricmp( key, "ip" ) ) {

@@ -4223,6 +4223,121 @@ static void LS_BuildCategoryText( char *out, int outSize ) {
 	Com_sprintf( out, outSize, "%s%s%s [%s]", label, p100 ? " 100%" : "", LS_HL1ModeNameSuffix(), diffTag );
 }
 
+static void LS_BuildPresenceModeText( char *out, int outSize ) {
+	const char *name;
+	int gi, idx;
+
+	if ( !out || outSize <= 0 ) {
+		return;
+	}
+
+	out[0] = '\0';
+	switch ( ls.runMode ) {
+	case LS_MODE_MISSION:
+		gi = ls.runMission - 1;
+		if ( gi < 0 ) gi = 0;
+		if ( gi >= LS_NUM_MISSION_GROUPS ) gi = LS_NUM_MISSION_GROUPS - 1;
+		Com_sprintf( out, outSize, "Chapter %d: %s", gi + 1, ls_missionGroups[gi].shortName );
+		break;
+	case LS_MODE_IL:
+		idx = ls.modeFirstIdx;
+		name = NULL;
+		if ( ( idx < 0 || idx >= ls.numMaps || ls.splits[idx].cutscene ) && ls_mapCvar && ls_mapCvar->string[0] ) {
+			idx = LS_FindMapIndex( ls_mapCvar->string );
+		}
+		if ( idx >= 0 && idx < ls.numMaps ) {
+			name = ls.splits[idx].shortName && ls.splits[idx].shortName[0] ? ls.splits[idx].shortName : ls.splits[idx].displayName;
+			if ( !name || !name[0] ) name = ls.splits[idx].mapname;
+		}
+		Com_sprintf( out, outSize, "IL: %s", name && name[0] ? name : "Map" );
+		break;
+	default:
+		Q_strncpyz( out, "Full Game", outSize );
+		break;
+	}
+}
+
+void LS_BuildPresenceSnapshot( lsPresenceSnapshot_t *out ) {
+	qboolean p100;
+	qboolean hl1;
+	int idx;
+	const char *name;
+
+	if ( !out ) {
+		return;
+	}
+
+	memset( out, 0, sizeof( *out ) );
+	Q_strncpyz( out->modeText, "Full Game", sizeof( out->modeText ) );
+	Q_strncpyz( out->rulesText, "Any%", sizeof( out->rulesText ) );
+	Q_strncpyz( out->difficultyText, "BEO", sizeof( out->difficultyText ) );
+	Q_strncpyz( out->categoryText, "Full Game Any% [BEO]", sizeof( out->categoryText ) );
+	Q_strncpyz( out->stageText, "-", sizeof( out->stageText ) );
+	Q_strncpyz( out->mapText, "-", sizeof( out->mapText ) );
+
+	if ( cl.mapname[0] ) {
+		LS_ExtractMapname( cl.mapname, out->mapText, sizeof( out->mapText ) );
+	}
+
+	if ( !ls.initialized ) {
+		return;
+	}
+
+	out->initialized = 1;
+	out->timerEnabled = ( ( cg_livesplit && cg_livesplit->integer ) || LS_ExtEnabled() ) ? 1 : 0;
+	out->externalTimer = LS_ExtEnabled() ? 1 : 0;
+	out->panelVisible = ( ls_drawCvar && ls_drawCvar->integer ) ? 1 : 0;
+	out->active = ( ls.active && !ls.runFinished ) ? 1 : 0;
+	out->finished = ls.runFinished ? 1 : 0;
+	out->runMode = ls.runMode;
+	out->difficulty = ls.currentDifficulty;
+
+	if ( ls.currentDifficulty >= 1 && ls.currentDifficulty <= LS_MAX_DIFFICULTIES ) {
+		Q_strncpyz( out->difficultyText, ls_diffShortTags[LS_DiffIdx( ls.currentDifficulty )], sizeof( out->difficultyText ) );
+	}
+
+	p100 = ( ls_100pctCvar && ls_100pctCvar->integer ) ? qtrue : qfalse;
+	hl1 = LS_HL1ModeActive();
+	if ( hl1 && p100 ) {
+		Q_strncpyz( out->rulesText, "HL1 100%", sizeof( out->rulesText ) );
+	} else if ( hl1 ) {
+		Q_strncpyz( out->rulesText, "HL1 Any%", sizeof( out->rulesText ) );
+	} else if ( p100 ) {
+		Q_strncpyz( out->rulesText, "100%", sizeof( out->rulesText ) );
+	} else {
+		Q_strncpyz( out->rulesText, "Any%", sizeof( out->rulesText ) );
+	}
+
+	LS_BuildPresenceModeText( out->modeText, sizeof( out->modeText ) );
+	Com_sprintf( out->categoryText, sizeof( out->categoryText ), "%s %s [%s]", out->modeText, out->rulesText, out->difficultyText );
+
+	if ( ls.runFinished ) {
+		out->igtMs = ls.runTotalIGTMs;
+	} else if ( ls.active ) {
+		out->igtMs = LS_CumulativeTime( ls.modeLastIdx );
+	} else {
+		out->igtMs = 0;
+	}
+
+	if ( ls.active && !ls.runFinished && ls.runStartRealMs > 0 ) {
+		out->rgtMs = Sys_Milliseconds() - ls.runStartRealMs;
+	} else {
+		out->rgtMs = ls.runSavedRealMs;
+	}
+
+	idx = LS_ActiveRealSplit();
+	if ( idx < 0 && ls.currentMapIndex >= 0 && ls.currentMapIndex < ls.numMaps ) {
+		idx = ls.currentMapIndex;
+	}
+	if ( idx >= 0 && idx < ls.numMaps ) {
+		name = ls.splits[idx].shortName && ls.splits[idx].shortName[0] ? ls.splits[idx].shortName : ls.splits[idx].displayName;
+		if ( !name || !name[0] ) name = ls.splits[idx].mapname;
+		Q_strncpyz( out->stageText, name, sizeof( out->stageText ) );
+	} else if ( out->mapText[0] && Q_stricmp( out->mapText, "-" ) ) {
+		Q_strncpyz( out->stageText, out->mapText, sizeof( out->stageText ) );
+	}
+}
+
 /* =====================================================================
    Init / Console commands
    ===================================================================== */
@@ -5307,6 +5422,10 @@ static int LS_GhostPackedColor( int color ) {
 	return color ? ( ( 255 << 16 ) | ( 215 << 8 ) | 0 ) : ( ( 80 << 16 ) | ( 180 << 8 ) | 255 );
 }
 
+static int LS_GhostQuietEFlags( int eFlags ) {
+	return eFlags & ~( EF_FIRING | EF_RECENTLY_FIRING );
+}
+
 static void LS_GhostPublishFrame( const ghostFrame_t *gf, int color ) {
 	int now = cls.realtime;
 	qboolean forceColor = ( !ls_ghostPublish.initialized || ls_ghostPublish.color != color );
@@ -5335,7 +5454,7 @@ static void LS_GhostPublishFrame( const ghostFrame_t *gf, int color ) {
 		LS_GhostPackedColor( color ), alpha,
 		gf->x, gf->y, gf->z, gf->yaw, gf->speed, crouched,
 		gf->health, gf->armor, gf->weapon, gf->ammo, gf->clip,
-		gf->legsAnim, gf->torsoAnim, gf->movementDir, gf->eFlags,
+		gf->legsAnim, gf->torsoAnim, gf->movementDir, LS_GhostQuietEFlags( gf->eFlags ),
 		gf->pitch, gf->vx, gf->vy, gf->vz, gf->groundEntityNum, gf->animMovetype );
 	Cvar_Set( "ls_ghost_player", value );
 	if ( forceColor ) {
@@ -5375,6 +5494,7 @@ static void LS_GhostSanitizeFrame( ghostFrame_t *gf ) {
 	if ( gf->animMovetype < 0 ) gf->animMovetype = 0;
 	gf->movementDir = LS_RaceNormalizeMovementDir( gf->movementDir );
 	if ( gf->flags & GHOST_FRAME_FLAG_CROUCH ) gf->eFlags |= EF_CROUCHING;
+	gf->eFlags = LS_GhostQuietEFlags( gf->eFlags );
 }
 
 static qboolean LS_LocalPlayerCrouched( void );
@@ -7582,15 +7702,17 @@ static void LS_RacePublishGhostCvars( void ) {
 	if ( cl.mapname[0] ) LS_ExtractMapname( cl.mapname, localMap, sizeof( localMap ) );
 	for ( i = 0; i < LS_RACE_MAX_PLAYERS && ghostSlot < LS_RACE_MAX_PLAYERS; i++ ) {
 		lsRacePlayer_t *p = &ls_race.players[i];
+		int eFlags;
 		if ( !p->used || p->local || !p->started || p->finished ) continue;
 		if ( now - p->lastHeardMs > 2500 ) continue;
 		if ( localMap[0] && p->map[0] && Q_stricmp( localMap, p->map ) ) continue;
 		LS_RaceUpdatePlayerRender( p, now );
+		eFlags = LS_GhostQuietEFlags( p->eFlags );
 		Com_sprintf( value, sizeof( value ), "1 %d %d %.1f %.1f %.1f %.1f %.1f %d %d %d %d %d %d %d %d %s %d %d %.1f %.1f %.1f %.1f %d %d",
 			( p->color[0] << 16 ) | ( p->color[1] << 8 ) | p->color[2],
 			LS_RaceGhostAlpha(), p->renderX, p->renderY, p->renderZ, p->renderYaw, p->renderSpeed,
 			p->crouched, p->health, p->armor, p->weapon, p->ammo, p->clip,
-			p->legsAnim, p->torsoAnim, p->nick, p->movementDir, p->eFlags,
+			p->legsAnim, p->torsoAnim, p->nick, p->movementDir, eFlags,
 			p->renderPitch, p->vx, p->vy, p->vz, p->groundEntityNum, p->animMovetype );
 		LS_RaceSetCvarString( ls_race.ghostCvars[ghostSlot], value );
 		ghostSlot++;
@@ -8056,7 +8178,7 @@ static qboolean LS_RaceCanBindHostSocket( const char *socketIp, int port, char *
 
 static void LS_RaceRestoreHostNetwork( const char *oldIp, int oldPort ) {
 	Cvar_Set( "net_ip", oldIp && oldIp[0] ? oldIp : "localhost" );
-	Cvar_SetValue( "net_port", oldPort > 0 ? oldPort : 27960 );
+	Cvar_SetValue( "net_port", oldPort > 0 ? oldPort : PORT_CLIENT );
 	NET_Config( qfalse );
 	NET_Config( qtrue );
 }
@@ -8290,6 +8412,15 @@ static void LS_RaceSendStateToHost( void ) {
 
 static void LS_RaceSendStateToHostScan( void ) {
 	LS_RaceSendStateToHost();
+}
+
+static void LS_RaceSendHeartbeatToHost( void ) {
+	lsRacePlayer_t *p;
+	if ( ls_race.role != LS_RACE_ROLE_CLIENT || !ls_race.session ) return;
+	p = LS_RaceFindPlayerBySlot( ls_race.localSlot );
+	if ( !p ) return;
+	NET_OutOfBandPrint( NS_CLIENT, ls_race.hostAdr, "srace heartbeat %d %d %s %d %d %d %d",
+		ls_race.session, p->slot, p->nick, p->color[0], p->color[1], p->color[2], p->inMenu ? 1 : 0 );
 }
 
 static void LS_RaceSendChatTo( netadr_t to, int slot, const char *nick, const char *text ) {
@@ -8566,6 +8697,39 @@ static qboolean LS_RaceAllFinished( void ) {
 	return count > 0 ? qtrue : qfalse;
 }
 
+static void LS_RaceReadLiveObjectives( int *foundOut, int *totalOut ) {
+	int i;
+	int found;
+	int total;
+	char name[32];
+
+	found = 0;
+	for ( i = 1; i <= 8; ++i ) {
+		Com_sprintf( name, sizeof( name ), "g_objective%i", i );
+		if ( Cvar_VariableIntegerValue( name ) ) {
+			found++;
+		}
+	}
+
+	total = Cvar_VariableIntegerValue( "g_objectivesneeded" );
+	if ( total <= 0 ) {
+		total = ls.liveObjectivesTotal;
+	}
+
+	if ( total <= 0 ) {
+		found = ls.liveObjectivesFound;
+	} else if ( found == 0 && ls.liveObjectivesFound > 0 ) {
+		found = ls.liveObjectivesFound;
+	}
+
+	if ( total > 0 && found > total ) {
+		found = total;
+	}
+
+	if ( foundOut ) *foundOut = found;
+	if ( totalOut ) *totalOut = total;
+}
+
 static void LS_RaceUpdateLocalPlayer( void ) {
 	lsRacePlayer_t *p;
 	char nick[32];
@@ -8599,7 +8763,7 @@ static void LS_RaceUpdateLocalPlayer( void ) {
 		p->legsAnim = cl.snap.ps.legsAnim;
 		p->torsoAnim = cl.snap.ps.torsoAnim;
 		p->movementDir = LS_RaceNormalizeMovementDir( cl.snap.ps.movementDir );
-		p->eFlags = cl.snap.ps.eFlags;
+		p->eFlags = LS_GhostQuietEFlags( cl.snap.ps.eFlags );
 		p->groundEntityNum = cl.snap.ps.groundEntityNum;
 		p->animMovetype = LS_RaceAnimMovetypeForPlayerState( &cl.snap.ps );
 		p->health = cl.snap.ps.stats[STAT_HEALTH];
@@ -8612,8 +8776,7 @@ static void LS_RaceUpdateLocalPlayer( void ) {
 		p->ammo = LS_RaceSafePlayerStat( cl.snap.ps.ammo, ammoIndex );
 		p->clip = LS_RaceSafePlayerStat( cl.snap.ps.ammoclip, clipIndex );
 	}
-	p->objectivesFound = ls.liveObjectivesFound;
-	p->objectivesTotal = ls.liveObjectivesTotal;
+	LS_RaceReadLiveObjectives( &p->objectivesFound, &p->objectivesTotal );
 	p->zoneProgress = Cvar_VariableIntegerValue( "sp_zone_race_points" );
 	p->zoneTotal = Cvar_VariableIntegerValue( "sp_zone_race_total" );
 	if ( p->zoneTotal <= 0 ) {
@@ -8942,7 +9105,7 @@ static void LS_RaceParsePlayerTelemetryArgs( lsRacePlayer_t *p ) {
 	else p->torsoAnim = -1;
 	if ( Cmd_Argc() > 39 ) p->movementDir = atoi( Cmd_Argv( 39 ) );
 	else p->movementDir = 0;
-	if ( Cmd_Argc() > 40 ) p->eFlags = atoi( Cmd_Argv( 40 ) );
+	if ( Cmd_Argc() > 40 ) p->eFlags = LS_GhostQuietEFlags( atoi( Cmd_Argv( 40 ) ) );
 	else p->eFlags = 0;
 	if ( Cmd_Argc() > 41 ) p->pitch = (float)atof( Cmd_Argv( 41 ) );
 	else p->pitch = 0.0f;
@@ -9074,6 +9237,37 @@ static void LS_RaceHandleState( netadr_t from ) {
 		ls_race.lastRosterMs = p->lastHeardMs;
 	} else {
 		LS_RaceBroadcastPlayer( p );
+	}
+}
+
+static void LS_RaceHandleHeartbeat( netadr_t from ) {
+	lsRacePlayer_t *p;
+	int session, slot, now;
+	qboolean wasTimedOut;
+	if ( ls_race.role != LS_RACE_ROLE_HOST ) return;
+	if ( Cmd_Argc() < 4 ) return;
+	session = atoi( Cmd_Argv( 2 ) );
+	if ( session != ls_race.session ) return;
+	slot = atoi( Cmd_Argv( 3 ) );
+	p = LS_RaceFindPlayerBySlot( slot );
+	if ( !LS_RacePlayerAdrMatches( p, from ) ) return;
+	now = Sys_Milliseconds();
+	if ( p->left ) return;
+	wasTimedOut = p->timedOut;
+	if ( Cmd_Argc() > 4 ) LS_RaceSanitizeToken( Cmd_Argv( 4 ), p->nick, sizeof( p->nick ) );
+	if ( Cmd_Argc() > 7 ) {
+		p->color[0] = (int)Com_Clamp( 0.0f, 255.0f, (float)atoi( Cmd_Argv( 5 ) ) );
+		p->color[1] = (int)Com_Clamp( 0.0f, 255.0f, (float)atoi( Cmd_Argv( 6 ) ) );
+		p->color[2] = (int)Com_Clamp( 0.0f, 255.0f, (float)atoi( Cmd_Argv( 7 ) ) );
+	}
+	if ( Cmd_Argc() > 8 ) p->inMenu = atoi( Cmd_Argv( 8 ) ) ? qtrue : qfalse;
+	p->left = qfalse;
+	p->timedOut = qfalse;
+	p->lastHeardMs = now;
+	if ( wasTimedOut ) {
+		Com_Printf( "^2Race: player %s heartbeat restored connection\n", p->nick );
+		LS_RaceBroadcastRoster();
+		ls_race.lastRosterMs = now;
 	}
 }
 
@@ -9318,6 +9512,7 @@ void LS_RaceConnectionlessPacket( netadr_t from ) {
 	else if ( !Q_stricmp( sub, "welcome" ) ) LS_RaceHandleWelcome( from );
 	else if ( !Q_stricmp( sub, "player" ) ) LS_RaceHandlePlayer( from );
 	else if ( !Q_stricmp( sub, "state" ) ) LS_RaceHandleState( from );
+	else if ( !Q_stricmp( sub, "heartbeat" ) ) LS_RaceHandleHeartbeat( from );
 	else if ( !Q_stricmp( sub, "config" ) ) LS_RaceHandleConfig( from );
 	else if ( !Q_stricmp( sub, "load" ) ) LS_RaceHandleLoad( from );
 	else if ( !Q_stricmp( sub, "countdown" ) ) LS_RaceHandleCountdown( from );
@@ -9395,12 +9590,16 @@ void LS_RaceFrame( void ) {
 			else LS_RaceSendStateToHost();
 			ls_race.lastSendMs = now;
 		}
-		if ( ( ls_race.state == LS_RACE_STATE_LOADING || ls_race.state == LS_RACE_STATE_COUNTDOWN || ls_race.state == LS_RACE_STATE_RACING ) && now - ls_race.lastHelloMs >= LS_RACE_RESYNC_MS ) {
-			LS_RaceSendHello();
-			LS_RaceSendStateToHostScan();
+		if ( ls_race.state >= LS_RACE_STATE_LOBBY && now - ls_race.lastHelloMs >= LS_RACE_RESYNC_MS ) {
+			LS_RaceSendHeartbeatToHost();
+			if ( ls_race.state == LS_RACE_STATE_LOADING || ls_race.state == LS_RACE_STATE_COUNTDOWN || ls_race.state == LS_RACE_STATE_RACING ) {
+				LS_RaceSendHello();
+				LS_RaceSendStateToHostScan();
+			}
 			ls_race.lastHelloMs = now;
 		}
-		if ( ls_race.lastHostPacketMs && now - ls_race.lastHostPacketMs > ( ( ls_race.state == LS_RACE_STATE_LOADING || ls_race.state == LS_RACE_STATE_COUNTDOWN ) ? LS_RACE_LOAD_TIMEOUT_MS : LS_RACE_TIMEOUT_MS * 2 ) ) {
+		if ( ls_race.state != LS_RACE_STATE_LOBBY && ls_race.lastHostPacketMs &&
+			 now - ls_race.lastHostPacketMs > ( ( ls_race.state == LS_RACE_STATE_LOADING || ls_race.state == LS_RACE_STATE_COUNTDOWN ) ? LS_RACE_LOAD_TIMEOUT_MS : LS_RACE_TIMEOUT_MS * 2 ) ) {
 			LS_RaceSetStatus( "Host timeout" );
 		}
 	} else if ( ls_race.role == LS_RACE_ROLE_HOST ) {

@@ -51,6 +51,12 @@
     <ClInclude Include="race_host_shared.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="race_host_ui_inspector.inl">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="race_host_ui_safety.inl">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>

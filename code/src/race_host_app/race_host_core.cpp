@@ -755,6 +755,40 @@ static void Race_HandleState( const struct sockaddr_in *from, char **t, int n ) 
     }
 }
 
+static void Race_HandleHeartbeat( const struct sockaddr_in *from, char **t, int n ) {
+    racePlayer_t *p;
+    int session = Race_ArgInt( t, n, 2, 0 );
+    int slot = Race_ArgInt( t, n, 3, -1 );
+    int wasTimedOut;
+    DWORD now;
+    if ( session != raceHost.session ) return;
+    p = Race_FindPlayerBySlot( slot );
+    if ( !p || !Race_SameAddress( &p->address, from ) ) return;
+    if ( p->kicked ) {
+        now = GetTickCount();
+        if ( (DWORD)( now - p->lastKickRejectMs ) > 1000 ) {
+            Race_SendText( from, "srace reject You_have_been_kicked_from_the_race" );
+            p->lastKickRejectMs = now;
+        }
+        return;
+    }
+    if ( p->left ) return;
+    now = GetTickCount();
+    wasTimedOut = p->timedOut;
+    Race_SanitizeToken( Race_ArgText( t, n, 4, p->nick ), p->nick, sizeof( p->nick ) );
+    p->color[0] = Race_ClampInt( Race_ArgInt( t, n, 5, p->color[0] ), 0, 255 );
+    p->color[1] = Race_ClampInt( Race_ArgInt( t, n, 6, p->color[1] ), 0, 255 );
+    p->color[2] = Race_ClampInt( Race_ArgInt( t, n, 7, p->color[2] ), 0, 255 );
+    p->inMenu = Race_ArgInt( t, n, 8, p->inMenu ) ? 1 : 0;
+    p->timedOut = 0;
+    p->lastHeardMs = now;
+    if ( wasTimedOut ) {
+        Race_GuiLogSrv( "%s restored by heartbeat", p->nick );
+        Race_BroadcastRoster();
+        Race_GuiRefresh();
+    }
+}
+
 static void Race_HandleLeave( const struct sockaddr_in *from, char **t, int n ) {
     racePlayer_t *p;
     int session = Race_ArgInt( t, n, 2, 0 );
@@ -829,6 +863,7 @@ void Race_ProcessPacket( char *packetText, int packetLen, const struct sockaddr_
     if ( !_stricmp( tokens[1], "discover" ) ) Race_HandleDiscover( from, tokens, n );
     else if ( !_stricmp( tokens[1], "hello" ) ) Race_HandleHello( from, tokens, n );
     else if ( !_stricmp( tokens[1], "state" ) ) Race_HandleState( from, tokens, n );
+    else if ( !_stricmp( tokens[1], "heartbeat" ) ) Race_HandleHeartbeat( from, tokens, n );
     else if ( !_stricmp( tokens[1], "leave" ) ) Race_HandleLeave( from, tokens, n );
     else if ( !_stricmp( tokens[1], "chat" ) ) Race_HandleChat( from, tokens, n );
     else if ( !_stricmp( tokens[1], "event" ) ) Race_HandleEvent( from, tokens, n );
@@ -912,18 +947,15 @@ int Race_StartRace( void ) {
     int countdownSec;
     const char *targetMap;
     int i;
-    if ( !Race_HostIsRunning() ) {
-        Race_GuiLogSrv( "cannot start race: host is offline" );
+    char reason[256];
+    Race_NormalizeSettings();
+    if ( !Race_ValidateRaceSettings( reason, sizeof( reason ) ) ) {
+        Race_GuiLog( "! cannot start race: %s", reason[0] ? reason : "settings are not ready" );
         return 0;
     }
-    if ( raceHost.state != RACE_STATE_LOBBY ) {
-        Race_GuiLogSrv( "cannot start: already in %s", Race_StateName( raceHost.state ) );
-        return 0;
-    }
-    if ( Race_PlayerCount() < 1 ) {
-        Race_GuiLogSrv( "cannot start: no players in lobby" );
-        return 0;
-    }
+    if ( !Race_HostIsRunning() ) return 0;
+    if ( raceHost.state != RACE_STATE_LOBBY ) return 0;
+    if ( Race_PlayerCount() < 1 ) return 0;
     if ( raceHost.autoReadyCheck ) {
         DWORD now = GetTickCount();
         for ( i = 0; i < raceHost.maxPlayers; ++i ) {
@@ -1123,13 +1155,15 @@ int Race_OpenSocket( const char *bindIp, int port, char *errorOut, size_t errorO
 
 int Race_StartHost( void ) {
     char errorText[512];
+    char reason[256];
     if ( Race_HostIsRunning() ) {
         Race_GuiLogSrv( "host already running on %s:%d", raceHost.bindAddress, raceHost.port );
         return 1;
     }
-    Race_OnSettingsChanged( 0 );
-    if ( gUiPort < 1 || gUiPort > 65535 ) {
-        snprintf( gHostError, sizeof( gHostError ), "invalid UDP port %d - use 1..65535", gUiPort );
+    Race_NormalizeSettings();
+    if ( !Race_ValidateHostSettings( reason, sizeof( reason ) ) ) {
+        snprintf( gHostError, sizeof( gHostError ), "%s", reason[0] ? reason : "host settings are invalid" );
+        gHostError[sizeof( gHostError ) - 1] = '\0';
         Race_GuiLogSrv( "%s", gHostError );
         return 0;
     }

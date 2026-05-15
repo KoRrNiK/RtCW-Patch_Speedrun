@@ -25,79 +25,140 @@ static ImVec4 CL_ImGuiRaceAccentVec4( float alphaMul = 1.0f ) {
 
 static void CL_ImGuiRaceControlStylePush( void ) {
 	ImVec4 accent = CL_ImGuiRaceAccentVec4();
-	ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 6.0f );
-	ImGui::PushStyleVar( ImGuiStyleVar_ChildRounding, 5.0f );
-	ImGui::PushStyleVar( ImGuiStyleVar_FrameRounding, 4.0f );
-	ImGui::PushStyleVar( ImGuiStyleVar_GrabRounding, 3.0f );
-	ImGui::PushStyleVar( ImGuiStyleVar_TabRounding, 4.0f );
-	ImGui::PushStyleColor( ImGuiCol_WindowBg, ImVec4( 0.020f, 0.026f, 0.024f, 0.97f ) );
-	ImGui::PushStyleColor( ImGuiCol_ChildBg, ImVec4( 0.035f, 0.044f, 0.040f, 0.92f ) );
-	ImGui::PushStyleColor( ImGuiCol_Border, ImVec4( accent.x * 0.42f, accent.y * 0.42f, accent.z * 0.42f, 0.55f ) );
-	ImGui::PushStyleColor( ImGuiCol_FrameBg, ImVec4( 0.065f, 0.082f, 0.074f, 1.00f ) );
-	ImGui::PushStyleColor( ImGuiCol_FrameBgHovered, ImVec4( accent.x * 0.16f + 0.05f, accent.y * 0.16f + 0.07f, accent.z * 0.16f + 0.05f, 0.96f ) );
-	ImGui::PushStyleColor( ImGuiCol_FrameBgActive, ImVec4( accent.x * 0.24f + 0.05f, accent.y * 0.24f + 0.07f, accent.z * 0.24f + 0.05f, 1.00f ) );
-	ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( accent.x * 0.20f, accent.y * 0.20f, accent.z * 0.20f, 0.92f ) );
-	ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( accent.x * 0.34f, accent.y * 0.34f, accent.z * 0.34f, 0.98f ) );
-	ImGui::PushStyleColor( ImGuiCol_ButtonActive, ImVec4( accent.x * 0.46f, accent.y * 0.46f, accent.z * 0.46f, 1.00f ) );
-	ImGui::PushStyleColor( ImGuiCol_Header, ImVec4( accent.x * 0.18f, accent.y * 0.18f, accent.z * 0.18f, 0.78f ) );
-	ImGui::PushStyleColor( ImGuiCol_HeaderHovered, ImVec4( accent.x * 0.28f, accent.y * 0.28f, accent.z * 0.28f, 0.92f ) );
-	ImGui::PushStyleColor( ImGuiCol_HeaderActive, ImVec4( accent.x * 0.38f, accent.y * 0.38f, accent.z * 0.38f, 1.00f ) );
-	ImGui::PushStyleColor( ImGuiCol_Tab, ImVec4( 0.065f, 0.082f, 0.074f, 1.00f ) );
-	ImGui::PushStyleColor( ImGuiCol_TabHovered, ImVec4( accent.x * 0.28f, accent.y * 0.28f, accent.z * 0.28f, 0.95f ) );
-	ImGui::PushStyleColor( ImGuiCol_TabActive, ImVec4( accent.x * 0.22f, accent.y * 0.22f, accent.z * 0.22f, 0.96f ) );
-	ImGui::PushStyleColor( ImGuiCol_TitleBg, ImVec4( 0.030f, 0.045f, 0.035f, 1.00f ) );
-	ImGui::PushStyleColor( ImGuiCol_TitleBgActive, ImVec4( 0.055f, 0.085f, 0.050f, 1.00f ) );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 8.0f );
+	ImGui::PushStyleVar( ImGuiStyleVar_ChildRounding, 7.0f );
+	ImGui::PushStyleVar( ImGuiStyleVar_FrameRounding, 5.0f );
+	ImGui::PushStyleVar( ImGuiStyleVar_GrabRounding, 4.0f );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 14.0f, 12.0f ) );
+	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f, 6.0f ) );
+	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 9.0f, 8.0f ) );
+	ImGui::PushStyleColor( ImGuiCol_WindowBg, ImVec4( 0.022f, 0.027f, 0.026f, 0.98f ) );
+	ImGui::PushStyleColor( ImGuiCol_ChildBg, ImVec4( 0.040f, 0.047f, 0.045f, 0.94f ) );
+	ImGui::PushStyleColor( ImGuiCol_Border, ImVec4( accent.x * 0.34f + 0.08f, accent.y * 0.34f + 0.08f, accent.z * 0.34f + 0.08f, 0.50f ) );
+	ImGui::PushStyleColor( ImGuiCol_FrameBg, ImVec4( 0.075f, 0.086f, 0.083f, 1.00f ) );
+	ImGui::PushStyleColor( ImGuiCol_FrameBgHovered, ImVec4( accent.x * 0.13f + 0.07f, accent.y * 0.13f + 0.08f, accent.z * 0.13f + 0.07f, 0.98f ) );
+	ImGui::PushStyleColor( ImGuiCol_FrameBgActive, ImVec4( accent.x * 0.22f + 0.06f, accent.y * 0.22f + 0.08f, accent.z * 0.22f + 0.06f, 1.00f ) );
+	ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.090f, 0.105f, 0.100f, 0.96f ) );
+	ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( accent.x * 0.24f + 0.06f, accent.y * 0.24f + 0.07f, accent.z * 0.24f + 0.06f, 1.00f ) );
+	ImGui::PushStyleColor( ImGuiCol_ButtonActive, ImVec4( accent.x * 0.36f + 0.05f, accent.y * 0.36f + 0.06f, accent.z * 0.36f + 0.05f, 1.00f ) );
+	ImGui::PushStyleColor( ImGuiCol_Header, ImVec4( accent.x * 0.14f + 0.04f, accent.y * 0.14f + 0.05f, accent.z * 0.14f + 0.04f, 0.84f ) );
+	ImGui::PushStyleColor( ImGuiCol_HeaderHovered, ImVec4( accent.x * 0.24f + 0.05f, accent.y * 0.24f + 0.06f, accent.z * 0.24f + 0.05f, 0.95f ) );
+	ImGui::PushStyleColor( ImGuiCol_HeaderActive, ImVec4( accent.x * 0.34f + 0.05f, accent.y * 0.34f + 0.06f, accent.z * 0.34f + 0.05f, 1.00f ) );
+	ImGui::PushStyleColor( ImGuiCol_TitleBg, ImVec4( 0.030f, 0.038f, 0.036f, 1.00f ) );
+	ImGui::PushStyleColor( ImGuiCol_TitleBgActive, ImVec4( 0.052f, 0.072f, 0.060f, 1.00f ) );
 }
 
 static void CL_ImGuiRaceControlStylePop( void ) {
-	ImGui::PopStyleColor( 17 );
-	ImGui::PopStyleVar( 5 );
+	ImGui::PopStyleColor( 14 );
+	ImGui::PopStyleVar( 7 );
 }
 
-static void CL_ImGuiRaceControlHeader( const lsRaceUiSnapshot_t *race, int rowCount ) {
-	char playersText[16];
-	const char *status;
-	bool warning;
-	int statCols = ImGui::GetContentRegionAvail().x < 720.0f ? 3 : 6;
-	Com_sprintf( playersText, sizeof( playersText ), "%d", rowCount );
-	status = race->status[0] ? race->status : "Idle";
-	warning = strstr( status, "Cannot" ) || strstr( status, "Invalid" ) || strstr( status, "rejected" ) || strstr( status, "timeout" ) || strstr( status, "unavailable" );
-	CL_ImGuiBeginAutoBox( "race_control_header" );
-	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "Race Control" );
-	CL_ImGuiSameLineIfFits( 180.0f );
-	if ( warning ) ImGui::TextColored( ImVec4( 1.0f, 0.35f, 0.24f, 1.0f ), "%s", status );
-	else ImGui::TextDisabled( "%s", status );
-	if ( ImGui::BeginTable( "race_control_stats", statCols, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
-		ImGui::TableNextRow();
-		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Role", race->role[0] ? race->role : "Idle" );
-		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "State", race->state[0] ? race->state : "Idle" );
-		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Category", race->category[0] ? race->category : "Full Game" );
-		if ( statCols == 3 ) {
-			ImGui::TableNextRow();
-		}
-		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Players", playersText );
-		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Ready", race->ready[0] ? race->ready : "0/0" );
-		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Timer", race->timer[0] ? race->timer : "0.00" );
-		ImGui::EndTable();
+static bool CL_ImGuiRaceStatusWarning( const char *status ) {
+	if ( !status || !status[0] ) return false;
+	return strstr( status, "Cannot" ) || strstr( status, "Invalid" ) || strstr( status, "rejected" ) ||
+		   strstr( status, "timeout" ) || strstr( status, "unavailable" ) || strstr( status, "blocked" );
+}
+
+static ImU32 CL_ImGuiRaceStatusDotColor( const lsRaceUiSnapshot_t *race ) {
+	const char *state = race && race->state[0] ? race->state : "Idle";
+	if ( race && CL_ImGuiRaceStatusWarning( race->status ) ) return IM_COL32( 232, 82, 58, 255 );
+	if ( !Q_stricmp( state, "Racing" ) ) return IM_COL32( 86, 210, 76, 255 );
+	if ( !Q_stricmp( state, "Countdown" ) ) return IM_COL32( 255, 204, 82, 255 );
+	if ( !Q_stricmp( state, "Loading" ) ) return IM_COL32( 80, 170, 255, 255 );
+	if ( !Q_stricmp( state, "Lobby" ) ) return IM_COL32( 112, 216, 128, 255 );
+	if ( !Q_stricmp( state, "Finished" ) ) return IM_COL32( 255, 210, 80, 255 );
+	return IM_COL32( 124, 136, 128, 255 );
+}
+
+static void CL_ImGuiRaceInlinePill( const char *label, ImU32 bg, ImU32 fg = IM_COL32( 230, 240, 224, 255 ) ) {
+	ImDrawList *draw;
+	ImVec2 pos;
+	ImVec2 textSize;
+	ImVec2 size;
+	if ( !label || !label[0] ) return;
+	draw = ImGui::GetWindowDrawList();
+	pos = ImGui::GetCursorScreenPos();
+	textSize = ImGui::CalcTextSize( label );
+	size = ImVec2( textSize.x + 14.0f, textSize.y + 6.0f );
+	draw->AddRectFilled( pos, ImVec2( pos.x + size.x, pos.y + size.y ), bg, 4.0f );
+	draw->AddText( ImVec2( pos.x + 7.0f, pos.y + 3.0f ), fg, label );
+	ImGui::Dummy( size );
+}
+
+static void CL_ImGuiRaceSectionTitle( const char *title, const char *right = NULL ) {
+	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "%s", title );
+	if ( right && right[0] && CL_ImGuiSameLineIfFits( ImGui::CalcTextSize( right ).x + 8.0f ) ) {
+		ImGui::TextDisabled( "%s", right );
 	}
-	ImGui::EndChild();
+	ImGui::Separator();
+}
+
+static void CL_ImGuiRaceActionButton( const char *label, const char *command, bool enabled, const char *disabledHint, const ImVec4 &accent, float width = 0.0f ) {
+	ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( accent.x * 0.52f, accent.y * 0.52f, accent.z * 0.52f, 0.96f ) );
+	ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( accent.x * 0.68f, accent.y * 0.68f, accent.z * 0.68f, 1.00f ) );
+	ImGui::PushStyleColor( ImGuiCol_ButtonActive, ImVec4( accent.x * 0.82f, accent.y * 0.82f, accent.z * 0.82f, 1.00f ) );
+	CL_ImGuiRaceCommandButton( label, command, width, enabled, disabledHint );
+	ImGui::PopStyleColor( 3 );
+}
+
+static void CL_ImGuiRaceDrawTopBar( const lsRaceUiSnapshot_t *race, int rowCount ) {
+	ImDrawList *draw = ImGui::GetWindowDrawList();
+	ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImU32 dot = CL_ImGuiRaceStatusDotColor( race );
+	const char *status = race->status[0] ? race->status : "Idle";
+	bool warning = CL_ImGuiRaceStatusWarning( status );
+	char countText[32];
+	char readyText[48];
+
+	Com_sprintf( countText, sizeof( countText ), "%d runner%s", rowCount, rowCount == 1 ? "" : "s" );
+	Com_sprintf( readyText, sizeof( readyText ), "Ready %s", race->ready[0] ? race->ready : "0/0" );
+
+	draw->AddCircleFilled( ImVec2( pos.x + 8.0f, pos.y + 10.0f ), 5.0f, dot, 16 );
+	ImGui::Indent( 22.0f );
+	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "RtCW Race" );
+	ImGui::SameLine();
+	CL_ImGuiRaceInlinePill( race->state[0] ? race->state : "Idle", CL_ImGuiRaceStateBgU32( race->state ) );
+	ImGui::SameLine();
+	ImGui::TextDisabled( "%s", race->role[0] ? race->role : "Idle" );
+	ImGui::Unindent( 22.0f );
+
+	ImGui::SameLine( ImGui::GetWindowContentRegionMax().x - 214.0f );
+	if ( ImGui::SmallButton( s_raceGuiPinned ? "Unpin" : "Pin" ) ) {
+		s_raceGuiPinned = !s_raceGuiPinned;
+	}
+	ImGui::SameLine();
+	if ( ImGui::SmallButton( "Settings" ) ) {
+		s_raceGuiOpen = false;
+		s_imguiCategory = 11;
+		CL_SpeedrunImGui_Open();
+	}
+	ImGui::SameLine();
+	if ( ImGui::SmallButton( "Close" ) ) {
+		s_raceGuiOpen = false;
+	}
+
+	ImGui::TextColored( warning ? ImVec4( 1.0f, 0.34f, 0.25f, 1.0f ) : ImVec4( 0.70f, 0.78f, 0.70f, 1.0f ), "%s", status );
+	ImGui::SameLine();
+	ImGui::TextDisabled( "| %s | %s | %s", race->category[0] ? race->category : "Full Game", countText, readyText );
+	ImGui::Separator();
 }
 
 static void CL_ImGuiRaceFoundLobbyRow( int index, bool canJoin ) {
 	char cvarName[32];
 	char lobbyText[192];
 	char command[64];
+	float buttonW = 58.0f;
 	Com_sprintf( cvarName, sizeof( cvarName ), "ls_race_found_%d", index );
 	Cvar_VariableStringBuffer( cvarName, lobbyText, sizeof( lobbyText ) );
-	if ( !lobbyText[0] ) {
-		return;
-	}
+	if ( !lobbyText[0] ) return;
+	Com_sprintf( command, sizeof( command ), "ls_race_join_found %d", index );
 	ImGui::PushID( index );
 	ImGui::AlignTextToFramePadding();
-	ImGui::TextWrapped( "%s", lobbyText );
-	CL_ImGuiSameLineIfFits( 66.0f );
-	Com_sprintf( command, sizeof( command ), "ls_race_join_found %d", index );
-	CL_ImGuiRaceCommandButton( "Join", command, 58.0f, canJoin, "Leave the current race before joining a discovered lobby." );
+	ImGui::PushTextWrapPos( ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonW - ImGui::GetStyle().ItemSpacing.x );
+	ImGui::TextUnformatted( lobbyText );
+	ImGui::PopTextWrapPos();
+	ImGui::SameLine( ImGui::GetWindowContentRegionMax().x - buttonW );
+	CL_ImGuiRaceCommandButton( "Join", command, buttonW, canJoin, "Leave the current race before joining another lobby." );
 	ImGui::PopID();
 }
 
@@ -107,8 +168,8 @@ static void CL_ImGuiRaceDrawChatLog( const lsRaceUiSnapshot_t *race, float heigh
 	for ( i = 0; i < race->chatCount && i < LS_RACE_UI_CHAT_LINES; ++i ) {
 		if ( race->chat[i].text[0] ) {
 			ImVec4 nickColor = ImVec4( race->chat[i].red / 255.0f, race->chat[i].green / 255.0f, race->chat[i].blue / 255.0f, 1.0f );
-			ImGui::TextColored( nickColor, "%s:", race->chat[i].nick[0] ? race->chat[i].nick : "Runner" );
-			ImGui::SameLine( 0.0f, 4.0f );
+			ImGui::TextColored( nickColor, "%s", race->chat[i].nick[0] ? race->chat[i].nick : "Runner" );
+			ImGui::SameLine( 0.0f, 6.0f );
 			ImGui::PushTextWrapPos( 0.0f );
 			ImGui::TextUnformatted( race->chat[i].text );
 			ImGui::PopTextWrapPos();
@@ -116,59 +177,70 @@ static void CL_ImGuiRaceDrawChatLog( const lsRaceUiSnapshot_t *race, float heigh
 			ImGui::TextWrapped( "%s", race->chatLines[i] );
 		}
 	}
-	if ( race->chatCount <= 0 ) {
-		ImGui::TextDisabled( "No Race chat yet." );
-	}
+	if ( race->chatCount <= 0 ) ImGui::TextDisabled( "No Race chat yet." );
 	ImGui::EndChild();
 }
 
 static void CL_ImGuiRaceDrawChatComposer( bool canChat ) {
 	ImGuiStyle &style = ImGui::GetStyle();
-	float sendWidth = 72.0f;
+	float sendWidth = 82.0f;
 	float avail = ImGui::GetContentRegionAvail().x;
-	bool inlineButton = avail > 230.0f;
-	bool sendNow = false;
+	bool sendNow;
 	ImGui::BeginDisabled( !canChat );
-	if ( inlineButton ) {
-		ImGui::SetNextItemWidth( avail - sendWidth - style.ItemSpacing.x );
-		sendNow = ImGui::InputTextWithHint( "##race_control_chat_input", "message...", s_raceControlChatInput, sizeof( s_raceControlChatInput ), ImGuiInputTextFlags_EnterReturnsTrue );
-		ImGui::SameLine();
-		sendNow = ImGui::Button( "Send", ImVec2( sendWidth, 0.0f ) ) || sendNow;
-	} else {
-		ImGui::SetNextItemWidth( -1.0f );
-		sendNow = ImGui::InputTextWithHint( "##race_control_chat_input", "message...", s_raceControlChatInput, sizeof( s_raceControlChatInput ), ImGuiInputTextFlags_EnterReturnsTrue );
-		sendNow = ImGui::Button( "Send", ImVec2( sendWidth, 0.0f ) ) || sendNow;
-	}
-	if ( sendNow ) {
-		CL_ImGuiRaceSubmitChatInput( s_raceControlChatInput, sizeof( s_raceControlChatInput ) );
-	}
+	ImGui::SetNextItemWidth( avail - sendWidth - style.ItemSpacing.x );
+	sendNow = ImGui::InputTextWithHint( "##race_control_chat_input", "message...", s_raceControlChatInput, sizeof( s_raceControlChatInput ), ImGuiInputTextFlags_EnterReturnsTrue );
+	ImGui::SameLine();
+	sendNow = ImGui::Button( "Send", ImVec2( sendWidth, 0.0f ) ) || sendNow;
+	if ( sendNow ) CL_ImGuiRaceSubmitChatInput( s_raceControlChatInput, sizeof( s_raceControlChatInput ) );
 	ImGui::EndDisabled();
-	CL_ImGuiOptionTooltip( "Race chat", "ls_race_say", canChat ? "Sends a message to the active Race lobby." : "Join or host a race before chatting." );
+	CL_ImGuiOptionTooltip( "Race chat", "ls_race_say", canChat ? "Sends a message to the active Race lobby." : "Join a race before chatting." );
 }
 
-static void CL_ImGuiRaceDrawJoinBox( bool hideIp, bool isHost, bool isClient, bool canJoinManual, bool canConnect, bool canRefresh ) {
+static void CL_ImGuiRaceDrawConnectionPanel( bool hideIp, bool isHost, bool canJoin, bool canConnect, bool canRefresh ) {
 	static const float raceColorFallback[4] = { 0.31f, 0.70f, 1.00f, 1.00f };
+	cvar_t *hostIp;
+	char hostIpBuf[128];
 	bool showIp = !hideIp;
-	CL_ImGuiBeginAutoBox( "race_control_join" );
-	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "Join" );
-	CL_ImGuiInputCvarName( "Join Name", "name", "Player", ImGuiInputTextFlags_None );
-	CL_ImGuiColorCvarName( "Player Color", "ls_race_color", raceColorFallback );
-	CL_ImGuiInputCvarName( "Host IP", "ls_race_ip", "127.0.0.1", ImGuiInputTextFlags_CharsNoBlank | ( hideIp ? ImGuiInputTextFlags_Password : 0 ) );
-	if ( ImGui::Checkbox( "Show IP", &showIp ) ) {
-		Cvar_SetValue( "ls_race_hide_ip", showIp ? 0.0f : 1.0f );
+	CL_ImGuiRaceSectionTitle( "Connect" );
+	CL_ImGuiInputCvarName( "Name", "name", "Player", ImGuiInputTextFlags_None );
+	CL_ImGuiColorCvarName( "Color", "ls_race_color", raceColorFallback );
+
+	hostIp = CL_ImGuiCvar( "ls_race_ip", "127.0.0.1" );
+	Q_strncpyz( hostIpBuf, hostIp && hostIp->string ? hostIp->string : "127.0.0.1", sizeof( hostIpBuf ) );
+	ImGui::PushID( "race_host_ip_inline" );
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted( "Host IP" );
+	CL_ImGuiOptionTooltip( "Host IP", "ls_race_ip", "Race host address." );
+	{
+		float avail = ImGui::GetContentRegionAvail().x;
+		float checkboxW = ImGui::GetFrameHeight();
+		bool inlineCheckbox = avail >= checkboxW + ImGui::GetStyle().ItemSpacing.x + 88.0f;
+		float inputW = inlineCheckbox ? avail - checkboxW - ImGui::GetStyle().ItemSpacing.x : avail;
+		ImGui::SetNextItemWidth( inputW );
+		if ( ImGui::InputText( "##host_ip", hostIpBuf, sizeof( hostIpBuf ), ImGuiInputTextFlags_CharsNoBlank | ( hideIp ? ImGuiInputTextFlags_Password : 0 ) ) && hostIp ) {
+			Cvar_Set( hostIp->name, hostIpBuf );
+		}
+		CL_ImGuiOptionTooltip( "Host IP", "ls_race_ip", "Race host address." );
+		if ( inlineCheckbox ) {
+			ImGui::SameLine();
+			if ( ImGui::Checkbox( "##show_ip", &showIp ) ) {
+				Cvar_SetValue( "ls_race_hide_ip", showIp ? 0.0f : 1.0f );
+			}
+			CL_ImGuiOptionTooltip( "Show IP", "ls_race_hide_ip", "Shows or hides the Host IP field." );
+		}
 	}
-	CL_ImGuiOptionTooltip( "Show IP", "ls_race_hide_ip", "Shows or hides the Host IP field in the Race menu." );
-	CL_ImGuiIntInputCvarName( "UDP Port", "ls_race_port", "27960", 1, 65535 );
+	ImGui::PopID();
+
+	CL_ImGuiIntInputCvarName( "Port", "ls_race_port", "27960", 1, 65535 );
 	CL_ImGuiInputCvarName( "Password", "ls_race_password", "", ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_Password );
-	if ( ImGui::BeginTable( "race_join_buttons", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
+	ImGui::Spacing();
+	CL_ImGuiRaceActionButton( "Join", "ls_race_connect", canConnect, isHost ? "Leave hosted lobby before joining another race." : "Cannot connect right now.", ImVec4( 0.25f, 0.68f, 1.00f, 1.0f ), 0.0f );
+	if ( ImGui::BeginTable( "race_connect_secondary", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
 		ImGui::TableNextRow();
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Join Manual", "ls_race_join", 0.0f, canJoinManual, isHost ? "Leave hosted lobby before joining another race." : "Leave the current race before joining another lobby." );
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( isClient ? "Reconnect" : "Connect", "ls_race_connect", 0.0f, canConnect, "Hosts cannot connect to themselves." );
-		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Scan", "ls_race_refresh", 0.0f, canRefresh, "Scans LAN and the Host IP on the selected UDP port." );
+		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Direct", "ls_race_join", 0.0f, canJoin, "Leave the current race before joining another lobby." );
+		ImGui::TableNextColumn(); CL_ImGuiRaceCommandButton( "Scan", "ls_race_refresh", 0.0f, canRefresh, "Scans LAN and the selected host port." );
 		ImGui::EndTable();
 	}
-	ImGui::TextDisabled( "%s", Cvar_VariableString( "ls_race_found_status" ) );
-	ImGui::EndChild();
 }
 
 static void CL_ImGuiRaceDrawBackgroundDots( void ) {
@@ -195,8 +267,7 @@ static void CL_ImGuiRaceDrawBackgroundDots( void ) {
 
 static void CL_ImGuiRaceDrawLobbyList( int foundCount, bool canJoinFound ) {
 	int rowIndex;
-	CL_ImGuiBeginAutoBox( "race_control_lobbies" );
-	ImGui::TextColored( CL_ImGuiRaceAccentVec4(), "Local lobbies" );
+	CL_ImGuiRaceSectionTitle( "Lobbies", Cvar_VariableString( "ls_race_found_status" ) );
 	if ( foundCount <= 0 ) {
 		ImGui::TextDisabled( "No local Race lobbies found." );
 	} else {
@@ -204,28 +275,47 @@ static void CL_ImGuiRaceDrawLobbyList( int foundCount, bool canJoinFound ) {
 			CL_ImGuiRaceFoundLobbyRow( rowIndex, canJoinFound );
 		}
 	}
-	ImGui::EndChild();
 }
 
-static void CL_ImGuiRaceDrawSnapshotBox( const lsRaceUiSnapshot_t *race, bool canLeave, bool canChat ) {
-	CL_ImGuiBeginAutoBox( "race_control_state" );
-	CL_ImGuiMiniStat( "Stage", race->stage[0] ? race->stage : "-" );
-	CL_ImGuiMiniStat( "Stage IGT", race->stageIgt[0] ? race->stageIgt : "--" );
-	CL_ImGuiMiniStat( "Checks", race->flags[0] ? race->flags : "sv_cheats 0 | god off | noclip off" );
+static void CL_ImGuiRaceDrawSnapshotPanel( const lsRaceUiSnapshot_t *race ) {
+	CL_ImGuiRaceSectionTitle( "Run" );
+	if ( ImGui::BeginTable( "race_snapshot_grid", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings ) ) {
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Timer", race->timer[0] ? race->timer : "0.00" );
+		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Stage IGT", race->stageIgt[0] ? race->stageIgt : "--" );
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Stage", race->stage[0] ? race->stage : "-" );
+		ImGui::TableNextColumn(); CL_ImGuiMiniStat( "Ready", race->ready[0] ? race->ready : "0/0" );
+		ImGui::EndTable();
+	}
 	if ( race->countdownText[0] ) CL_ImGuiMiniStat( "Countdown", race->countdownText );
-	ImGui::Separator();
-	CL_ImGuiRaceCommandButton( "Open Chat", "ls_race_open_chat", 104.0f, canChat, "Join or host a race before opening Race chat." );
-	CL_ImGuiSameLineIfFits( 108.0f );
-	CL_ImGuiRaceCommandButton( "Leave", "ls_race_leave", 96.0f, canLeave, "You are not in a race lobby." );
-	ImGui::EndChild();
+	CL_ImGuiMiniStat( "Checks", race->flags[0] ? race->flags : "sv_cheats 0 | god off | noclip off" );
+}
+
+static void CL_ImGuiRaceDrawActionStrip( const lsRaceUiSnapshot_t *race, bool isHost, bool canLeave, bool canChat, bool canConnect, bool canRefresh ) {
+	float full = ImGui::GetContentRegionAvail().x;
+	float buttonW = ( full - ImGui::GetStyle().ItemSpacing.x * 3.0f ) / 4.0f;
+	if ( buttonW < 108.0f ) buttonW = 0.0f;
+	CL_ImGuiRaceActionButton( canLeave ? "Leave Race" : "Join Race", canLeave ? "ls_race_leave" : "ls_race_connect",
+		canLeave || canConnect, canLeave ? "You are not in a race lobby." : "Hosts cannot connect to themselves.",
+		canLeave ? ImVec4( 0.95f, 0.30f, 0.22f, 1.0f ) : ImVec4( 0.25f, 0.68f, 1.00f, 1.0f ), buttonW );
+	if ( buttonW > 0.0f ) ImGui::SameLine();
+	CL_ImGuiRaceActionButton( "Chat", "ls_race_open_chat", canChat, "Join a race before opening chat.", ImVec4( 0.42f, 0.86f, 0.36f, 1.0f ), buttonW );
+	if ( buttonW > 0.0f ) ImGui::SameLine();
+	CL_ImGuiRaceCommandButton( "Scan", "ls_race_refresh", buttonW, canRefresh, "Scans LAN and the selected host port." );
+	if ( buttonW > 0.0f ) ImGui::SameLine();
+	CL_ImGuiRaceCommandButton( isHost ? "Start" : "Reconnect", isHost ? "ls_race_start" : "ls_race_connect", buttonW,
+		isHost || canConnect, isHost ? "Only the in-game host can start here." : "Hosts cannot connect to themselves." );
+	if ( race->countdownText[0] ) {
+		ImGui::SameLine();
+		CL_ImGuiRaceInlinePill( race->countdownText, IM_COL32( 255, 198, 70, 210 ), IM_COL32( 22, 16, 6, 255 ) );
+	}
 }
 
 static void CL_ImGuiDrawRaceControlWindow( void ) {
-	static int selectedTab = 0;
 	lsRaceUiSnapshot_t race;
 	srRaceRow_t rows[8];
 	bool isHost;
-	bool isClient;
 	bool canLeave;
 	bool canChat;
 	bool canJoinManual;
@@ -237,6 +327,14 @@ static void CL_ImGuiDrawRaceControlWindow( void ) {
 	int rowCount;
 	int foundCount;
 	float alpha;
+	float leftW;
+	float rightW;
+	float contentH;
+	float connectH;
+	float lobbyH;
+	float rosterH;
+	float bottomH;
+	float rosterTableH;
 	ImGuiWindowFlags flags;
 
 	LS_RaceBuildSnapshot( &race );
@@ -247,7 +345,6 @@ static void CL_ImGuiDrawRaceControlWindow( void ) {
 		CL_ImGuiRacePrettyToken( rows[rowIndex].stage );
 	}
 	isHost = !Q_stricmp( race.role, "Host" );
-	isClient = !Q_stricmp( race.role, "Client" );
 	hideIp = Cvar_VariableIntegerValue( "ls_race_hide_ip" ) != 0;
 	foundCount = Cvar_VariableIntegerValue( "ls_race_found_count" );
 	canLeave = race.active != 0;
@@ -256,7 +353,6 @@ static void CL_ImGuiDrawRaceControlWindow( void ) {
 	canConnect = !isHost;
 	canRefresh = !isHost;
 	canJoinFound = !isHost && race.active == 0;
-	if ( selectedTab > 2 ) selectedTab = 0;
 	alpha = s_imguiAlpha ? Com_Clamp( 0.72f, 1.0f, s_imguiAlpha->value ) : 0.96f;
 	flags = ImGuiWindowFlags_NoCollapse | ( s_raceGuiPinned ? ImGuiWindowFlags_NoMove : 0 );
 
@@ -279,55 +375,75 @@ static void CL_ImGuiDrawRaceControlWindow( void ) {
 		if ( s_raceGuiWindowW ) Cvar_SetValue( s_raceGuiWindowW->name, winSize.x );
 		if ( s_raceGuiWindowH ) Cvar_SetValue( s_raceGuiWindowH->name, winSize.y );
 	}
-	CL_ImGuiRaceControlHeader( &race, rowCount );
-	if ( ImGui::SmallButton( s_raceGuiPinned ? "Unpin" : "Pin" ) ) {
-		s_raceGuiPinned = !s_raceGuiPinned;
-	}
-	CL_ImGuiSameLineIfFits( 128.0f );
-	if ( ImGui::SmallButton( "Speedrun Settings" ) ) {
-		s_raceGuiOpen = false;
-		s_imguiCategory = 11;
-		CL_SpeedrunImGui_Open();
-	}
-	CL_ImGuiSameLineIfFits( 58.0f );
-	if ( ImGui::SmallButton( "Close" ) ) {
-		s_raceGuiOpen = false;
-	}
-	ImGui::Separator();
+	CL_ImGuiRaceDrawTopBar( &race, rowCount );
+	CL_ImGuiRaceDrawActionStrip( &race, isHost, canLeave, canChat, canConnect, canRefresh );
+	ImGui::Spacing();
 
-	if ( ImGui::BeginTabBar( "race_control_tabs" ) ) {
-		if ( ImGui::BeginTabItem( "Lobby" ) ) { selectedTab = 0; ImGui::EndTabItem(); }
-		if ( ImGui::BeginTabItem( "Roster" ) ) { selectedTab = 1; ImGui::EndTabItem(); }
-		if ( ImGui::BeginTabItem( "Status" ) ) { selectedTab = 2; ImGui::EndTabItem(); }
-		ImGui::EndTabBar();
+	leftW = ImGui::GetContentRegionAvail().x * 0.34f;
+	if ( leftW < 270.0f ) leftW = 270.0f;
+	if ( leftW > 360.0f ) leftW = 360.0f;
+	rightW = ImGui::GetContentRegionAvail().x - leftW - ImGui::GetStyle().ItemSpacing.x;
+	contentH = ImGui::GetContentRegionAvail().y;
+	if ( contentH < 360.0f ) contentH = 360.0f;
+	connectH = 436.0f;
+	if ( contentH < connectH + 96.0f + ImGui::GetStyle().ItemSpacing.y ) {
+		connectH = contentH - 96.0f - ImGui::GetStyle().ItemSpacing.y;
 	}
+	if ( connectH < 336.0f ) connectH = 336.0f;
+	lobbyH = contentH - connectH - ImGui::GetStyle().ItemSpacing.y;
+	if ( lobbyH < 64.0f ) lobbyH = 64.0f;
 
-	if ( selectedTab == 0 ) {
-		CL_ImGuiRaceDrawJoinBox( hideIp, isHost, isClient, canJoinManual, canConnect, canRefresh );
-		ImGui::Spacing();
-		CL_ImGuiRaceDrawLobbyList( foundCount, canJoinFound );
-		ImGui::TextDisabled( "Hosting and starting Race lobbies is handled by the external Race Host app." );
-	} else if ( selectedTab == 1 ) {
-		float tableHeight = ImGui::GetContentRegionAvail().y * 0.45f;
-		if ( tableHeight < 260.0f ) tableHeight = 260.0f;
-		CL_ImGuiDrawRaceRowsTable( "race_control_roster", rows, rowCount, tableHeight, false );
-		ImGui::Separator();
-		CL_ImGuiRaceDrawChatLog( &race, 132.0f );
+	ImGui::BeginChild( "race_left_column", ImVec2( leftW, contentH ), false, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "race_connect_panel", ImVec2( 0, connectH ), true, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	CL_ImGuiRaceDrawConnectionPanel( hideIp, isHost, canJoinManual, canConnect, canRefresh );
+	ImGui::EndChild();
+	ImGui::Spacing();
+	ImGui::BeginChild( "race_lobby_panel", ImVec2( 0, lobbyH ), true, ImGuiWindowFlags_NoSavedSettings );
+	CL_ImGuiRaceDrawLobbyList( foundCount, canJoinFound );
+	ImGui::EndChild();
+	ImGui::EndChild();
+
+	ImGui::SameLine();
+	bottomH = contentH * 0.40f;
+	if ( bottomH < 210.0f ) bottomH = 210.0f;
+	if ( bottomH > 270.0f ) bottomH = 270.0f;
+	rosterH = contentH - bottomH - ImGui::GetStyle().ItemSpacing.y;
+	if ( rosterH < 178.0f ) {
+		rosterH = 178.0f;
+		bottomH = contentH - rosterH - ImGui::GetStyle().ItemSpacing.y;
+		if ( bottomH < 122.0f ) bottomH = 122.0f;
+	}
+	ImGui::BeginChild( "race_main_column", ImVec2( rightW, contentH ), false, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+	ImGui::BeginChild( "race_roster_panel", ImVec2( 0, rosterH ), true, ImGuiWindowFlags_NoSavedSettings );
+	CL_ImGuiRaceSectionTitle( "Players", race.ready[0] ? race.ready : "0/0" );
+	if ( rowCount > 0 ) {
+		rosterTableH = ImGui::GetContentRegionAvail().y - 2.0f;
+		if ( rosterTableH < 72.0f ) rosterTableH = 72.0f;
+		CL_ImGuiDrawRaceRowsTable( "race_control_roster", rows, rowCount, rosterTableH, false );
+	} else {
+		ImGui::TextDisabled( "No players in lobby." );
+	}
+	ImGui::EndChild();
+	ImGui::Spacing();
+	ImGui::BeginChild( "race_bottom_panel", ImVec2( 0, bottomH ), false, ImGuiWindowFlags_NoSavedSettings );
+	if ( ImGui::BeginTable( "race_bottom_columns", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings ) ) {
+		ImGui::TableSetupColumn( "chat", ImGuiTableColumnFlags_WidthStretch, 1.45f );
+		ImGui::TableSetupColumn( "run", ImGuiTableColumnFlags_WidthStretch, 1.00f );
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::BeginChild( "race_chat_panel", ImVec2( 0, 0 ), true, ImGuiWindowFlags_NoSavedSettings );
+		CL_ImGuiRaceSectionTitle( "Chat" );
+		CL_ImGuiRaceDrawChatLog( &race, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() - 4.0f );
 		CL_ImGuiRaceDrawChatComposer( canChat );
-		ImGui::Spacing();
-		CL_ImGuiRaceDrawSnapshotBox( &race, canLeave, canChat );
-	} else if ( selectedTab == 2 ) {
-		CL_ImGuiRaceDrawSnapshotBox( &race, canLeave, canChat );
-		ImGui::Spacing();
-		CL_ImGuiBeginAutoBox( "race_control_network" );
-		CL_ImGuiMiniStat( "LAN Status", Cvar_VariableString( "ls_race_found_status" ) );
-		CL_ImGuiMiniStat( "Found", va( "%d", foundCount ) );
-		CL_ImGuiMiniStat( "Ready", race.ready[0] ? race.ready : "0/0" );
-		CL_ImGuiRaceCommandButton( "Refresh LAN", "ls_race_refresh", 124.0f, canRefresh, "LAN scan is unavailable while hosting." );
-		CL_ImGuiSameLineIfFits( 132.0f );
-		CL_ImGuiRaceCommandButton( isClient ? "Reconnect" : "Connect", "ls_race_connect", 124.0f, canConnect, "Hosts cannot connect to themselves." );
 		ImGui::EndChild();
+		ImGui::TableNextColumn();
+		ImGui::BeginChild( "race_run_panel", ImVec2( 0, 0 ), true, ImGuiWindowFlags_NoSavedSettings );
+		CL_ImGuiRaceDrawSnapshotPanel( &race );
+		ImGui::EndChild();
+		ImGui::EndTable();
 	}
+	ImGui::EndChild();
+	ImGui::EndChild();
 
 	ImGui::End();
 	CL_ImGuiRaceControlStylePop();

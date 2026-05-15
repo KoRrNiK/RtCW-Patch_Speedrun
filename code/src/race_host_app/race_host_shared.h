@@ -281,6 +281,9 @@ void Race_FormatWsaError(const char *op, int err, char *out, size_t outSize);
 void Race_BuildConfigPath(void);
 int Race_LoadServerConfig(int quiet);
 int Race_SaveServerConfig(void);
+int Race_NormalizeSettings(void);
+int Race_ValidateHostSettings(char *out, size_t outSize);
+int Race_ValidateRaceSettings(char *out, size_t outSize);
 
 racePlayer_t *Race_FindPlayerBySlot(int slot);
 void Race_SendText(const struct sockaddr_in *to, const char *fmt, ...);

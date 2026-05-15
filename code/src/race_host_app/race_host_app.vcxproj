@@ -179,6 +179,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="race_host_shared.h" />
+    <ClInclude Include="race_host_ui_inspector.inl" />
+    <ClInclude Include="race_host_ui_safety.inl" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
