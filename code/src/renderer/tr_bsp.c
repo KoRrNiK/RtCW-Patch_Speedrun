@@ -42,9 +42,89 @@ void RE_LoadWorldMap( const char *name );
 
 static world_t s_worldData;
 static byte        *fileBase;
+static cvar_t      *r_debugAlphaSurfaces;
+static cvar_t      *r_debugSurfaceLoadTimings;
 
 int c_subdivisions;
 int c_gridVerts;
+
+static qboolean R_LoadTimingsEnabled( void ) {
+	cvar_t *cv;
+
+	cv = ri.Cvar_Get( "com_loadTimings", "0", CVAR_ARCHIVE );
+	return cv && cv->integer;
+}
+
+static void R_LoadWorldTimingPrint( qboolean enabled, const char *label, int start, int *last ) {
+	int now;
+
+	if ( !enabled ) {
+		return;
+	}
+
+	now = ri.Milliseconds();
+	ri.Printf( PRINT_ALL, "[load] renderer world %-14s +%4d ms  total %4d ms\n", label, now - *last, now - start );
+	*last = now;
+}
+
+static qboolean R_ShaderLooksTransparent( const shader_t *shader ) {
+	int i;
+
+	if ( !shader ) {
+		return qfalse;
+	}
+
+	if ( strstr( shader->name, "textures/alpha/" ) || strstr( shader->name, "glass" ) ) {
+		return qtrue;
+	}
+
+	if ( shader->contentFlags & CONTENTS_TRANSLUCENT ) {
+		return qtrue;
+	}
+
+	if ( shader->surfaceFlags & ( SURF_GLASS | SURF_ALPHASHADOW ) ) {
+		return qtrue;
+	}
+
+	if ( shader->sort > SS_OPAQUE ) {
+		return qtrue;
+	}
+
+	for ( i = 0; i < shader->numUnfoggedPasses; i++ ) {
+		const shaderStage_t *stage = shader->stages[i];
+
+		if ( stage && ( stage->stateBits & ( GLS_ATEST_BITS | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) ) {
+			return qtrue;
+		}
+	}
+
+	return qfalse;
+}
+
+static void R_DebugAlphaSurfaceLoad( const char *kind, int shaderNum, int lightmapNum, const msurface_t *surf ) {
+	const shader_t *shader;
+	const shaderStage_t *stage;
+
+	if ( !r_debugAlphaSurfaces ) {
+		r_debugAlphaSurfaces = ri.Cvar_Get( "r_debugAlphaSurfaces", "0", 0 );
+	}
+	if ( !r_debugAlphaSurfaces->integer || !surf || !surf->shader ) {
+		return;
+	}
+
+	shader = surf->shader;
+	if ( !R_ShaderLooksTransparent( shader ) ) {
+		return;
+	}
+
+	stage = shader->stages[0];
+	ri.Printf( PRINT_ALL,
+			   "[alpha] %-4s bspShader=%d lm=%d shader='%s' explicit=%d default=%d passes=%d sort=%.1f cull=%d state0=0x%08x surfFlags=0x%08x contents=0x%08x alphaGen=%d\n",
+			   kind, shaderNum, lightmapNum, shader->name, shader->explicitlyDefined,
+			   shader->defaultShader, shader->numUnfoggedPasses, shader->sort,
+			   shader->cullType, stage ? stage->stateBits : 0, shader->surfaceFlags,
+			   shader->contentFlags, stage ? stage->alphaGen : -1 );
+}
 
 //===============================================================================
 
@@ -343,6 +423,16 @@ void *R_GetSurfMemory( int size ) {
 	return (void *)retval;
 }
 
+static qboolean R_BspDataNativeEndian( void ) {
+	static int nativeEndian = -1;
+
+	if ( nativeEndian < 0 ) {
+		nativeEndian = ( LittleLong( 1 ) == 1 );
+	}
+
+	return nativeEndian != 0;
+}
+
 /*
 ===============
 ParseFace
@@ -354,8 +444,10 @@ static void ParseFace( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, int 
 	int numPoints, numIndexes;
 	int lightmapNum;
 	int sfaceSize, ofsIndexes;
+	qboolean nativeEndian;
 
 	lightmapNum = LittleLong( ds->lightmapNum );
+	nativeEndian = R_BspDataNativeEndian();
 
 	// get fog volume
 	surf->fogIndex = LittleLong( ds->fogNum ) + 1;
@@ -365,6 +457,7 @@ static void ParseFace( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, int 
 	if ( r_singleShader->integer && !surf->shader->isSky ) {
 		surf->shader = tr.defaultShader;
 	}
+	R_DebugAlphaSurfaceLoad( "face", LittleLong( ds->shaderNum ), lightmapNum, surf );
 
 	numPoints = LittleLong( ds->numVerts );
 	if ( numPoints > MAX_FACE_POINTS ) {
@@ -390,24 +483,38 @@ static void ParseFace( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, int 
 
 	verts += LittleLong( ds->firstVert );
 	for ( i = 0 ; i < numPoints ; i++ ) {
-		for ( j = 0 ; j < 3 ; j++ ) {
-			cv->points[i][j] = LittleFloat( verts[i].xyz[j] );
-		}
-		for ( j = 0 ; j < 2 ; j++ ) {
-			cv->points[i][3 + j] = LittleFloat( verts[i].st[j] );
-			cv->points[i][5 + j] = LittleFloat( verts[i].lightmap[j] );
+		if ( nativeEndian ) {
+			memcpy( &cv->points[i][0], verts[i].xyz, sizeof( float ) * 3 );
+			memcpy( &cv->points[i][3], verts[i].st, sizeof( float ) * 2 );
+			memcpy( &cv->points[i][5], verts[i].lightmap, sizeof( float ) * 2 );
+		} else {
+			for ( j = 0 ; j < 3 ; j++ ) {
+				cv->points[i][j] = LittleFloat( verts[i].xyz[j] );
+			}
+			for ( j = 0 ; j < 2 ; j++ ) {
+				cv->points[i][3 + j] = LittleFloat( verts[i].st[j] );
+				cv->points[i][5 + j] = LittleFloat( verts[i].lightmap[j] );
+			}
 		}
 		R_ColorShiftLightingBytes( verts[i].color, (byte *)&cv->points[i][7] );
 	}
 
 	indexes += LittleLong( ds->firstIndex );
-	for ( i = 0 ; i < numIndexes ; i++ ) {
-		( ( int * )( (byte *)cv + cv->ofsIndices ) )[i] = LittleLong( indexes[ i ] );
+	if ( nativeEndian ) {
+		memcpy( (byte *)cv + cv->ofsIndices, indexes, sizeof( int ) * numIndexes );
+	} else {
+		for ( i = 0 ; i < numIndexes ; i++ ) {
+			( ( int * )( (byte *)cv + cv->ofsIndices ) )[i] = LittleLong( indexes[ i ] );
+		}
 	}
 
 	// take the plane information from the lightmap vector
-	for ( i = 0 ; i < 3 ; i++ ) {
-		cv->plane.normal[i] = LittleFloat( ds->lightmapVecs[2][i] );
+	if ( nativeEndian ) {
+		memcpy( cv->plane.normal, ds->lightmapVecs[2], sizeof( float ) * 3 );
+	} else {
+		for ( i = 0 ; i < 3 ; i++ ) {
+			cv->plane.normal[i] = LittleFloat( ds->lightmapVecs[2][i] );
+		}
 	}
 	cv->plane.dist = DotProduct( cv->points[0], cv->plane.normal );
 	SetPlaneSignbits( &cv->plane );
@@ -431,8 +538,10 @@ static void ParseMesh( dsurface_t *ds, drawVert_t *verts, msurface_t *surf ) {
 	vec3_t bounds[2];
 	vec3_t tmpVec;
 	static surfaceType_t skipData = SF_SKIP;
+	qboolean nativeEndian;
 
 	lightmapNum = LittleLong( ds->lightmapNum );
+	nativeEndian = R_BspDataNativeEndian();
 
 	// get fog volume
 	surf->fogIndex = LittleLong( ds->fogNum ) + 1;
@@ -442,6 +551,7 @@ static void ParseMesh( dsurface_t *ds, drawVert_t *verts, msurface_t *surf ) {
 	if ( r_singleShader->integer && !surf->shader->isSky ) {
 		surf->shader = tr.defaultShader;
 	}
+	R_DebugAlphaSurfaceLoad( "mesh", LittleLong( ds->shaderNum ), lightmapNum, surf );
 
 	// we may have a nodraw surface, because they might still need to
 	// be around for movement clipping
@@ -456,13 +566,20 @@ static void ParseMesh( dsurface_t *ds, drawVert_t *verts, msurface_t *surf ) {
 	verts += LittleLong( ds->firstVert );
 	numPoints = width * height;
 	for ( i = 0 ; i < numPoints ; i++ ) {
-		for ( j = 0 ; j < 3 ; j++ ) {
-			points[i].xyz[j] = LittleFloat( verts[i].xyz[j] );
-			points[i].normal[j] = LittleFloat( verts[i].normal[j] );
-		}
-		for ( j = 0 ; j < 2 ; j++ ) {
-			points[i].st[j] = LittleFloat( verts[i].st[j] );
-			points[i].lightmap[j] = LittleFloat( verts[i].lightmap[j] );
+		if ( nativeEndian ) {
+			memcpy( points[i].xyz, verts[i].xyz, sizeof( vec3_t ) );
+			memcpy( points[i].normal, verts[i].normal, sizeof( vec3_t ) );
+			memcpy( points[i].st, verts[i].st, sizeof( float ) * 2 );
+			memcpy( points[i].lightmap, verts[i].lightmap, sizeof( float ) * 2 );
+		} else {
+			for ( j = 0 ; j < 3 ; j++ ) {
+				points[i].xyz[j] = LittleFloat( verts[i].xyz[j] );
+				points[i].normal[j] = LittleFloat( verts[i].normal[j] );
+			}
+			for ( j = 0 ; j < 2 ; j++ ) {
+				points[i].st[j] = LittleFloat( verts[i].st[j] );
+				points[i].lightmap[j] = LittleFloat( verts[i].lightmap[j] );
+			}
 		}
 		R_ColorShiftLightingBytes( verts[i].color, points[i].color );
 	}
@@ -474,9 +591,14 @@ static void ParseMesh( dsurface_t *ds, drawVert_t *verts, msurface_t *surf ) {
 	// copy the level of detail origin, which is the center
 	// of the group of all curves that must subdivide the same
 	// to avoid cracking
-	for ( i = 0 ; i < 3 ; i++ ) {
-		bounds[0][i] = LittleFloat( ds->lightmapVecs[0][i] );
-		bounds[1][i] = LittleFloat( ds->lightmapVecs[1][i] );
+	if ( nativeEndian ) {
+		memcpy( bounds[0], ds->lightmapVecs[0], sizeof( vec3_t ) );
+		memcpy( bounds[1], ds->lightmapVecs[1], sizeof( vec3_t ) );
+	} else {
+		for ( i = 0 ; i < 3 ; i++ ) {
+			bounds[0][i] = LittleFloat( ds->lightmapVecs[0][i] );
+			bounds[1][i] = LittleFloat( ds->lightmapVecs[1][i] );
+		}
 	}
 	VectorAdd( bounds[0], bounds[1], bounds[1] );
 	VectorScale( bounds[1], 0.5f, grid->lodOrigin );
@@ -493,15 +615,18 @@ static void ParseTriSurf( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, i
 	srfTriangles_t  *tri;
 	int i, j;
 	int numVerts, numIndexes;
+	qboolean nativeEndian;
 
 	// get fog volume
 	surf->fogIndex = LittleLong( ds->fogNum ) + 1;
+	nativeEndian = R_BspDataNativeEndian();
 
 	// get shader
 	surf->shader = ShaderForShaderNum( ds->shaderNum, LIGHTMAP_BY_VERTEX );
 	if ( r_singleShader->integer && !surf->shader->isSky ) {
 		surf->shader = tr.defaultShader;
 	}
+	R_DebugAlphaSurfaceLoad( "tri", LittleLong( ds->shaderNum ), LIGHTMAP_BY_VERTEX, surf );
 
 	numVerts = LittleLong( ds->numVerts );
 	numIndexes = LittleLong( ds->numIndexes );
@@ -523,14 +648,24 @@ static void ParseTriSurf( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, i
 	ClearBounds( tri->bounds[0], tri->bounds[1] );
 	verts += LittleLong( ds->firstVert );
 	for ( i = 0 ; i < numVerts ; i++ ) {
-		for ( j = 0 ; j < 3 ; j++ ) {
-			tri->verts[i].xyz[j] = LittleFloat( verts[i].xyz[j] );
-			tri->verts[i].normal[j] = LittleFloat( verts[i].normal[j] );
+		if ( nativeEndian ) {
+			memcpy( tri->verts[i].xyz, verts[i].xyz, sizeof( vec3_t ) );
+			memcpy( tri->verts[i].normal, verts[i].normal, sizeof( vec3_t ) );
+		} else {
+			for ( j = 0 ; j < 3 ; j++ ) {
+				tri->verts[i].xyz[j] = LittleFloat( verts[i].xyz[j] );
+				tri->verts[i].normal[j] = LittleFloat( verts[i].normal[j] );
+			}
 		}
 		AddPointToBounds( tri->verts[i].xyz, tri->bounds[0], tri->bounds[1] );
-		for ( j = 0 ; j < 2 ; j++ ) {
-			tri->verts[i].st[j] = LittleFloat( verts[i].st[j] );
-			tri->verts[i].lightmap[j] = LittleFloat( verts[i].lightmap[j] );
+		if ( nativeEndian ) {
+			memcpy( tri->verts[i].st, verts[i].st, sizeof( float ) * 2 );
+			memcpy( tri->verts[i].lightmap, verts[i].lightmap, sizeof( float ) * 2 );
+		} else {
+			for ( j = 0 ; j < 2 ; j++ ) {
+				tri->verts[i].st[j] = LittleFloat( verts[i].st[j] );
+				tri->verts[i].lightmap[j] = LittleFloat( verts[i].lightmap[j] );
+			}
 		}
 
 		R_ColorShiftLightingBytes( verts[i].color, tri->verts[i].color );
@@ -539,7 +674,7 @@ static void ParseTriSurf( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, i
 	// copy indexes
 	indexes += LittleLong( ds->firstIndex );
 	for ( i = 0 ; i < numIndexes ; i++ ) {
-		tri->indexes[i] = LittleLong( indexes[i] );
+		tri->indexes[i] = nativeEndian ? indexes[i] : LittleLong( indexes[i] );
 		if ( tri->indexes[i] < 0 || tri->indexes[i] >= numVerts ) {
 			ri.Error( ERR_DROP, "Bad index in triangle surface" );
 		}
@@ -1471,11 +1606,22 @@ static void R_LoadSurfaces( lump_t *surfs, lump_t *verts, lump_t *indexLump ) {
 	int count;
 	int numFaces, numMeshes, numTriSurfs, numFlares;
 	int i;
+	qboolean loadTimings;
+	qboolean detailTimings;
+	int loadStart, loadLast;
+	int faceMs, meshMs, triSurfMs, flareMs;
 
 	numFaces = 0;
 	numMeshes = 0;
 	numTriSurfs = 0;
 	numFlares = 0;
+	loadTimings = R_LoadTimingsEnabled();
+	if ( !r_debugSurfaceLoadTimings ) {
+		r_debugSurfaceLoadTimings = ri.Cvar_Get( "r_debugSurfaceLoadTimings", "0", 0 );
+	}
+	detailTimings = loadTimings && r_debugSurfaceLoadTimings && r_debugSurfaceLoadTimings->integer;
+	loadStart = loadLast = ri.Milliseconds();
+	faceMs = meshMs = triSurfMs = flareMs = 0;
 
 	in = ( void * )( fileBase + surfs->fileofs );
 	if ( surfs->filelen % sizeof( *in ) ) {
@@ -1504,36 +1650,64 @@ static void R_LoadSurfaces( lump_t *surfs, lump_t *verts, lump_t *indexLump ) {
 	R_InitSurfMemory();
 
 	for ( i = 0 ; i < count ; i++, in++, out++ ) {
-		switch ( LittleLong( in->surfaceType ) ) {
+		int surfaceType;
+		int parseStart;
+
+		surfaceType = LittleLong( in->surfaceType );
+		parseStart = detailTimings ? ri.Milliseconds() : 0;
+
+		switch ( surfaceType ) {
 		case MST_PATCH:
 			ParseMesh( in, dv, out );
+			if ( detailTimings ) {
+				meshMs += ri.Milliseconds() - parseStart;
+			}
 			numMeshes++;
 			break;
 		case MST_TRIANGLE_SOUP:
 			ParseTriSurf( in, dv, out, indexes );
+			if ( detailTimings ) {
+				triSurfMs += ri.Milliseconds() - parseStart;
+			}
 			numTriSurfs++;
 			break;
 		case MST_PLANAR:
 			ParseFace( in, dv, out, indexes );
+			if ( detailTimings ) {
+				faceMs += ri.Milliseconds() - parseStart;
+			}
 			numFaces++;
 			break;
 		case MST_FLARE:
 			ParseFlare( in, dv, out, indexes );
+			if ( detailTimings ) {
+				flareMs += ri.Milliseconds() - parseStart;
+			}
 			numFlares++;
 			break;
 		default:
 			ri.Error( ERR_DROP, "Bad surfaceType" );
 		}
 	}
+	R_LoadWorldTimingPrint( loadTimings, "surface parse", loadStart, &loadLast );
+	if ( detailTimings ) {
+		ri.Printf( PRINT_ALL, "[load] renderer world surface faces %d +%4d ms  total %4d ms\n", numFaces, faceMs, faceMs );
+		ri.Printf( PRINT_ALL, "[load] renderer world surface meshes %d +%4d ms  total %4d ms\n", numMeshes, meshMs, meshMs );
+		ri.Printf( PRINT_ALL, "[load] renderer world surface tris %d +%4d ms  total %4d ms\n", numTriSurfs, triSurfMs, triSurfMs );
+		ri.Printf( PRINT_ALL, "[load] renderer world surface flares %d +%4d ms  total %4d ms\n", numFlares, flareMs, flareMs );
+	}
 
 #ifdef PATCH_STITCHING
 	R_StitchAllPatches();
+	R_LoadWorldTimingPrint( loadTimings, "patch stitch", loadStart, &loadLast );
 #endif
 
 	R_FixSharedVertexLodError();
+	R_LoadWorldTimingPrint( loadTimings, "patch lod", loadStart, &loadLast );
 
 #ifdef PATCH_STITCHING
 	R_MovePatchSurfacesToHunk();
+	R_LoadWorldTimingPrint( loadTimings, "patch hunk", loadStart, &loadLast );
 #endif
 
 	ri.Printf( PRINT_ALL, "...loaded %d faces, %i meshes, %i trisurfs, %i flares\n",
@@ -2149,8 +2323,14 @@ void RE_LoadWorldMap( const char *name ) {
 	dheader_t   *header;
 	byte        *buffer;
 	byte        *startMarker;
+	int loadStart;
+	int loadLast;
+	qboolean loadTimings;
 
 	skyboxportal = 0;
+	loadStart = ri.Milliseconds();
+	loadLast = loadStart;
+	loadTimings = R_LoadTimingsEnabled();
 
 	if ( tr.worldMapLoaded ) {
 		/* Same-map fast-rewind during demo playback: the renderer was
@@ -2229,30 +2409,42 @@ void RE_LoadWorldMap( const char *name ) {
 	// just to show the loading bar, which adds significant overhead.
 	{
 		cvar_t *demoLoad = ri.Cvar_Get( "cl_demoMapLoading", "0", 0 );
-		qboolean showUpdate = !demoLoad->integer;
+		cvar_t *fastLoad = ri.Cvar_Get( "cl_fastMapLoading", "1", CVAR_ARCHIVE );
+		qboolean showUpdate = !( demoLoad && demoLoad->integer ) && !( fastLoad && fastLoad->integer );
 
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadShaders( &header->lumps[LUMP_SHADERS] );
+		R_LoadWorldTimingPrint( loadTimings, "shaders", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadLightmaps( &header->lumps[LUMP_LIGHTMAPS] );
+		R_LoadWorldTimingPrint( loadTimings, "lightmaps", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadPlanes( &header->lumps[LUMP_PLANES] );
+		R_LoadWorldTimingPrint( loadTimings, "planes", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadFogs( &header->lumps[LUMP_FOGS], &header->lumps[LUMP_BRUSHES], &header->lumps[LUMP_BRUSHSIDES] );
+		R_LoadWorldTimingPrint( loadTimings, "fogs", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadSurfaces( &header->lumps[LUMP_SURFACES], &header->lumps[LUMP_DRAWVERTS], &header->lumps[LUMP_DRAWINDEXES] );
+		R_LoadWorldTimingPrint( loadTimings, "surfaces", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadMarksurfaces( &header->lumps[LUMP_LEAFSURFACES] );
+		R_LoadWorldTimingPrint( loadTimings, "marksurfaces", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadNodesAndLeafs( &header->lumps[LUMP_NODES], &header->lumps[LUMP_LEAFS] );
+		R_LoadWorldTimingPrint( loadTimings, "nodes/leafs", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadSubmodels( &header->lumps[LUMP_MODELS] );
+		R_LoadWorldTimingPrint( loadTimings, "submodels", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadVisibility( &header->lumps[LUMP_VISIBILITY] );
+		R_LoadWorldTimingPrint( loadTimings, "visibility", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadEntities( &header->lumps[LUMP_ENTITIES] );
+		R_LoadWorldTimingPrint( loadTimings, "entities", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 		R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID] );
+		R_LoadWorldTimingPrint( loadTimings, "lightgrid", loadStart, &loadLast );
 		if ( showUpdate ) ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 	}
 

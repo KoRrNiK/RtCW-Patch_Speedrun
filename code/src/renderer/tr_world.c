@@ -282,8 +282,44 @@ static unsigned int R_DlightSurface( msurface_t *surf, unsigned int dlightBits )
 R_AddWorldSurface
 ======================
 */
+static qboolean R_ShaderLooksTransparent( const shader_t *shader ) {
+	int i;
+
+	if ( !shader ) {
+		return qfalse;
+	}
+
+	if ( strstr( shader->name, "textures/alpha/" ) || strstr( shader->name, "glass" ) ) {
+		return qtrue;
+	}
+
+	if ( shader->contentFlags & CONTENTS_TRANSLUCENT ) {
+		return qtrue;
+	}
+
+	if ( shader->surfaceFlags & ( SURF_GLASS | SURF_ALPHASHADOW ) ) {
+		return qtrue;
+	}
+
+	if ( shader->sort > SS_OPAQUE ) {
+		return qtrue;
+	}
+
+	for ( i = 0; i < shader->numUnfoggedPasses; i++ ) {
+		const shaderStage_t *stage = shader->stages[i];
+
+		if ( stage && ( stage->stateBits & ( GLS_ATEST_BITS | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) ) {
+			return qtrue;
+		}
+	}
+
+	return qfalse;
+}
+
 static void R_AddWorldSurface( msurface_t *surf, unsigned int dlightBits ) {
 	unsigned int visibleDlightBits;
+	shader_t *drawShader;
+	static cvar_t *r_forceAlphaSurfaces;
 
 	if ( surf->viewCount == tr.viewCount ) {
 		if ( dlightBits && surf->drawSurfIndex >= 0 ) {
@@ -317,8 +353,16 @@ static void R_AddWorldSurface( msurface_t *surf, unsigned int dlightBits ) {
 	}
 	surf->visibleDlightBits = visibleDlightBits;
 
+	drawShader = surf->shader;
+	if ( !r_forceAlphaSurfaces ) {
+		r_forceAlphaSurfaces = ri.Cvar_Get( "r_forceAlphaSurfaces", "0", 0 );
+	}
+	if ( r_forceAlphaSurfaces->integer && R_ShaderLooksTransparent( drawShader ) ) {
+		drawShader = tr.defaultShader;
+	}
+
 // GR - not tessellated
-	surf->drawSurfIndex = R_AddDrawSurf( surf->data, surf->shader, surf->fogIndex,
+	surf->drawSurfIndex = R_AddDrawSurf( surf->data, drawShader, surf->fogIndex,
 										 visibleDlightBits != 0, ATI_TESS_NONE );
 }
 
@@ -361,7 +405,7 @@ int R_BmodelFogNum( trRefEntity_t *re, bmodel_t *bmodel ) {
 			if ( re->e.origin[j] + bmodel->bounds[1][j] > fog->bounds[1][j] ) {
 				break;
 			}
-			if ( bmodel->bounds[1][j] < fog->bounds[0][j] ) {
+			if ( re->e.origin[j] + bmodel->bounds[1][j] < fog->bounds[0][j] ) {
 				break;
 			}
 		}

@@ -1267,6 +1267,7 @@ void RB_StageIteratorGeneric( void ) {
 	shaderCommands_t *input;
 
 	input = &tess;
+	backEnd.pc.c_fastPathGeneric++;
 
 	RB_DeformTessGeometry();
 
@@ -1469,6 +1470,7 @@ void RB_StageIteratorVertexLitTexture( void ) {
 		RB_StageIteratorGeneric();
 		return;
 	}
+	backEnd.pc.c_fastPathVertexLit++;
 
 	//
 	// compute colors
@@ -1576,6 +1578,7 @@ void RB_StageIteratorLightmappedMultitexture( void ) {
 		RB_StageIteratorGeneric();
 		return;
 	}
+	backEnd.pc.c_fastPathLightmapped++;
 
 	//
 	// log this call

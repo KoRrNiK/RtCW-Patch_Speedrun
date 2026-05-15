@@ -678,20 +678,9 @@ static void Upload32(   unsigned *data,
 	qboolean effectiveRoundImagesDown = r_roundImagesDown->integer;
 	int effectiveLowMemTextureSize = r_lowMemTextureSize->integer;
 
-	// do the root mean square error stuff first
-	if ( r_rmse->value ) {
+	// do the root mean square error stuff first. A value of 0 means disabled.
+	if ( r_rmse->value > 0.0f ) {
 		while ( R_RMSE( (byte *)data, width, height ) < r_rmse->value ) {
-			rmse_saved += ( height * width * 4 ) - ( ( width >> 1 ) * ( height >> 1 ) * 4 );
-			resampledBuffer = R_GetImageBuffer( ( width >> 1 ) * ( height >> 1 ) * 4, BUFFER_RESAMPLED );
-			ResampleTexture( data, width, height, resampledBuffer, width >> 1, height >> 1 );
-			data = resampledBuffer;
-			width = width >> 1;
-			height = height >> 1;
-			ri.Printf( PRINT_ALL, "r_rmse of %f has saved %dkb\n", r_rmse->value, ( rmse_saved / 1024 ) );
-		}
-	} else {
-		// just do the RMSE of 1 (reduce perfect)
-		while ( R_RMSE( (byte *)data, width, height ) < 1.0 ) {
 			rmse_saved += ( height * width * 4 ) - ( ( width >> 1 ) * ( height >> 1 ) * 4 );
 			resampledBuffer = R_GetImageBuffer( ( width >> 1 ) * ( height >> 1 ) * 4, BUFFER_RESAMPLED );
 			ResampleTexture( data, width, height, resampledBuffer, width >> 1, height >> 1 );
@@ -1180,8 +1169,8 @@ static void LoadBMP( const char *name, byte **pic, int *width, int *height ) {
 				*pixbuf++ = 0xff;
 				break;
 			case 16:
-				shortPixel = *( unsigned short * ) pixbuf;
-				pixbuf += 2;
+				shortPixel = LittleShort( *( short * )buf_p );
+				buf_p += 2;
 				*pixbuf++ = ( shortPixel & ( 31 << 10 ) ) >> 7;
 				*pixbuf++ = ( shortPixel & ( 31 << 5 ) ) >> 2;
 				*pixbuf++ = ( shortPixel & ( 31 ) ) << 3;
@@ -3780,32 +3769,36 @@ void R_LoadCacheImages( void ) {
 	byte *buf;
 	char    *token, *pString;
 	char name[MAX_QPATH];
-	int parms[3], i;
+	int parms[4], i;
 
 	if ( numBackupImages ) {
 		return;
 	}
 
-	len = ri.FS_ReadFile( "image.cache", NULL );
+	len = ri.FS_ReadFile( "image.cache", (void **)&buf );
 
-	if ( len <= 0 ) {
+	if ( len <= 0 || !buf ) {
 		return;
 	}
 
-	buf = (byte *)ri.Hunk_AllocateTempMemory( len );
-	ri.FS_ReadFile( "image.cache", (void **)&buf );
 	pString = (char*)buf;   //DAJ added (char*)
 
 	while ( ( token = COM_ParseExt( &pString, qtrue ) ) && token[0] ) {
 		Q_strncpyz( name, token, sizeof( name ) );
 		for ( i = 0; i < 4; i++ ) {
 			token = COM_ParseExt( &pString, qfalse );
+			if ( !token || !token[0] ) {
+				break;
+			}
 			parms[i] = atoi( token );
+		}
+		if ( i != 4 ) {
+			break;
 		}
 		R_FindImageFileExt( name, parms[0], parms[1], parms[2], parms[3] );
 	}
 
-	ri.Hunk_FreeTempMemory( buf );
+	ri.FS_FreeFile( buf );
 }
 // done.
 //==========================================================================================

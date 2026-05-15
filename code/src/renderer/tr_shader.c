@@ -814,7 +814,11 @@ static qboolean ParseStage( shaderStage_t *stage, char **text ) {
 			} else if ( !Q_stricmp( token, "vertex" ) )    {
 				stage->rgbGen = CGEN_VERTEX;
 				if ( stage->alphaGen == 0 ) {
-					stage->alphaGen = AGEN_VERTEX;
+					if ( shader.surfaceFlags & SURF_GLASS ) {
+						stage->alphaGen = AGEN_IDENTITY;
+					} else {
+						stage->alphaGen = AGEN_VERTEX;
+					}
 				}
 			} else if ( !Q_stricmp( token, "exactVertex" ) )    {
 				stage->rgbGen = CGEN_EXACT_VERTEX;
@@ -1374,9 +1378,11 @@ will optimize it.
 */
 static qboolean ParseShader( char **text ) {
 	char *token;
-	int s;
+	int s, i;
+	qboolean safetyGlassGrate;
 
 	s = 0;
+	safetyGlassGrate = !Q_stricmp( shader.name, "textures/sfx/saftey_glass2a" );
 
 	token = COM_ParseExt( text, qtrue );
 	if ( token[0] != '{' ) {
@@ -1697,6 +1703,29 @@ static qboolean ParseShader( char **text ) {
 	//
 	if ( s == 0 && !shader.isSky && !( shader.contentFlags & CONTENTS_FOG ) ) {
 		return qfalse;
+	}
+
+	if ( shader.surfaceFlags & SURF_GLASS ) {
+		for ( i = 0; i < s; i++ ) {
+			if ( !( stages[i].stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) ) {
+				continue;
+			}
+			if ( safetyGlassGrate ) {
+				stages[i].rgbGen = CGEN_CONST;
+				stages[i].constantColor[0] = 76;
+				stages[i].constantColor[1] = 76;
+				stages[i].constantColor[2] = 72;
+				stages[i].constantColor[3] = 255;
+				stages[i].alphaGen = AGEN_IDENTITY;
+				continue;
+			}
+			if ( stages[i].rgbGen == CGEN_VERTEX || stages[i].rgbGen == CGEN_LIGHTING_DIFFUSE ) {
+				stages[i].rgbGen = CGEN_VERTEX;
+				if ( stages[i].alphaGen == AGEN_VERTEX || stages[i].alphaGen == AGEN_SKIP ) {
+					stages[i].alphaGen = AGEN_IDENTITY;
+				}
+			}
+		}
 	}
 
 	shader.explicitlyDefined = qtrue;
@@ -3334,14 +3363,12 @@ void R_LoadCacheShaders( void ) {
 		return;
 	}
 
-	len = ri.FS_ReadFile( "shader.cache", NULL );
+	len = ri.FS_ReadFile( "shader.cache", (void **)&buf );
 
-	if ( len <= 0 ) {
+	if ( len <= 0 || !buf ) {
 		return;
 	}
 
-	buf = (byte *)ri.Hunk_AllocateTempMemory( len );
-	ri.FS_ReadFile( "shader.cache", (void **)&buf );
 	pString = (char*)buf;   //DAJ added (char*)
 
 	while ( ( token = COM_ParseExt( &pString, qtrue ) ) != NULL && token[0] ) {
@@ -3349,7 +3376,7 @@ void R_LoadCacheShaders( void ) {
 		RE_RegisterModel( name );
 	}
 
-	ri.Hunk_FreeTempMemory( buf );
+	ri.FS_FreeFile( buf );
 }
 // done.
 //=============================================================================

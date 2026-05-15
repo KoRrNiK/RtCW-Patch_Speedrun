@@ -2148,14 +2148,12 @@ void R_LoadCacheModels( void ) {
 		return;
 	}
 
-	len = ri.FS_ReadFile( "model.cache", NULL );
+	len = ri.FS_ReadFile( "model.cache", (void **)&buf );
 
-	if ( len <= 0 ) {
+	if ( len <= 0 || !buf ) {
 		return;
 	}
 
-	buf = (byte *)ri.Hunk_AllocateTempMemory( len );
-	ri.FS_ReadFile( "model.cache", (void **)&buf );
 	pString = (char*)buf;       //DAJ added (char*)
 
 	while ( ( token = COM_ParseExt( &pString, qtrue ) ) && token[0] ) {
@@ -2163,7 +2161,7 @@ void R_LoadCacheModels( void ) {
 		RE_RegisterModel( name );
 	}
 
-	ri.Hunk_FreeTempMemory( buf );
+	ri.FS_FreeFile( buf );
 }
 // done.
 //========================================================================

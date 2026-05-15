@@ -165,6 +165,7 @@ cvar_t  *r_lodCurveError;
 
 cvar_t  *r_fullscreen;
 cvar_t  *r_borderless;
+cvar_t  *r_monitor;
 cvar_t  *r_resizableWindow;
 
 cvar_t  *r_customwidth;
@@ -1120,6 +1121,7 @@ void R_Register( void ) {
 	r_mode = ri.Cvar_Get( "r_mode", "3", CVAR_ARCHIVE | CVAR_LATCH );
 	r_fullscreen = ri.Cvar_Get( "r_fullscreen", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_borderless = ri.Cvar_Get( "r_borderless", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	r_monitor = ri.Cvar_Get( "r_monitor", "0", CVAR_ARCHIVE | CVAR_LATCH );
 	r_resizableWindow = ri.Cvar_Get( "r_resizableWindow", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_customwidth = ri.Cvar_Get( "r_customwidth", "1600", CVAR_ARCHIVE | CVAR_LATCH );
 	r_customheight = ri.Cvar_Get( "r_customheight", "1024", CVAR_ARCHIVE | CVAR_LATCH );
@@ -1134,7 +1136,7 @@ void R_Register( void ) {
 #else
 	r_smp = ri.Cvar_Get( "r_smp", "0", CVAR_ARCHIVE | CVAR_LATCH );
 #endif
-	r_ignoreFastPath = ri.Cvar_Get( "r_ignoreFastPath", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	r_ignoreFastPath = ri.Cvar_Get( "r_ignoreFastPath", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 	//
 	// temporary latched variables that can only change over a restart

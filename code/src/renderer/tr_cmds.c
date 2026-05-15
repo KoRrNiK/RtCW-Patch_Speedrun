@@ -75,6 +75,10 @@ void R_PerformanceCounters( void ) {
 	else if ( r_speeds->integer == 6 ) {
 		ri.Printf( PRINT_ALL, "flare adds:%i tests:%i renders:%i\n",
 				   backEnd.pc.c_flareAdds, backEnd.pc.c_flareTests, backEnd.pc.c_flareRenders );
+	} else if ( r_speeds->integer == 7 ) {
+		ri.Printf( PRINT_ALL, "fast paths generic:%i vertex:%i lightmap:%i sky:%i\n",
+				   backEnd.pc.c_fastPathGeneric, backEnd.pc.c_fastPathVertexLit,
+				   backEnd.pc.c_fastPathLightmapped, backEnd.pc.c_fastPathSky );
 	}
 
 	memset( &tr.pc, 0, sizeof( tr.pc ) );
