@@ -35,6 +35,27 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "server.h"
 
+static cvar_t *sv_loadTimings;
+
+static qboolean SV_LoadTimingsEnabled( void ) {
+	if ( !sv_loadTimings ) {
+		sv_loadTimings = Cvar_Get( "com_loadTimings", "0", CVAR_ARCHIVE );
+	}
+	return sv_loadTimings->integer != 0;
+}
+
+static void SV_LoadTimingPrint( qboolean enabled, const char *label, int start, int *last ) {
+	int now;
+
+	if ( !enabled ) {
+		return;
+	}
+
+	now = Sys_Milliseconds();
+	Com_Printf( "[load] server %-18s +%4d ms  total %4d ms\n", label, now - *last, now - start );
+	*last = now;
+}
+
 /*
 ===============
 SV_SetConfigstring
@@ -636,6 +657,12 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 	qboolean isBot;
 	char systemInfo[MAX_INFO_STRING];
 	const char  *p;
+	int loadStart, loadLast;
+	qboolean loadTimings;
+
+	loadStart = Sys_Milliseconds();
+	loadLast = loadStart;
+	loadTimings = SV_LoadTimingsEnabled();
 
 	// Ridah, enforce maxclients in single player, so there is enough room for AI characters
 	{
@@ -672,6 +699,7 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 
 	// shut down the existing game if it is running
 	SV_ShutdownGameProgs();
+	SV_LoadTimingPrint( loadTimings, "shutdown game", loadStart, &loadLast );
 
 	Com_Printf( "------ Server Initialization ------\n" );
 	Com_Printf( "Server: %s\n",server );
@@ -679,12 +707,15 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 	// if not running a dedicated server CL_MapLoading will connect the client to the server
 	// also print some status stuff
 	CL_MapLoading();
+	SV_LoadTimingPrint( loadTimings, "CL_MapLoading", loadStart, &loadLast );
 
 	// make sure all the client stuff is unloaded
 	CL_ShutdownAll();
+	SV_LoadTimingPrint( loadTimings, "CL_ShutdownAll", loadStart, &loadLast );
 
 	// clear the whole hunk because we're (re)loading the server
 	Hunk_Clear();
+	SV_LoadTimingPrint( loadTimings, "Hunk_Clear", loadStart, &loadLast );
 
 //	// clear collision map data		// (SA) NOTE: TODO: used in missionpack
 //	CM_ClearMap();
@@ -738,8 +769,10 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 	srand( Sys_Milliseconds() );
 	sv.checksumFeed = ( ( (int) rand() << 16 ) ^ rand() ) ^ Sys_Milliseconds();
 	FS_Restart( sv.checksumFeed );
+	SV_LoadTimingPrint( loadTimings, "FS_Restart", loadStart, &loadLast );
 
 	CM_LoadMap( va( "maps/%s.bsp", server ), qfalse, &checksum );
+	SV_LoadTimingPrint( loadTimings, "CM_LoadMap", loadStart, &loadLast );
 
 	// set serverinfo visible name
 	Cvar_Set( "mapname", server );
@@ -761,6 +794,7 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 
 	// load and spawn all other entities
 	SV_InitGameProgs();
+	SV_LoadTimingPrint( loadTimings, "InitGameProgs", loadStart, &loadLast );
 
 	// don't allow a map_restart if game is modified
 	sv_gametype->modified = qfalse;
@@ -768,12 +802,15 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 	// run a few frames to allow everything to settle
 	for ( i = 0 ; i < 3 ; i++ ) {
 		VM_Call( gvm, GAME_RUN_FRAME, svs.time );
+		SV_LoadTimingPrint( loadTimings, va( "run frame %d game", i + 1 ), loadStart, &loadLast );
 		SV_BotFrame( svs.time );
+		SV_LoadTimingPrint( loadTimings, va( "run frame %d bot", i + 1 ), loadStart, &loadLast );
 		svs.time += 100;
 	}
 
 	// create a baseline for more efficient communications
 	SV_CreateBaseline();
+	SV_LoadTimingPrint( loadTimings, "create baseline", loadStart, &loadLast );
 
 	for ( i = 0 ; i < sv_maxclients->integer ; i++ ) {
 		// send the new gamestate to all connected clients
@@ -869,6 +906,7 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 	SV_Heartbeat_f();
 
 	Hunk_SetMark();
+	SV_LoadTimingPrint( loadTimings, "server total", loadStart, &loadLast );
 
 	Com_Printf( "-----------------------------------\n" );
 

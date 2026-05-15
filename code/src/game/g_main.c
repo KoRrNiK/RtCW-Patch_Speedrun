@@ -1197,6 +1197,22 @@ void G_RegisterCvars( void ) {
 
 extern void AICast_CastScriptThink( void ) ;
 
+static qboolean G_LoadTimingsEnabled( void ) {
+	return level.framenum <= 3 && trap_Cvar_VariableIntegerValue( "com_loadTimings" ) != 0;
+}
+
+static void G_LoadTimingPrint( qboolean enabled, const char *label, int start, int *last ) {
+	int now;
+
+	if ( !enabled ) {
+		return;
+	}
+
+	now = trap_Milliseconds();
+	G_Printf( "[load] game %-20s +%4d ms  total %4d ms\n", label, now - *last, now - start );
+	*last = now;
+}
+
 /*
 =================
 G_UpdateCvars
@@ -1350,6 +1366,7 @@ int G_SendMissionStats() {
 
 	// objectives
 	Q_strcat( cmd, sizeof( cmd ), va( ",%i,%i", objs, level.numObjectives ) );
+	trap_Cvar_Set( "g_objectivesneeded", va( "%i", level.numObjectives ) );
 	if ( objs >= level.numObjectives ) { // you're ready to go!
 		canExit = 1;
 	}
@@ -1489,6 +1506,7 @@ void G_InitGame( int levelTime, int randomSeed, int restart ) {
 		for ( i = 0; i < 8; i++ )     {  // max objective cvars: 8 (FIXME: use #define somewhere)
 			trap_Cvar_Set( va( "g_objective%i", i + 1 ), "0" );   // clear the objective ROM cvars
 		}
+		trap_Cvar_Set( "g_objectivesneeded", "0" );
 		trap_Cvar_Set( "cg_yougotMail", "0" );
 	}
 	G_Script_ScriptLoad();
@@ -2603,6 +2621,8 @@ void G_RunFrame( int levelTime ) {
 	int i;
 	gentity_t   *ent;
 	int msec;
+	int loadStart, loadLast;
+	qboolean loadTimings;
 //int start, end;
 
 	// if we are waiting for the level to restart, do nothing
@@ -2614,16 +2634,20 @@ void G_RunFrame( int levelTime ) {
 	level.previousTime = level.time;
 	level.time = levelTime;
 	msec = level.time - level.previousTime;
+	loadStart = loadLast = trap_Milliseconds();
+	loadTimings = G_LoadTimingsEnabled();
 
 	// Ridah, check for loading a save game
 	if ( g_gametype.integer == GT_SINGLE_PLAYER ) {
 		extern void AICast_CheckLoadGame( void );
 		AICast_CheckLoadGame();
 	}
+	G_LoadTimingPrint( loadTimings, va( "frame %d loadgame", level.framenum ), loadStart, &loadLast );
 	// done.
 
 	// get any cvar changes
 	G_UpdateCvars();
+	G_LoadTimingPrint( loadTimings, va( "frame %d cvars", level.framenum ), loadStart, &loadLast );
 
 	//
 	// go through all allocated objects
@@ -2745,10 +2769,12 @@ void G_RunFrame( int levelTime ) {
 
 		G_RunThink( ent );
 	}
+	G_LoadTimingPrint( loadTimings, va( "frame %d entities", level.framenum ), loadStart, &loadLast );
 //end = trap_Milliseconds();
 
 	// Ridah, move the AI
 	AICast_StartServerFrame( level.time );
+	G_LoadTimingPrint( loadTimings, va( "frame %d ai", level.framenum ), loadStart, &loadLast );
 
 //start = trap_Milliseconds();
 	// perform final fixups on the players
@@ -2758,6 +2784,7 @@ void G_RunFrame( int levelTime ) {
 			ClientEndFrame( ent );
 		}
 	}
+	G_LoadTimingPrint( loadTimings, va( "frame %d clients", level.framenum ), loadStart, &loadLast );
 //end = trap_Milliseconds();
 
 	// Record player state into rewind ring buffer
@@ -2765,6 +2792,7 @@ void G_RunFrame( int levelTime ) {
 		extern void G_RewindRecord( void );
 		G_RewindRecord();
 	}
+	G_LoadTimingPrint( loadTimings, va( "frame %d rewind", level.framenum ), loadStart, &loadLast );
 
 	// see if it is time to do a tournement restart
 //	CheckTournament();
@@ -2784,6 +2812,7 @@ void G_RunFrame( int levelTime ) {
 
 	// for tracking changes
 	CheckCvars();
+	G_LoadTimingPrint( loadTimings, va( "frame %d checks", level.framenum ), loadStart, &loadLast );
 
 	if ( g_listEntity.integer ) {
 		for ( i = 0; i < MAX_GENTITIES; i++ ) {
@@ -2794,5 +2823,6 @@ void G_RunFrame( int levelTime ) {
 
 	// Ridah, check if we are reloading, and times have expired
 	CheckReloadStatus();
+	G_LoadTimingPrint( loadTimings, va( "frame %d reload", level.framenum ), loadStart, &loadLast );
 
 }

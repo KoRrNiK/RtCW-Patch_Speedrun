@@ -844,6 +844,18 @@ int BotAILoadMap( int restart ) {
 BotAIStartFrame
 ==================
 */
+static void BotAILoadTimingPrint( qboolean enabled, const char *label, int start, int *last ) {
+	int now;
+
+	if ( !enabled ) {
+		return;
+	}
+
+	now = trap_Milliseconds();
+	G_Printf( "[load] game %-23s +%4d ms  total %4d ms\n", label, now - *last, now - start );
+	*last = now;
+}
+
 int BotAIStartFrame( int time ) {
 	int i;
 	gentity_t   *ent;
@@ -854,6 +866,11 @@ int BotAIStartFrame( int time ) {
 	static int local_time;
 	static int botlib_residual;
 	static int lastbotthink_time;
+	qboolean loadTimings;
+	int loadStart, loadLast;
+
+	loadTimings = ( level.framenum <= 3 ) && trap_Cvar_VariableIntegerValue( "com_loadTimings" );
+	loadStart = loadLast = trap_Milliseconds();
 
 	if ( g_gametype.integer != GT_SINGLE_PLAYER ) {
 		G_CheckBotSpawn();
@@ -868,6 +885,7 @@ int BotAIStartFrame( int time ) {
 	// Ridah, set the default AAS world
 	trap_AAS_SetCurrentWorld( 0 );
 	trap_Cvar_Update( &memorydump );
+	BotAILoadTimingPrint( loadTimings, va( "bot frame %d cvars", level.framenum ), loadStart, &loadLast );
 
 	if ( memorydump.integer ) {
 		trap_BotLibVarSet( "memorydump", "1" );
@@ -894,11 +912,13 @@ int BotAIStartFrame( int time ) {
 		botlib_residual -= thinktime;
 
 		trap_BotLibStartFrame( (float) time / 1000 );
+		BotAILoadTimingPrint( loadTimings, va( "bot frame %d AAS start", level.framenum ), loadStart, &loadLast );
 
 		// Ridah, only check the default world
 		trap_AAS_SetCurrentWorld( 0 );
 
 		if ( !trap_AAS_Initialized() ) {
+			BotAILoadTimingPrint( loadTimings, va( "bot frame %d AAS wait", level.framenum ), loadStart, &loadLast );
 			return BLERR_NOERROR;
 		}
 
@@ -975,8 +995,10 @@ int BotAIStartFrame( int time ) {
 			//
 			trap_BotLibUpdateEntity( i, &state );
 		}
+		BotAILoadTimingPrint( loadTimings, va( "bot frame %d entities", level.framenum ), loadStart, &loadLast );
 
 		BotAIRegularUpdate();
+		BotAILoadTimingPrint( loadTimings, va( "bot frame %d regular", level.framenum ), loadStart, &loadLast );
 
 	}
 

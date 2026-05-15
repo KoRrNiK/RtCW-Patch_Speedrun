@@ -756,6 +756,8 @@ void CG_Explodef( vec3_t origin, vec3_t dir, int mass, int type, qhandle_t sound
 	qhandle_t modelshader = 0;
 	float materialmul = 1;              // multiplier for different types
 
+	CG_RegisterDebrisModels();
+
 	memset( &pieces, 0, sizeof( pieces ) );
 
 	if ( type == 5 && damage ) {
@@ -1261,6 +1263,8 @@ void CG_Shard( centity_t *cent, vec3_t origin, vec3_t dir ) {
 
 	qboolean isflyingdebris = qfalse;
 
+	CG_RegisterDebrisModels();
+
 	type = cent->currentState.density;
 	howmany = cent->currentState.frame;
 
@@ -1377,6 +1381,8 @@ void CG_ShardJunk( centity_t *cent, vec3_t origin, vec3_t dir ) {
 	localEntity_t   *le;
 	refEntity_t     *re;
 	int type;
+
+	CG_RegisterDebrisModels();
 
 	type = cent->currentState.density;
 

@@ -143,7 +143,7 @@ AICast_GetCastState
 ============
 */
 cast_state_t *AICast_GetCastState( int entitynum ) {
-	if ( entitynum < 0 || entitynum > level.maxclients ) {
+	if ( !caststates || entitynum < 0 || entitynum >= aicast_maxclients ) {
 		return NULL;
 	}
 	//
@@ -495,12 +495,17 @@ void AICast_Init( void ) {
 	aicast_maxthink = trap_Cvar_VariableIntegerValue( "aicast_maxthink" );
 
 	aicast_maxclients = trap_Cvar_VariableIntegerValue( "sv_maxclients" );
+	if ( aicast_maxclients < 1 ) {
+		aicast_maxclients = 1;
+	} else if ( aicast_maxclients > MAX_CLIENTS ) {
+		aicast_maxclients = MAX_CLIENTS;
+	}
 
 	aicast_skillscale = (float)trap_Cvar_VariableIntegerValue( "g_gameSkill" ) / (float)GSKILL_MAX;
 
 	caststates = G_Alloc( aicast_maxclients * sizeof( cast_state_t ) );
-	memset( caststates, 0, sizeof( caststates ) );
-	for ( i = 0; i < MAX_CLIENTS; i++ ) {
+	memset( caststates, 0, aicast_maxclients * sizeof( *caststates ) );
+	for ( i = 0; i < aicast_maxclients; i++ ) {
 		caststates[i].entityNum = i;
 	}
 

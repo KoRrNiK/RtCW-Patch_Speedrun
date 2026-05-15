@@ -104,6 +104,7 @@ extern vmCvar_t ui_selectedPlayer;
 extern vmCvar_t ui_selectedPlayerName;
 extern vmCvar_t ui_netSource;
 extern vmCvar_t ui_menuFiles;
+extern vmCvar_t ui_fastInGameLoad;
 extern vmCvar_t ui_gameType;
 extern vmCvar_t ui_netGameType;
 extern vmCvar_t ui_actualNetGameType;

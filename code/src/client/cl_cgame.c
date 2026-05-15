@@ -46,6 +46,28 @@ extern qboolean SV_GetModelInfo( int clientNum, char *modelName, animModelInfo_t
 extern int  CL_DemoFindMapIndex( const char *mapname );
 extern void CL_DemoUpdateMapServerTime( int mapIdx, int serverTime );
 
+static cvar_t *cl_loadTimings;
+static cvar_t *cl_touchMemoryAfterLoad;
+
+static qboolean CL_LoadTimingsEnabled( void ) {
+	if ( !cl_loadTimings ) {
+		cl_loadTimings = Cvar_Get( "com_loadTimings", "0", CVAR_ARCHIVE );
+	}
+	return cl_loadTimings->integer != 0;
+}
+
+static void CL_LoadTimingPrint( qboolean enabled, const char *label, int start, int *last ) {
+	int now;
+
+	if ( !enabled ) {
+		return;
+	}
+
+	now = Sys_Milliseconds();
+	Com_Printf( "[load] client %-18s +%4d ms  total %4d ms\n", label, now - *last, now - start );
+	*last = now;
+}
+
 
 /*
 ====================
@@ -1018,10 +1040,16 @@ Should only by called by CL_StartHunkUsers
 void CL_InitCGame( void ) {
 	const char          *info;
 	const char          *mapname;
-	int t1, t2;
+	int t1, t2, loadLast;
+	qboolean loadTimings;
 	vmInterpret_t interpret;
 
 	t1 = Sys_Milliseconds();
+	loadLast = t1;
+	loadTimings = CL_LoadTimingsEnabled();
+	if ( !cl_touchMemoryAfterLoad ) {
+		cl_touchMemoryAfterLoad = Cvar_Get( "cl_touchMemoryAfterLoad", "0", CVAR_ARCHIVE );
+	}
 
 	// put away the console
 	Con_Close();
@@ -1044,12 +1072,14 @@ void CL_InitCGame( void ) {
 	if ( !cgvm ) {
 		Com_Error( ERR_DROP, "VM_Create on cgame failed" );
 	}
+	CL_LoadTimingPrint( loadTimings, "VM_Create cgame", t1, &loadLast );
 	cls.state = CA_LOADING;
 
 	// init for this gamestate
 	// use the lastExecutedServerCommand instead of the serverCommandSequence
 	// otherwise server commands sent just before a gamestate are dropped
 	VM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
+	CL_LoadTimingPrint( loadTimings, "CG_INIT", t1, &loadLast );
 
 	// reset any CVAR_CHEAT cvars registered by cgame
 	if ( !clc.demoplaying )
@@ -1066,10 +1096,14 @@ void CL_InitCGame( void ) {
 	// have the renderer touch all its images, so they are present
 	// on the card even if the driver does deferred loading
 	re.EndRegistration();
+	CL_LoadTimingPrint( loadTimings, "EndRegistration", t1, &loadLast );
 
 	// make sure everything is paged in
-	if ( !Sys_LowPhysicalMemory() ) {
+	if ( cl_touchMemoryAfterLoad->integer && !Sys_LowPhysicalMemory() ) {
 		Com_TouchMemory();
+		CL_LoadTimingPrint( loadTimings, "TouchMemory", t1, &loadLast );
+	} else {
+		CL_LoadTimingPrint( loadTimings, "TouchMemory skipped", t1, &loadLast );
 	}
 
 	// clear anything that got printed
@@ -1396,12 +1430,15 @@ void CL_SetCGameTime( void ) {
 			}
 			CL_ReadDemoMessage();
 		}
-		if ( cl.newSnapshots ) {
-			cl.newSnapshots = qfalse;
-			CL_FirstSnapshot();
-			if ( clc.demoplaying ) {
-				s_demoResyncFrames = 3;
-			}
+	if ( cl.newSnapshots ) {
+		cl.newSnapshots = qfalse;
+		CL_FirstSnapshot();
+		if ( cls.state == CA_ACTIVE ) {
+			CL_MapLoadTimingEvent( "first snapshot" );
+		}
+		if ( clc.demoplaying ) {
+			s_demoResyncFrames = 3;
+		}
 		}
 		if ( cls.state != CA_ACTIVE ) {
 			return;

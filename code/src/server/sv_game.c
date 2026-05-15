@@ -319,13 +319,50 @@ static float VM_ArgToFloat( vmArg_t arg ) {
 #define VMA( x ) VM_ArgPtr( args[x] )
 #define VMF( x ) VM_ArgToFloat( args[x] )
 
+static void SV_CrashTourGameError( const char *message ) {
+	char mapName[MAX_QPATH];
+	char step[MAX_STRING_CHARS];
+	char text[MAX_STRING_CHARS];
+	fileHandle_t log;
+	qboolean crashTourContext;
+
+	Cvar_VariableStringBuffer( "mapname", mapName, sizeof( mapName ) );
+	Cvar_VariableStringBuffer( "g_crashTourStep", step, sizeof( step ) );
+	crashTourContext = ( Cvar_VariableIntegerValue( "g_crashTourRunning" ) || step[0] ) ? qtrue : qfalse;
+
+	if ( crashTourContext ) {
+		Com_sprintf( text, sizeof( text ),
+					 "[crash_tour] game error on map %s at %s: %s\n",
+					 mapName[0] ? mapName : "<unknown>",
+					 step[0] ? step : "<unknown step>",
+					 message ? message : "<null>" );
+	} else {
+		Com_sprintf( text, sizeof( text ),
+					 "[game] error on map %s: %s\n",
+					 mapName[0] ? mapName : "<unknown>",
+					 message ? message : "<null>" );
+	}
+
+	Com_Printf( "^1%s", text );
+	if ( FS_FOpenFileByMode( crashTourContext ? "crash_tour_errors.log" : "game_errors.log", &log, FS_APPEND_SYNC ) >= 0 && log ) {
+		FS_Write( text, strlen( text ), log );
+		FS_FCloseFile( log );
+	}
+
+	Com_Error( ERR_DROP, "%s", text );
+}
+
 vmArg_t SV_GameSystemCalls( vmArg_t *args ) {
 	switch ( args[0] ) {
 	case G_PRINT:
 		Com_Printf( "%s", VMA( 1 ) );
 		return 0;
 	case G_ERROR:
-		Com_Error( ERR_DROP, "%s", VMA( 1 ) );
+		{
+			const char *message = VMA( 1 );
+
+			SV_CrashTourGameError( message );
+		}
 		return 0;
 	case G_ENDGAME:
 		Com_Error( ERR_ENDGAME, "endgame" );  // no message, no error print

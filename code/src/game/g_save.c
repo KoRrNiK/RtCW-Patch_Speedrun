@@ -665,7 +665,7 @@ static void G_SaveCheck64BitLayout( fileHandle_t f, const char *filename, const 
 		trap_Cvar_Set( "savegame_filename", "" );
 		G_Error(
 			"This savegame uses an older 32-bit save layout and cannot be loaded safely by the 64-bit build yet.\n\n"
-			"Nothing was deleted. You can still load this save with the 32-bit build, or keep it for a future save converter.\n\n"
+			"Nothing was deleted. Please create new saves with the 64-bit build. You can still load this save with the 32-bit build if needed.\n\n"
 			"Save: %s\n"
 			"Map: %s\n"
 			"Mismatch: %s block is %i bytes in the save, but this 64-bit build expects %i bytes.",

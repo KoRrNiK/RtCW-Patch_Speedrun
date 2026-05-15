@@ -55,6 +55,9 @@ jmp_buf abortframe;     // an ERR_DROP occured, exit the entire frame
 
 FILE *debuglogfile;
 static fileHandle_t logfile;
+static fileHandle_t com_loadTimingFile;
+static cvar_t *com_loadTimingFileCvar;
+static int com_loadTimingRow;
 fileHandle_t com_journalFile;               // events are written here
 fileHandle_t com_journalDataFile;           // config files are written here
 
@@ -171,6 +174,144 @@ void Com_EndRedirect( void ) {
 	rd_flush = NULL;
 }
 
+static void Com_TrimLoadTimingField( char *text ) {
+	char *end;
+
+	while ( *text == ' ' || *text == '\t' ) {
+		memmove( text, text + 1, strlen( text ) );
+	}
+
+	end = text + strlen( text );
+	while ( end > text && ( end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n' ) ) {
+		*--end = '\0';
+	}
+}
+
+static void Com_CopyLoadTimingField( char *dst, int dstSize, const char *begin, const char *end ) {
+	int len;
+
+	if ( dstSize <= 0 ) {
+		return;
+	}
+	if ( !begin || !end || end < begin ) {
+		dst[0] = '\0';
+		return;
+	}
+
+	len = (int)( end - begin );
+	if ( len >= dstSize ) {
+		len = dstSize - 1;
+	}
+	memcpy( dst, begin, len );
+	dst[len] = '\0';
+	Com_TrimLoadTimingField( dst );
+}
+
+static void Com_CopyLoadTimingRaw( char *dst, int dstSize, const char *src ) {
+	int i, j;
+
+	if ( dstSize <= 0 ) {
+		return;
+	}
+
+	for ( i = 0, j = 0; src[i] && j < dstSize - 1; i++ ) {
+		if ( src[i] == '\r' || src[i] == '\n' ) {
+			continue;
+		}
+		dst[j++] = ( src[i] == '\t' ) ? ' ' : src[i];
+	}
+	dst[j] = '\0';
+}
+
+static void Com_BeginLoadTimingFile( void ) {
+	if ( com_loadTimingFile ) {
+		FS_FCloseFile( com_loadTimingFile );
+		com_loadTimingFile = 0;
+	}
+
+	com_loadTimingRow = 0;
+	com_loadTimingFile = FS_FOpenFileWrite( "loadtimings/latest.tsv" );
+	if ( com_loadTimingFile ) {
+		FS_Printf( com_loadTimingFile, "row\tphase\tlabel\tdelta_ms\ttotal_ms\traw\n" );
+		FS_Flush( com_loadTimingFile );
+	}
+}
+
+static void Com_WriteLoadTimingRow( const char *msg ) {
+	const char *p;
+	const char *plus;
+	const char *total;
+	const char *labelBegin;
+	char phase[32];
+	char label[64];
+	char raw[MAXPRINTMSG];
+	int deltaMs;
+	int totalMs;
+
+	if ( Q_strncmp( msg, "[load] ", 7 ) ) {
+		return;
+	}
+	if ( !FS_Initialized() ) {
+		return;
+	}
+
+	if ( !com_loadTimingFileCvar ) {
+		com_loadTimingFileCvar = Cvar_Get( "com_loadTimingFile", "1", CVAR_ARCHIVE );
+	}
+	if ( !com_loadTimingFileCvar || !com_loadTimingFileCvar->integer ) {
+		return;
+	}
+
+	if ( strstr( msg, "client path" ) && strstr( msg, "CL_MapLoading" ) ) {
+		Com_BeginLoadTimingFile();
+	}
+	if ( !com_loadTimingFile ) {
+		Com_BeginLoadTimingFile();
+	}
+	if ( !com_loadTimingFile ) {
+		return;
+	}
+
+	p = msg + 7;
+	plus = strstr( p, " +" );
+	total = plus ? strstr( plus, " total" ) : NULL;
+	if ( !plus || !total ) {
+		return;
+	}
+
+	if ( !Q_strncmp( p, "client path", 11 ) ) {
+		Q_strncpyz( phase, "client path", sizeof( phase ) );
+		labelBegin = p + 11;
+	} else if ( !Q_strncmp( p, "renderer world", 14 ) ) {
+		Q_strncpyz( phase, "renderer world", sizeof( phase ) );
+		labelBegin = p + 14;
+	} else if ( !Q_strncmp( p, "cgame", 5 ) ) {
+		Q_strncpyz( phase, "cgame", sizeof( phase ) );
+		labelBegin = p + 5;
+	} else if ( !Q_strncmp( p, "server", 6 ) ) {
+		Q_strncpyz( phase, "server", sizeof( phase ) );
+		labelBegin = p + 6;
+	} else if ( !Q_strncmp( p, "client", 6 ) ) {
+		Q_strncpyz( phase, "client", sizeof( phase ) );
+		labelBegin = p + 6;
+	} else if ( !Q_strncmp( p, "game", 4 ) ) {
+		Q_strncpyz( phase, "game", sizeof( phase ) );
+		labelBegin = p + 4;
+	} else {
+		Q_strncpyz( phase, "unknown", sizeof( phase ) );
+		labelBegin = p;
+	}
+
+	Com_CopyLoadTimingField( label, sizeof( label ), labelBegin, plus );
+	Com_CopyLoadTimingRaw( raw, sizeof( raw ), msg );
+	deltaMs = atoi( plus + 2 );
+	totalMs = atoi( total + 6 );
+
+	FS_Printf( com_loadTimingFile, "%d\t%s\t%s\t%d\t%d\t%s\n",
+			   ++com_loadTimingRow, phase, label, deltaMs, totalMs, raw );
+	FS_Flush( com_loadTimingFile );
+}
+
 /*
 =============
 Com_Printf
@@ -203,6 +344,8 @@ void QDECL Com_Printf( const char *fmt, ... ) {
 		//*rd_buffer = 0;
 		return;
 	}
+
+	Com_WriteLoadTimingRow( msg );
 
 	// echo to console if we're not a dedicated server
 	if ( com_dedicated && !com_dedicated->integer ) {

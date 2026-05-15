@@ -91,13 +91,18 @@ static ghostLerpFrame_t race_legs[CG_RACE_MAX_GHOSTS], race_torso[CG_RACE_MAX_GH
 static centity_t        race_player_ghosts[CG_RACE_MAX_GHOSTS];
 static qboolean         race_player_ghost_used[CG_RACE_MAX_GHOSTS];
 
-#define CG_RACE_GHOST_PLAYER_EFLAGS ( EF_DEAD | EF_CROUCHING | EF_MG42_ACTIVE | EF_FIRING | EF_TALK | EF_CONNECTION | EF_HEADSHOT | EF_HEADLOOK | EF_STAND_IDLE2 | EF_NO_TURN_ANIM | EF_ZOOMING | EF_NOSWINGANGLES | EF_RECENTLY_FIRING )
+#define CG_RACE_GHOST_PLAYER_EFLAGS ( EF_DEAD | EF_CROUCHING | EF_MG42_ACTIVE | EF_TALK | EF_CONNECTION | EF_HEADSHOT | EF_HEADLOOK | EF_STAND_IDLE2 | EF_NO_TURN_ANIM | EF_ZOOMING | EF_NOSWINGANGLES )
 
+static int CG_RaceGhostQuietEFlags( int eFlags );
 static qboolean CG_ParseRaceGhost( const char *text, raceGhostInfo_t *out );
 static qboolean CG_AddRaceGhostPlayerModel( const raceGhostInfo_t *info, int ghostSlot );
 static void CG_AddRaceGhostModel( float x, float y, float z, float yaw, float speed,
 								  byte r, byte g, byte b, int alpha, qboolean crouched, int weaponNum, int legsAnimNum, int torsoAnimNum,
 								  ghostLerpFrame_t *legsLf, ghostLerpFrame_t *torsoLf );
+
+static int CG_RaceGhostQuietEFlags( int eFlags ) {
+	return eFlags & ~( EF_FIRING | EF_RECENTLY_FIRING );
+}
 
 static void CG_InitGhost( void ) {
 	int i;
@@ -774,7 +779,7 @@ static qboolean CG_AddRaceGhostPlayerModel( const raceGhostInfo_t *info, int gho
 	weaponNum = info->weapon;
 	if ( weaponNum < WP_NONE || weaponNum >= WP_NUM_WEAPONS ) weaponNum = WP_NONE;
 	cgs.clientinfo[ghostClientNum].curWeapon = weaponNum;
-	eFlags = info->eFlags & CG_RACE_GHOST_PLAYER_EFLAGS;
+	eFlags = CG_RaceGhostQuietEFlags( info->eFlags ) & CG_RACE_GHOST_PLAYER_EFLAGS;
 	if ( info->crouched ) eFlags |= EF_CROUCHING;
 	renderMode = CG_RaceGhostRenderMode();
 	r = (byte)( ( info->packedColor >> 16 ) & 255 );
@@ -887,6 +892,7 @@ static qboolean CG_ParseRaceGhost( const char *text, raceGhostInfo_t *out ) {
 	if ( local.clip < 0 ) local.clip = 0;
 	if ( local.groundEntityNum < 0 || local.groundEntityNum > ENTITYNUM_NONE ) local.groundEntityNum = ENTITYNUM_WORLD;
 	if ( local.animMovetype < 0 ) local.animMovetype = 0;
+	local.eFlags = CG_RaceGhostQuietEFlags( local.eFlags );
 	*out = local;
 	return qtrue;
 }

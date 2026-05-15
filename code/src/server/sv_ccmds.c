@@ -606,7 +606,7 @@ void    SV_LoadGame_f( void ) {
 		Com_Error( ERR_DROP,
 			"Old 32-bit savegame detected.\n\n"
 			"This save was created with the 32-bit build. The 64-bit build uses a different save layout, so loading it directly could corrupt memory or crash.\n\n"
-			"Nothing was deleted. You can still load this save with the 32-bit build, or keep it for a future save converter.\n\n"
+			"Nothing was deleted. Please create new saves with the 64-bit build. You can still load this save with the 32-bit build if needed.\n\n"
 			"Save: %s\n"
 			"Map: %s\n"
 			"Save layout: entity block %i bytes",

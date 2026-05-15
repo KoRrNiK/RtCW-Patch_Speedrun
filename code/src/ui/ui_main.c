@@ -7972,14 +7972,24 @@ static void UI_BuildQ3Model_List( void ) {
 UI_Init
 =================
 */
+static void UI_LoadFastInGameMenus( void ) {
+	Menu_Reset();
+
+	/* Keep the lightweight in-game path, but retain the menus used while a
+	   map is connecting/loading and when an error interrupts that flow. */
+	UI_ParseMenu( "ui/connect.menu" );
+	UI_ParseMenu( "ui/error.menu" );
+	UI_ParseMenu( "ui/briefing.menu" );
+	UI_LoadMenus( "ui/ingame.txt", qfalse );
+}
+
 void _UI_Init( qboolean inGameLoad ) {
 	const char *menuSet;
 	int start;
 
-	//uiInfo.inGameLoad = inGameLoad;
-
 	UI_RegisterCvars();
 	UI_InitMemory();
+	uiInfo.inGameLoad = inGameLoad && ui_fastInGameLoad.integer;
 
 	uiInfo.demoFilter = -1;   /* show all demos by default */
 	uiInfo.demoSearchText[0] = '\0';
@@ -8078,7 +8088,9 @@ void _UI_Init( qboolean inGameLoad ) {
 	uiInfo.characterCount = 0;
 	uiInfo.aliasCount = 0;
 
-	UI_LoadArenas();
+	if ( !uiInfo.inGameLoad ) {
+		UI_LoadArenas();
+	}
 
 //	UI_ParseTeamInfo("teaminfo.txt");
 //	UI_LoadTeams();
@@ -8093,24 +8105,27 @@ void _UI_Init( qboolean inGameLoad ) {
 #endif
 	}
 
-#if 0
 	if ( uiInfo.inGameLoad ) {
-		UI_LoadMenus( "ui/ingame.txt", qtrue );
+		UI_LoadFastInGameMenus();
 	} else {
+		UI_LoadMenus( menuSet, qtrue );
+		UI_LoadMenus( "ui/ingame.txt", qfalse );
 	}
-#else
-	UI_LoadMenus( menuSet, qtrue );
-	UI_LoadMenus( "ui/ingame.txt", qfalse );
-#endif
 
 	Menus_CloseAll();
 
 //#ifdef MISSIONPACK			// NERVE - SMF - enabled for multiplayer
-	trap_LAN_LoadCachedServers();
-	UI_LoadBestScores( uiInfo.mapList[0].mapLoadName, uiInfo.gameTypes[ui_gameType.integer].gtEnum );
+	if ( !uiInfo.inGameLoad ) {
+		trap_LAN_LoadCachedServers();
+		if ( uiInfo.mapCount > 0 ) {
+			UI_LoadBestScores( uiInfo.mapList[0].mapLoadName, uiInfo.gameTypes[ui_gameType.integer].gtEnum );
+		}
+	}
 //#endif	// #ifdef MISSIONPACK
 
-	UI_BuildQ3Model_List();
+	if ( !uiInfo.inGameLoad ) {
+		UI_BuildQ3Model_List();
+	}
 #ifdef MISSIONPACK
 	UI_LoadBots();
 #endif  // #ifdef MISSIONPACK
@@ -8223,7 +8238,15 @@ void UI_LoadNonIngame() {
 		menuSet = "ui/menus.txt";
 #endif
 	}
+	if ( uiInfo.mapCount == 0 ) {
+		UI_LoadArenas();
+	}
 	UI_LoadMenus( menuSet, qfalse );
+	trap_LAN_LoadCachedServers();
+	if ( uiInfo.mapCount > 0 ) {
+		UI_LoadBestScores( uiInfo.mapList[0].mapLoadName, uiInfo.gameTypes[ui_gameType.integer].gtEnum );
+	}
+	UI_BuildQ3Model_List();
 	uiInfo.inGameLoad = qfalse;
 }
 
@@ -8717,6 +8740,7 @@ vmCvar_t ui_selectedPlayer;
 vmCvar_t ui_selectedPlayerName;
 vmCvar_t ui_netSource;
 vmCvar_t ui_menuFiles;
+vmCvar_t ui_fastInGameLoad;
 vmCvar_t ui_gameType;
 vmCvar_t ui_netGameType;
 vmCvar_t ui_actualNetGameType;
@@ -8834,6 +8858,7 @@ cvarTable_t cvarTable[] = {
 #else
 	{ &ui_menuFiles, "ui_menuFiles", "ui/menus.txt", CVAR_ARCHIVE },
 #endif
+	{ &ui_fastInGameLoad, "ui_fastInGameLoad", "1", CVAR_ARCHIVE },
 	{ &ui_gameType, "ui_gametype", "3", CVAR_ARCHIVE },
 	{ &ui_joinGameType, "ui_joinGametype", "0", CVAR_ARCHIVE },
 	{ &ui_netGameType, "ui_netGametype", "3", CVAR_ARCHIVE },

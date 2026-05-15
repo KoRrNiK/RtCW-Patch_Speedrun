@@ -348,6 +348,15 @@ static void CG_Camera_f( void ) {
 	CG_StartCamera( name, qfalse );
 }
 
+static void CG_CrashTourForcePlay_f( void ) {
+	cg.cameraMode = qfalse;
+	trap_SendClientCommand( "stopCamera" );
+	trap_stopCamera( CAM_PRIMARY );
+	trap_Cvar_Set( "cg_letterbox", "0" );
+	trap_Cvar_Set( "cg_norender", "0" );
+	CG_Fade( 0, 0, 0, 0, cg.time, 0 );
+}
+
 static void CG_Fade_f( void ) {
 	int r, g, b, a;
 	float duration;
@@ -485,6 +494,7 @@ static consoleCommand_t commands[] = {
 	{ "loadhud", CG_LoadHud_f },
 	{ "loaddeferred", CG_LoadDeferredPlayers },  // spelling fixed (SA)
 	{ "camera", CG_Camera_f },   // duffy
+	{ "crash_tour_forceplay", CG_CrashTourForcePlay_f },
 	{ "fade", CG_Fade_f },   // duffy
 	{ "tp", CG_Teleport_f },
 	{ "sp_zone_add", CG_ZoneAdd_f },

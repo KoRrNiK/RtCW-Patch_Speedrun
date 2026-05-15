@@ -88,6 +88,45 @@ cvar_t  *m_forward;
 cvar_t  *m_side;
 cvar_t  *m_filter;
 
+static cvar_t *cl_mapLoadTimings;
+static int cl_mapLoadTimingStart;
+static int cl_mapLoadTimingLast;
+
+static qboolean CL_MapLoadTimingsEnabled( void ) {
+	if ( !cl_mapLoadTimings ) {
+		cl_mapLoadTimings = Cvar_Get( "com_loadTimings", "0", CVAR_ARCHIVE );
+	}
+	return cl_mapLoadTimings && cl_mapLoadTimings->integer;
+}
+
+static void CL_MapLoadTimingBegin( const char *label ) {
+	if ( !CL_MapLoadTimingsEnabled() ) {
+		return;
+	}
+
+	cl_mapLoadTimingStart = Sys_Milliseconds();
+	cl_mapLoadTimingLast = cl_mapLoadTimingStart;
+	Com_Printf( "[load] client path  %-20s +%4d ms  total %4d ms\n", label, 0, 0 );
+}
+
+void CL_MapLoadTimingEvent( const char *label ) {
+	int now;
+
+	if ( !CL_MapLoadTimingsEnabled() ) {
+		return;
+	}
+
+	now = Sys_Milliseconds();
+	if ( !cl_mapLoadTimingStart ) {
+		cl_mapLoadTimingStart = now;
+		cl_mapLoadTimingLast = now;
+	}
+
+	Com_Printf( "[load] client path  %-20s +%4d ms  total %4d ms\n",
+				label, now - cl_mapLoadTimingLast, now - cl_mapLoadTimingStart );
+	cl_mapLoadTimingLast = now;
+}
+
 cvar_t  *cl_activeAction;
 
 cvar_t  *cl_motdString;
@@ -2331,9 +2370,13 @@ Also called by Com_Error
 =================
 */
 void CL_FlushMemory( void ) {
+	qboolean loadTimings;
+
+	loadTimings = CL_MapLoadTimingsEnabled();
 
 	// shutdown all the client stuff
 	CL_ShutdownAll();
+	CL_MapLoadTimingEvent( "FlushMemory shutdown" );
 
 	// if not running a server clear the whole hunk.
 	// During demo playback, always do a full clear even if com_sv_running
@@ -2344,12 +2387,21 @@ void CL_FlushMemory( void ) {
 		Hunk_Clear();
 		// clear collision map data so CM_LoadMap doesn't return stale pointers
 		CM_ClearMap();
+		if ( loadTimings ) {
+			CL_MapLoadTimingEvent( "FlushMemory hunk clear" );
+		}
 	} else {
 		// clear all the client data on the hunk
 		Hunk_ClearToMark();
+		if ( loadTimings ) {
+			CL_MapLoadTimingEvent( "FlushMemory hunk mark" );
+		}
 	}
 
 	CL_StartHunkUsers();
+	if ( loadTimings ) {
+		CL_MapLoadTimingEvent( "FlushMemory hunk users" );
+	}
 }
 
 /*
@@ -2366,6 +2418,8 @@ void CL_MapLoading( void ) {
 		return;
 	}
 
+	CL_MapLoadTimingBegin( "CL_MapLoading" );
+
 	Con_Close();
 	cls.keyCatchers = 0;
 
@@ -2380,6 +2434,7 @@ void CL_MapLoading( void ) {
 		memset( &cl.gameState, 0, sizeof( cl.gameState ) );
 		clc.lastPacketSentTime = -9999;
 		SCR_UpdateScreen();
+		CL_MapLoadTimingEvent( "map screen update" );
 	} else {
 		// clear nextmap so the cinematic shutdown doesn't execute it
 		Cvar_Set( "nextmap", "" );
@@ -2388,6 +2443,7 @@ void CL_MapLoading( void ) {
 		cls.state = CA_CHALLENGING;     // so the connect screen is drawn
 		cls.keyCatchers = 0;
 		SCR_UpdateScreen();
+		CL_MapLoadTimingEvent( "connect screen" );
 		clc.connectTime = -RETRANSMIT_TIMEOUT;
 		NET_StringToAdr( cls.servername, &clc.serverAddress );
 		// we don't need a challenge on the localhost
@@ -2397,6 +2453,7 @@ void CL_MapLoading( void ) {
 
 	// make sure sound is quiet
 	S_FadeAllSounds( 0, 0 );
+	CL_MapLoadTimingEvent( "sound fade" );
 }
 
 /*
@@ -3066,6 +3123,7 @@ Called when all downloading has been completed
 =================
 */
 void CL_DownloadsComplete( void ) {
+	CL_MapLoadTimingEvent( "DownloadsComplete" );
 
 	// if we downloaded files we need to restart the file system
 	if ( clc.downloadRestart ) {
@@ -3086,6 +3144,7 @@ void CL_DownloadsComplete( void ) {
 
 //----(SA)	removed some loading stuff
 	Com_EventLoop();
+	CL_MapLoadTimingEvent( "download event loop" );
 
 	// if the gamestate was changed by calling Com_EventLoop
 	// then we loaded everything already and we don't want to do it again.
@@ -3117,12 +3176,14 @@ void CL_DownloadsComplete( void ) {
 		tFlush = Sys_Milliseconds();
 		CL_FlushMemory();
 		tFlush = Sys_Milliseconds() - tFlush;
+		CL_MapLoadTimingEvent( "FlushMemory" );
 
 		// initialize the CGame
 		cls.cgameStarted = qtrue;
 		tCGame = Sys_Milliseconds();
 		CL_InitCGame();
 		tCGame = Sys_Milliseconds() - tCGame;
+		CL_MapLoadTimingEvent( "InitCGame" );
 
 		Cvar_Set( "cl_demoMapLoading", "0" );
 
@@ -3130,10 +3191,12 @@ void CL_DownloadsComplete( void ) {
 					tFlush, tCGame );
 	} else {
 		CL_FlushMemory();
+		CL_MapLoadTimingEvent( "FlushMemory" );
 
 		// initialize the CGame
 		cls.cgameStarted = qtrue;
 		CL_InitCGame();
+		CL_MapLoadTimingEvent( "InitCGame" );
 	}
 
 	// During demo playback, don't send packets or pure checksums -
@@ -3146,6 +3209,7 @@ void CL_DownloadsComplete( void ) {
 		CL_WritePacket();
 		CL_WritePacket();
 		CL_WritePacket();
+		CL_MapLoadTimingEvent( "first packets" );
 	}
 }
 
@@ -3991,6 +4055,7 @@ void CL_Frame( int msec ) {
 	CL_SendCmd();
 	CL_DemoRecordPausedFrame();
 	LS_RaceFrame();
+	CL_DiscordFrame();
 
 	// resend a connection request if necessary
 	CL_CheckForResend();
@@ -4258,6 +4323,8 @@ This is the only place that any of these functions are called from
 ============================
 */
 void CL_StartHunkUsers( void ) {
+	qboolean loadTimings;
+
 	if ( !com_cl_running ) {
 		return;
 	}
@@ -4266,24 +4333,38 @@ void CL_StartHunkUsers( void ) {
 		return;
 	}
 
+	loadTimings = CL_MapLoadTimingsEnabled();
+
 	if ( !cls.rendererStarted ) {
 		cls.rendererStarted = qtrue;
 		CL_InitRenderer();
+		if ( loadTimings ) {
+			CL_MapLoadTimingEvent( "StartHunk renderer" );
+		}
 	}
 
 	if ( !cls.soundStarted ) {
 		cls.soundStarted = qtrue;
 		S_Init();
+		if ( loadTimings ) {
+			CL_MapLoadTimingEvent( "StartHunk sound init" );
+		}
 	}
 
 	if ( !cls.soundRegistered ) {
 		cls.soundRegistered = qtrue;
 		S_BeginRegistration();
+		if ( loadTimings ) {
+			CL_MapLoadTimingEvent( "StartHunk sound reg" );
+		}
 	}
 
 	if ( !cls.uiStarted ) {
 		cls.uiStarted = qtrue;
 		CL_InitUI();
+		if ( loadTimings ) {
+			CL_MapLoadTimingEvent( "StartHunk UI" );
+		}
 	}
 }
 
@@ -4412,6 +4493,101 @@ void CL_ShellExecute_URL_f( void ) {
 CL_Init
 ====================
 */
+static void CL_CrashTourStartMap_f( void ) {
+	CL_SpeedrunImGui_CloseAllForGameplay();
+	Cbuf_AddText( "fade 0 0 0 0 3\n" );
+	Cbuf_AddText( "crash_tour_forceplay\n" );
+	Cvar_Set( "g_playerstart", "1" );
+	Cvar_Set( "ls_loading", "0" );
+	Cvar_Set( "cg_norender", "0" );
+	Cvar_Set( "cg_letterbox", "0" );
+	Cvar_Set( "cl_paused", "0" );
+}
+
+static void CL_CrashTourMap_f( void ) {
+	const char *map;
+
+	if ( Cmd_Argc() < 2 ) {
+		Com_Printf( "usage: crash_tour_map <mapname>\n" );
+		return;
+	}
+
+	map = Cmd_Argv( 1 );
+	if ( !map[0] ) {
+		return;
+	}
+
+	Com_Printf( "[crash_tour] loading map: %s\n", map );
+	Cvar_Set( "g_crashTourRunning", "1" );
+	Cvar_Set( "g_crashTourStep", va( "map:%s", map ) );
+	Cvar_Set( "g_reloading", "0" );
+	Cvar_Set( "g_playerstart", "0" );
+	Cvar_Set( "savegame_loading", "0" );
+	Cvar_Set( "savegame_filename", "" );
+	Cvar_Set( "cl_paused", "0" );
+	Cvar_Set( "sv_cheats", "1" );
+	Cbuf_ExecuteText( EXEC_INSERT, va( "spdevmap %s\n", map ) );
+}
+
+static void CL_CrashTourBaseMapName( const char *mapName, char *out, int outSize ) {
+	const char *base;
+
+	if ( !out || outSize <= 0 ) {
+		return;
+	}
+
+	out[0] = '\0';
+	if ( !mapName || !mapName[0] ) {
+		return;
+	}
+
+	base = mapName;
+	if ( !Q_stricmpn( base, "maps/", 5 ) ) {
+		base += 5;
+	}
+
+	Q_strncpyz( out, base, outSize );
+	COM_StripExtension( out, out );
+}
+
+static void CL_CrashTourWaitMap_f( void ) {
+	char expected[MAX_QPATH];
+	char clientMap[MAX_QPATH];
+	const char *serverMap;
+	qboolean activeOnExpected;
+
+	if ( Cmd_Argc() < 2 ) {
+		Com_Printf( "usage: crash_tour_waitmap <mapname>\n" );
+		return;
+	}
+
+	Q_strncpyz( expected, Cmd_Argv( 1 ), sizeof( expected ) );
+	CL_CrashTourBaseMapName( cl.mapname, clientMap, sizeof( clientMap ) );
+	serverMap = Cvar_VariableString( "mapname" );
+
+	activeOnExpected = ( cls.state == CA_ACTIVE &&
+						 cls.cgameStarted &&
+						 cl.snap.valid &&
+						 !Q_stricmp( clientMap, expected ) );
+
+	if ( activeOnExpected ) {
+		Com_Printf( "[crash_tour] map ready: %s\n", expected );
+		Cvar_Set( "g_crashTourRunning", "1" );
+		return;
+	}
+
+	if ( !serverMap[0] || Q_stricmp( serverMap, expected ) ) {
+		Com_Printf( "[crash_tour] waiting for %s, current server map is %s - retrying map load\n",
+					expected, serverMap[0] ? serverMap : "<none>" );
+		Cbuf_ExecuteText( EXEC_INSERT, va( "crash_tour_map %s\nwait 180\ncrash_tour_waitmap %s\n", expected, expected ) );
+		return;
+	}
+
+	Com_Printf( "[crash_tour] waiting for %s to become active (state %d, cgame %d, snap %d, client %s)\n",
+				expected, cls.state, cls.cgameStarted, cl.snap.valid, clientMap[0] ? clientMap : "<none>" );
+	Cbuf_ExecuteText( EXEC_INSERT, va( "wait 30\ncrash_tour_waitmap %s\n", expected ) );
+}
+
 void CL_Init( void ) {
 	Com_Printf( "----- Client Initialization -----\n" );
 
@@ -4533,6 +4709,9 @@ void CL_Init( void ) {
 	Cmd_AddCommand( "snd_restart", CL_Snd_Restart_f );
 	Cmd_AddCommand( "vid_restart", CL_Vid_Restart_f );
 	Cmd_AddCommand( "disconnect", CL_Disconnect_f );
+	Cmd_AddCommand( "crash_tour_map", CL_CrashTourMap_f );
+	Cmd_AddCommand( "crash_tour_startmap", CL_CrashTourStartMap_f );
+	Cmd_AddCommand( "crash_tour_waitmap", CL_CrashTourWaitMap_f );
 	Cmd_AddCommand( "sp_reloadloop", CL_ReloadLoop_f );
 	Cmd_AddCommand( "sp_reloadloop_stop", CL_ReloadLoop_Stop_f );
 	Cmd_AddCommand( "sp_reloadloop_status", CL_ReloadLoop_Status_f );
@@ -4602,6 +4781,7 @@ void CL_Init( void ) {
 
 	SCR_LiveSplitInit();
 	SCR_UpdateInit();
+	CL_DiscordInit();
 
 	Cbuf_Execute();
 
@@ -4630,6 +4810,7 @@ void CL_Shutdown( void ) {
 
 	SCR_LiveSplitShutdown();
 	SCR_UpdateShutdown();
+	CL_DiscordShutdown();
 	CL_SpeedrunImGui_Shutdown();
 
 	CL_Disconnect( qtrue );

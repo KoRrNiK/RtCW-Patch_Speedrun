@@ -1652,6 +1652,7 @@ static qboolean cl_cinematicHeldSpaceLatched = qfalse;
 static unsigned cl_cinematicHeldSpaceTime = 0;
 static qboolean cl_cinematicAutoSkipIssued = qfalse;
 static unsigned cl_cinematicNextAutoSkipTime = 0;
+static qboolean cl_cinematicSuppressSpaceBinding = qfalse;
 
 static qboolean CL_IsCinematicSkipKey( int key ) {
 	return ( key == K_ESCAPE || key == K_SPACE || key == K_ENTER || key == K_KP_ENTER );
@@ -1718,6 +1719,7 @@ void CL_ClearPhysicalSpaceHold( void ) {
 	if ( cl_cinematicSkipIntentKey == K_SPACE ) {
 		CL_ClearCinematicSkipIntent();
 	}
+	cl_cinematicSuppressSpaceBinding = qfalse;
 	cl_cinematicNextAutoSkipTime = 0;
 }
 
@@ -1777,6 +1779,12 @@ void CL_StartButtonBindingForHeldKey( int key, unsigned time ) {
 	}
 
 	kb = keys[key].binding;
+	if ( key == K_SPACE ) {
+		CL_ClearMoveUpForCinematicSkip();
+		cl_cinematicSuppressSpaceBinding = qtrue;
+		return;
+	}
+
 	if ( kb && kb[0] == '+' ) {
 		Com_sprintf( cmd, sizeof( cmd ), "%s %i %i\n", kb, key, time );
 		Cbuf_AddText( cmd );
@@ -1936,6 +1944,12 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 	}
 //----(SA)	end
 
+	if ( key == K_SPACE && cl_cinematicSuppressSpaceBinding ) {
+		if ( !down ) {
+			cl_cinematicSuppressSpaceBinding = qfalse;
+		}
+		return;
+	}
 
 	// SP Demo Controls: During demo playback, intercept specific keys
 	// for playback controls instead of immediately disconnecting.

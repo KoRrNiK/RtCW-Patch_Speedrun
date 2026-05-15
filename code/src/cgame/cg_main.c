@@ -1335,6 +1335,9 @@ static void CG_RegisterSounds( void ) {
 //===================================================================================
 
 
+static qboolean CG_LoadTimingsEnabled( void );
+static void CG_LoadTimingPrint( qboolean enabled, const char *label, int start, int *last );
+
 
 /*
 =================
@@ -1343,11 +1346,60 @@ CG_RegisterGraphics
 This function may execute for a couple of minutes with a slow disk.
 =================
 */
-static void CG_RegisterGraphics( void ) {
+void CG_RegisterDebrisModels( void ) {
 	char name[1024];
+	int i;
 
+	if ( cgs.media.debBlock[0] ) {
+		return;
+	}
+
+	cgs.media.debBlock[0] = trap_R_RegisterModel( "models/mapobjects/debris/brick1.md3" );
+	cgs.media.debBlock[1] = trap_R_RegisterModel( "models/mapobjects/debris/brick2.md3" );
+	cgs.media.debBlock[2] = trap_R_RegisterModel( "models/mapobjects/debris/brick3.md3" );
+	cgs.media.debBlock[3] = trap_R_RegisterModel( "models/mapobjects/debris/brick4.md3" );
+	cgs.media.debBlock[4] = trap_R_RegisterModel( "models/mapobjects/debris/brick5.md3" );
+	cgs.media.debBlock[5] = trap_R_RegisterModel( "models/mapobjects/debris/brick6.md3" );
+
+	cgs.media.debRock[0] = trap_R_RegisterModel( "models/mapobjects/debris/rubble1.md3" );
+	cgs.media.debRock[1] = trap_R_RegisterModel( "models/mapobjects/debris/rubble2.md3" );
+	cgs.media.debRock[2] = trap_R_RegisterModel( "models/mapobjects/debris/rubble3.md3" );
+
+	cgs.media.debWood[0] = trap_R_RegisterModel( "models/gibs/wood/wood1.md3" );
+	cgs.media.debWood[1] = trap_R_RegisterModel( "models/gibs/wood/wood2.md3" );
+	cgs.media.debWood[2] = trap_R_RegisterModel( "models/gibs/wood/wood3.md3" );
+	cgs.media.debWood[3] = trap_R_RegisterModel( "models/gibs/wood/wood4.md3" );
+	cgs.media.debWood[4] = trap_R_RegisterModel( "models/gibs/wood/wood5.md3" );
+	cgs.media.debWood[5] = trap_R_RegisterModel( "models/gibs/wood/wood6.md3" );
+
+	cgs.media.debFabric[0] = trap_R_RegisterModel( "models/shards/fabric1.md3" );
+	cgs.media.debFabric[1] = trap_R_RegisterModel( "models/shards/fabric2.md3" );
+	cgs.media.debFabric[2] = trap_R_RegisterModel( "models/shards/fabric3.md3" );
+
+	cgs.media.shardGlass1 = trap_R_RegisterModel( "models/shards/glass1.md3" );
+	cgs.media.shardGlass2 = trap_R_RegisterModel( "models/shards/glass2.md3" );
+	cgs.media.shardWood1 = trap_R_RegisterModel( "models/shards/wood1.md3" );
+	cgs.media.shardWood2 = trap_R_RegisterModel( "models/shards/wood2.md3" );
+	cgs.media.shardMetal1 = trap_R_RegisterModel( "models/shards/metal1.md3" );
+	cgs.media.shardMetal2 = trap_R_RegisterModel( "models/shards/metal2.md3" );
+	cgs.media.shardCeramic1 = trap_R_RegisterModel( "models/shards/ceramic1.md3" );
+	cgs.media.shardCeramic2 = trap_R_RegisterModel( "models/shards/ceramic2.md3" );
+
+	cgs.media.shardRubble1 = trap_R_RegisterModel( "models/mapobjects/debris/brick000.md3" );
+	cgs.media.shardRubble2 = trap_R_RegisterModel( "models/mapobjects/debris/brick001.md3" );
+	cgs.media.shardRubble3 = trap_R_RegisterModel( "models/mapobjects/debris/brick002.md3" );
+
+	for ( i = 0; i < MAX_LOCKER_DEBRIS; i++ ) {
+		Com_sprintf( name, sizeof( name ), "models/mapobjects/debris/personal%i.md3", i + 1 );
+		cgs.media.shardJunk[i] = trap_R_RegisterModel( name );
+	}
+}
+
+static void CG_RegisterGraphics( void ) {
 	int i;
 	char items[MAX_ITEMS + 1];
+	int loadStart, loadLast;
+	qboolean loadTimings;
 	static char     *sb_nums[11] = {
 		"gfx/2d/numbers/zero_32b",
 		"gfx/2d/numbers/one_32b",
@@ -1362,6 +1414,9 @@ static void CG_RegisterGraphics( void ) {
 		"gfx/2d/numbers/minus_32b",
 	};
 
+	loadStart = trap_Milliseconds();
+	loadLast = loadStart;
+	loadTimings = CG_LoadTimingsEnabled();
 
 	// clear any references to old media
 	memset( &cg.refdef, 0, sizeof( cg.refdef ) );
@@ -1370,6 +1425,7 @@ static void CG_RegisterGraphics( void ) {
 	CG_LoadingString( cgs.mapname );
 
 	trap_R_LoadWorldMap( cgs.mapname );
+	CG_LoadTimingPrint( loadTimings, "gfx world bsp", loadStart, &loadLast );
 
 	// precache status bar pics
 	CG_LoadingString( "game media" );
@@ -1516,6 +1572,7 @@ static void CG_RegisterGraphics( void ) {
 		//cgs.media.redFlagModel = trap_R_RegisterModel( "models/powerups/keys/chalice.md3" );
 		cgs.media.blueFlagModel = trap_R_RegisterModel( "models/flags/b_flag.md3" );
 	}
+	CG_LoadTimingPrint( loadTimings, "gfx textures/effects", loadStart, &loadLast );
 
 //	if ( cgs.gametype >= GT_TEAM || cg_buildScript.integer ) {
 //		cgs.media.friendShader = trap_R_RegisterShader( "sprites/foe" );
@@ -1529,31 +1586,7 @@ static void CG_RegisterGraphics( void ) {
 	cgs.media.panzerfaustBrassModel = trap_R_RegisterModel( "models/weapons2/shells/pf_shell.md3" );
 	cgs.media.smallgunBrassModel = trap_R_RegisterModel( "models/weapons2/shells/sm_shell.md3" );
 
-	cgs.media.debBlock[0] = trap_R_RegisterModel( "models/mapobjects/debris/brick1.md3" );
-	cgs.media.debBlock[1] = trap_R_RegisterModel( "models/mapobjects/debris/brick2.md3" );
-	cgs.media.debBlock[2] = trap_R_RegisterModel( "models/mapobjects/debris/brick3.md3" );
-	cgs.media.debBlock[3] = trap_R_RegisterModel( "models/mapobjects/debris/brick4.md3" );
-	cgs.media.debBlock[4] = trap_R_RegisterModel( "models/mapobjects/debris/brick5.md3" );
-	cgs.media.debBlock[5] = trap_R_RegisterModel( "models/mapobjects/debris/brick6.md3" );
-
-	cgs.media.debRock[0] = trap_R_RegisterModel( "models/mapobjects/debris/rubble1.md3" );
-	cgs.media.debRock[1] = trap_R_RegisterModel( "models/mapobjects/debris/rubble2.md3" );
-	cgs.media.debRock[2] = trap_R_RegisterModel( "models/mapobjects/debris/rubble3.md3" );
-
-
-	cgs.media.debWood[0] = trap_R_RegisterModel( "models/gibs/wood/wood1.md3" );
-	cgs.media.debWood[1] = trap_R_RegisterModel( "models/gibs/wood/wood2.md3" );
-	cgs.media.debWood[2] = trap_R_RegisterModel( "models/gibs/wood/wood3.md3" );
-	cgs.media.debWood[3] = trap_R_RegisterModel( "models/gibs/wood/wood4.md3" );
-	cgs.media.debWood[4] = trap_R_RegisterModel( "models/gibs/wood/wood5.md3" );
-	cgs.media.debWood[5] = trap_R_RegisterModel( "models/gibs/wood/wood6.md3" );
-//	cgs.media.debWoodl = trap_R_RegisterModel( "models/mapobjects/debris/woodxl.md3" );
-//	cgs.media.debWoodm = trap_R_RegisterModel( "models/mapobjects/debris/woodm.md3" );
-//	cgs.media.debWoods = trap_R_RegisterModel( "models/mapobjects/debris/woodsm.md3" );
-
-	cgs.media.debFabric[0] = trap_R_RegisterModel( "models/shards/fabric1.md3" );
-	cgs.media.debFabric[1] = trap_R_RegisterModel( "models/shards/fabric2.md3" );
-	cgs.media.debFabric[2] = trap_R_RegisterModel( "models/shards/fabric3.md3" );
+	CG_RegisterDebrisModels();
 
 	//----(SA) end
 
@@ -1655,31 +1688,13 @@ static void CG_RegisterGraphics( void ) {
 
 	cgs.media.crowbar = trap_R_RegisterModel( "models/weapons2/wrench/wrench.md3" );
 
-	// Rafael shards
-	cgs.media.shardGlass1 = trap_R_RegisterModel( "models/shards/glass1.md3" );
-	cgs.media.shardGlass2 = trap_R_RegisterModel( "models/shards/glass2.md3" );
-	cgs.media.shardWood1 = trap_R_RegisterModel( "models/shards/wood1.md3" );
-	cgs.media.shardWood2 = trap_R_RegisterModel( "models/shards/wood2.md3" );
-	cgs.media.shardMetal1 = trap_R_RegisterModel( "models/shards/metal1.md3" );
-	cgs.media.shardMetal2 = trap_R_RegisterModel( "models/shards/metal2.md3" );
-	cgs.media.shardCeramic1 = trap_R_RegisterModel( "models/shards/ceramic1.md3" );
-	cgs.media.shardCeramic2 = trap_R_RegisterModel( "models/shards/ceramic2.md3" );
-	// done
-
-	cgs.media.shardRubble1 = trap_R_RegisterModel( "models/mapobjects/debris/brick000.md3" );
-	cgs.media.shardRubble2 = trap_R_RegisterModel( "models/mapobjects/debris/brick001.md3" );
-	cgs.media.shardRubble3 = trap_R_RegisterModel( "models/mapobjects/debris/brick002.md3" );
-
-	for ( i = 0; i < MAX_LOCKER_DEBRIS; i++ )
-	{
-		Com_sprintf( name, sizeof( name ), "models/mapobjects/debris/personal%i.md3", i + 1 );
-		cgs.media.shardJunk[i] = trap_R_RegisterModel( name );
-	}
+	CG_LoadTimingPrint( loadTimings, "gfx common models", loadStart, &loadLast );
 
 	memset( cg_items, 0, sizeof( cg_items ) );
 	memset( cg_weapons, 0, sizeof( cg_weapons ) );
 
 	CG_LoadTranslateStrings();  //----(SA)	added.  for localization, read on-screen print names from text file
+	CG_LoadTimingPrint( loadTimings, "gfx translate strings", loadStart, &loadLast );
 
 // TODO: FIXME:  REMOVE REGISTRATION OF EACH MODEL FOR EVERY LEVEL LOAD
 
@@ -1695,6 +1710,7 @@ static void CG_RegisterGraphics( void ) {
 //		CG_LoadingString( va("   - %d", i) );
 		CG_RegisterWeapon( i );
 	}
+	CG_LoadTimingPrint( loadTimings, "gfx weapons", loadStart, &loadLast );
 ///////////
 // END
 
@@ -1712,6 +1728,7 @@ static void CG_RegisterGraphics( void ) {
 			CG_RegisterItemVisuals( i );
 		}
 	}
+	CG_LoadTimingPrint( loadTimings, "gfx items", loadStart, &loadLast );
 
 	// wall marks
 	cgs.media.bulletMarkShader = trap_R_RegisterShader( "gfx/damage/bullet_mrk" );
@@ -1735,6 +1752,7 @@ static void CG_RegisterGraphics( void ) {
 		Com_sprintf( name, sizeof( name ), "blood_dot%i", i + 1 );
 		cgs.media.bloodDotShaders[i] = trap_R_RegisterShader( name );
 	}
+	CG_LoadTimingPrint( loadTimings, "gfx mark shaders", loadStart, &loadLast );
 
 	CG_LoadingString( " - inline models" );
 
@@ -1752,6 +1770,7 @@ static void CG_RegisterGraphics( void ) {
 			cgs.inlineModelMidpoints[i][j] = mins[j] + 0.5 * ( maxs[j] - mins[j] );
 		}
 	}
+	CG_LoadTimingPrint( loadTimings, "gfx inline models", loadStart, &loadLast );
 
 	CG_LoadingString( " - server models" );
 
@@ -1765,6 +1784,7 @@ static void CG_RegisterGraphics( void ) {
 		}
 		cgs.gameModels[i] = trap_R_RegisterModel( modelName );
 	}
+	CG_LoadTimingPrint( loadTimings, "gfx server models", loadStart, &loadLast );
 
 	CG_LoadingString( " - particles" );
 	CG_ClearParticles();
@@ -1780,11 +1800,13 @@ static void CG_RegisterGraphics( void ) {
 			}
 		}
 	}
+	CG_LoadTimingPrint( loadTimings, "gfx particle areas", loadStart, &loadLast );
 
 //	cgs.media.cursor = trap_R_RegisterShaderNoMip( "menu/art/3_cursor2" );
 	cgs.media.sizeCursor = trap_R_RegisterShaderNoMip( "ui/assets/sizecursor.tga" );
 	cgs.media.selectCursor = trap_R_RegisterShaderNoMip( "ui/assets/selectcursor.tga" );
 	CG_LoadingString( " - game media done" );
+	CG_LoadTimingPrint( loadTimings, "gfx cursors/ui", loadStart, &loadLast );
 
 }
 
@@ -2551,8 +2573,33 @@ Called after every level change or subsystem restart
 Will perform callbacks to make the loading info screen update.
 =================
 */
+static qboolean CG_LoadTimingsEnabled( void ) {
+	char buf[8];
+
+	trap_Cvar_VariableStringBuffer( "com_loadTimings", buf, sizeof( buf ) );
+	return atoi( buf ) != 0;
+}
+
+static void CG_LoadTimingPrint( qboolean enabled, const char *label, int start, int *last ) {
+	int now;
+
+	if ( !enabled ) {
+		return;
+	}
+
+	now = trap_Milliseconds();
+	CG_Printf( "[load] cgame %-19s +%4d ms  total %4d ms\n", label, now - *last, now - start );
+	*last = now;
+}
+
 void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	const char  *s;
+	int loadStart, loadLast;
+	qboolean loadTimings;
+
+	loadStart = trap_Milliseconds();
+	loadLast = loadStart;
+	loadTimings = CG_LoadTimingsEnabled();
 
 	// clear everything
 	memset( &cgs, 0, sizeof( cgs ) );
@@ -2590,6 +2637,7 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	cgs.media.charsetPropB      = trap_R_RegisterShaderNoMip( "menu/art/font2_prop.tga" );
 
 	CG_RegisterCvars();
+	CG_LoadTimingPrint( loadTimings, "base cvars/media", loadStart, &loadLast );
 
 	// Force-clear mission stats - this ROM cvar persists across map
 	// changes and demo restarts, causing CG_DrawActive to skip world
@@ -2635,6 +2683,7 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	CG_LoadingString( "collision map" );
 
 	trap_CM_LoadMap( cgs.mapname );
+	CG_LoadTimingPrint( loadTimings, "collision map", loadStart, &loadLast );
 
 	String_Init();
 
@@ -2643,20 +2692,24 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	CG_LoadingString( "sounds" );
 
 	CG_RegisterSounds();
+	CG_LoadTimingPrint( loadTimings, "sounds", loadStart, &loadLast );
 
 	CG_LoadingString( "graphics" );
 
 	CG_RegisterGraphics();
+	CG_LoadTimingPrint( loadTimings, "graphics/world", loadStart, &loadLast );
 
 	CG_LoadingString( "trigger volumes" );
 
 	CG_InitTriggerVis();
 	CG_InitZones();
+	CG_LoadTimingPrint( loadTimings, "triggers/zones", loadStart, &loadLast );
 
 	CG_LoadingString( "enemy ESP" );
 
 	CG_InitEnemyESP();
 	CG_InitAIPath();
+	CG_LoadTimingPrint( loadTimings, "esp/aipath", loadStart, &loadLast );
 
 	CG_LoadingString( "flamechunks" );
 
@@ -2667,7 +2720,10 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 	CG_RegisterClients();       // if low on memory, some clients will be deferred
 
 	CG_AssetCache();
+	CG_LoadTimingPrint( loadTimings, "clients assets", loadStart, &loadLast );
+
 	CG_LoadHudMenu();      // load new hud stuff
+	CG_LoadTimingPrint( loadTimings, "clients hud menu", loadStart, &loadLast );
 
 	cg.loading = qfalse;    // future players will be deferred
 
@@ -2677,6 +2733,7 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 
 	// RF, init ZombieFX
 	trap_RB_ZombieFXAddNewHit( -1, NULL, NULL );
+	CG_LoadTimingPrint( loadTimings, "local effects", loadStart, &loadLast );
 
 	// remove the last loading update
 	cg.infoScreenText[0] = 0;
@@ -2722,6 +2779,7 @@ void CG_Init( int serverMessageNum, int serverCommandSequence ) {
 		trap_Cvar_Set( "cg_drawTimer", "0" ); // jpw
 
 	}
+	CG_LoadTimingPrint( loadTimings, "cgame total", loadStart, &loadLast );
 	// jpw
 	// -NERVE - SMF
 }

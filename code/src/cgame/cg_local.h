@@ -2443,6 +2443,7 @@ void CG_ProcessSnapshots( void );
 void CG_LoadingString( const char *s );
 void CG_LoadingItem( int itemNum );
 void CG_LoadingClient( int clientNum );
+void CG_RegisterDebrisModels( void );
 void CG_DrawInformation( void );
 const char *CG_translateString( const char *str );
 

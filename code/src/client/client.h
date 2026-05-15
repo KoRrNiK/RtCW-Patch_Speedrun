@@ -415,6 +415,7 @@ void CL_ShutdownAll( void );
 void CL_AddReliableCommand( const char *cmd );
 
 void CL_StartHunkUsers( void );
+void CL_MapLoadTimingEvent( const char *label );
 
 void CL_Disconnect_f( void );
 void CL_GetChallengePacket( void );
@@ -491,6 +492,7 @@ void CL_ClearKeys( void );
 
 void CL_InitInput( void );
 void CL_SendCmd( void );
+void CL_ClearMoveUpForCinematicSkip( void );
 void CL_ClearState( void );
 void CL_ReadPackets( void );
 void CL_UpdateDemoFreecam( int frameMsec );
@@ -626,6 +628,25 @@ typedef struct {
 	char chatLines[LS_RACE_UI_CHAT_LINES][LS_RACE_UI_CHAT_TEXT];
 } lsRaceUiSnapshot_t;
 
+typedef struct {
+	int initialized;
+	int timerEnabled;
+	int externalTimer;
+	int panelVisible;
+	int active;
+	int finished;
+	int igtMs;
+	int rgtMs;
+	int runMode;
+	int difficulty;
+	char modeText[64];
+	char rulesText[32];
+	char difficultyText[32];
+	char categoryText[96];
+	char stageText[64];
+	char mapText[32];
+} lsPresenceSnapshot_t;
+
 void    SCR_LiveSplitInit( void );
 void    SCR_LiveSplitShutdown( void );
 void    SCR_LiveSplitDraw( void );
@@ -635,10 +656,18 @@ void    LS_RaceDrawOverlay( void );
 qboolean LS_RaceShouldBlockInput( void );
 void    LS_RaceConnectionlessPacket( netadr_t from );
 void    LS_RaceBuildSnapshot( lsRaceUiSnapshot_t *out );
+void    LS_BuildPresenceSnapshot( lsPresenceSnapshot_t *out );
 int     LS_GetModifiedSettingsCount( void );
 int     LS_BuildDemoCvarString( char *out, int outSize );
 void    LS_DemoBuildState( char *out, int outSize );
 void    LS_DemoBuildTimes( char *out, int outSize );
+
+//
+// cl_discord.c
+//
+void    CL_DiscordInit( void );
+void    CL_DiscordFrame( void );
+void    CL_DiscordShutdown( void );
 
 //
 // cl_parse.c

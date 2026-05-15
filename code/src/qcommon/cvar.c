@@ -131,6 +131,10 @@ static void Cvar_ClearSpeedrunProtectedState( void ) {
 	Cvar_ClearIfNonZero( "sp_zone_race_debug" );
 }
 
+static qboolean Cvar_HideFromCompletionAndArchive( const char *name ) {
+	return name && !Q_stricmpn( name, "discord_", 8 );
+}
+
 /*
 ============
 Cvar_VariableValue
@@ -205,6 +209,9 @@ void    Cvar_CommandCompletion( void ( *callback )(const char *s) ) {
 	cvar_t      *cvar;
 
 	for ( cvar = cvar_vars ; cvar ; cvar = cvar->next ) {
+		if ( Cvar_HideFromCompletionAndArchive( cvar->name ) ) {
+			continue;
+		}
 		callback( cvar->name );
 	}
 }
@@ -686,6 +693,9 @@ void Cvar_WriteVariables( fileHandle_t f ) {
 
 	for ( var = cvar_vars ; var ; var = var->next ) {
 		if ( Q_stricmp( var->name, "cl_cdkey" ) == 0 ) {
+			continue;
+		}
+		if ( Cvar_HideFromCompletionAndArchive( var->name ) ) {
 			continue;
 		}
 		if ( var->flags & CVAR_ARCHIVE ) {

@@ -56,6 +56,10 @@ at the same time.
 
 static kbutton_t kb[NUM_BUTTONS];
 
+void CL_ClearMoveUpForCinematicSkip( void ) {
+	memset( &kb[KB_UP], 0, sizeof( kb[KB_UP] ) );
+}
+
 void IN_MLookDown( void ) {
 	kb[KB_MLOOK].active = qtrue;
 }

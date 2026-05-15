@@ -611,6 +611,20 @@ float AICast_WeaponRange( cast_state_t *cs, int weaponnum ) {
 AICast_CheckAttack_real
 ==================
 */
+static qboolean AICast_ValidClientNum( int clientNum ) {
+	if ( clientNum < 0 || clientNum >= aicast_maxclients || clientNum >= MAX_CLIENTS ) {
+		return qfalse;
+	}
+	if ( !g_entities[clientNum].inuse || !g_entities[clientNum].client ) {
+		return qfalse;
+	}
+	return qtrue;
+}
+
+static qboolean AICast_ValidEntityNum( int entNum ) {
+	return (qboolean)( entNum >= 0 && entNum < MAX_GENTITIES && g_entities[entNum].inuse );
+}
+
 qboolean AICast_CheckAttack_real( cast_state_t *cs, int enemy, qboolean allowHitWorld ) {
 	//float points;
 	vec3_t forward, right, start, end, dir, up, angles;
@@ -628,7 +642,7 @@ qboolean AICast_CheckAttack_real( cast_state_t *cs, int enemy, qboolean allowHit
 	int passEnt;
 	int weapnum;
 	//
-	if ( enemy < 0 ) {
+	if ( !cs || !AICast_ValidClientNum( cs->entityNum ) || !AICast_ValidClientNum( enemy ) ) {
 		return qfalse;
 	}
 	ent = &g_entities[cs->entityNum];
@@ -726,6 +740,9 @@ qboolean AICast_CheckAttack_real( cast_state_t *cs, int enemy, qboolean allowHit
 	} else {
 		gentity_t *mg42;
 		// we are mounted on a weapon
+		if ( cs->mountedEntity < 0 || cs->mountedEntity >= MAX_GENTITIES ) {
+			return qfalse;
+		}
 		mg42 = &g_entities[cs->mountedEntity];
 		VectorCopy( enemyEnt->r.currentOrigin, start );
 		start[2] += enemyEnt->client->ps.viewheight;
@@ -791,9 +808,13 @@ qboolean AICast_CheckAttack_real( cast_state_t *cs, int enemy, qboolean allowHit
 		if ( trace.entityNum != enemy ) {
 
 			// RF, assume we can shoot through props (chairs, etc)
-			if ( g_entities[trace.entityNum].takedamage && g_entities[trace.entityNum].health > 0 &&
-				 !Q_strncmp( g_entities[trace.entityNum].classname, "props_", 6 ) ) {
-				return qtrue;
+			if ( trace.entityNum >= 0 && trace.entityNum < MAX_GENTITIES ) {
+				gentity_t *hitEnt = &g_entities[trace.entityNum];
+
+				if ( hitEnt->takedamage && hitEnt->health > 0 && hitEnt->classname &&
+					 !Q_strncmp( hitEnt->classname, "props_", 6 ) ) {
+					return qtrue;
+				}
 			}
 
 			if ( !allowHitWorld ) {
@@ -839,6 +860,9 @@ qboolean AICast_CheckAttackAtPos( int entnum, int enemy, vec3_t pos, qboolean du
 	cast_state_t *cs;
 
 	cs = AICast_GetCastState( entnum );
+	if ( !cs || !cs->bs || !pos || !AICast_ValidClientNum( cs->bs->entitynum ) || !AICast_ValidClientNum( enemy ) ) {
+		return qfalse;
+	}
 	ent = &g_entities[cs->bs->entitynum];
 
 	VectorCopy( ent->r.currentOrigin, savepos );
@@ -871,6 +895,10 @@ AICast_CheckAttack
 ==================
 */
 qboolean AICast_CheckAttack( cast_state_t *cs, int enemy, qboolean allowHitWorld ) {
+	if ( !cs ) {
+		return qfalse;
+	}
+
 	if ( cs->bs ) {
 		if (    ( cs->checkAttackCache.time == level.time )
 				&&  ( cs->checkAttackCache.enemy == enemy )
@@ -899,8 +927,12 @@ void AICast_UpdateBattleInventory( cast_state_t *cs, int enemy ) {
 	vec3_t dir;
 	int i;
 
-	if ( enemy >= 0 ) {
-		VectorSubtract( cs->vislist[cs->enemyNum].visible_pos, cs->bs->origin, dir );
+	if ( !cs || !cs->bs || !AICast_ValidClientNum( cs->entityNum ) || !AICast_ValidClientNum( cs->bs->entitynum ) ) {
+		return;
+	}
+
+	if ( AICast_ValidClientNum( enemy ) ) {
+		VectorSubtract( cs->vislist[enemy].visible_pos, cs->bs->origin, dir );
 		cs->enemyHeight = (int) dir[2];
 		cs->enemyDist = (int) VectorLength( dir );
 	}
@@ -1788,6 +1820,10 @@ AICast_GetTakeCoverPos
 ==============
 */
 qboolean AICast_GetTakeCoverPos( cast_state_t *cs, int enemyNum, vec3_t enemyPos, vec3_t returnPos ) {
+	if ( !cs || !cs->bs || !AICast_ValidClientNum( cs->entityNum ) || !AICast_ValidEntityNum( enemyNum ) ) {
+		return qfalse;
+	}
+
 	cs->crouchHideFlag = qfalse;
 	//
 	if ( cs->castScriptStatus.scriptNoMoveTime > level.time ) {
@@ -1798,7 +1834,7 @@ qboolean AICast_GetTakeCoverPos( cast_state_t *cs, int enemyNum, vec3_t enemyPos
 	//
 	// can we just crouch?
 	if (    ( cs->attackcrouch_time < level.time )
-			&&  ( enemyNum < aicast_maxclients )
+			&&  AICast_ValidClientNum( enemyNum )
 			&&  AICast_CheckAttackAtPos( cs->entityNum, enemyNum, cs->bs->origin, qfalse, qfalse )
 			&&  !AICast_CheckAttackAtPos( cs->entityNum, enemyNum, cs->bs->origin, qtrue, qfalse ) ) {
 

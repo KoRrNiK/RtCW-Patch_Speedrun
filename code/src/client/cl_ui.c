@@ -1217,6 +1217,7 @@ void CL_InitUI( void ) {
 #else
 	uivm = VM_Create( "ui", CL_UISystemCalls, Cvar_VariableValue( "vm_ui" ) );
 #endif
+	CL_MapLoadTimingEvent( "UI VM_Create" );
 
 	if ( !uivm ) {
 		Com_Error( ERR_FATAL, "VM_Create on UI failed" );
@@ -1224,6 +1225,7 @@ void CL_InitUI( void ) {
 
 	// sanity check
 	v = VM_Call( uivm, UI_GETAPIVERSION );
+	CL_MapLoadTimingEvent( "UI api version" );
 	if ( v != UI_API_VERSION ) {
 		Com_Error( ERR_FATAL, "User Interface is version %d, expected %d", v, UI_API_VERSION );
 		cls.uiStarted = qfalse;
@@ -1232,6 +1234,7 @@ void CL_InitUI( void ) {
 	// init for this gamestate
 //	VM_Call( uivm, UI_INIT );
 	VM_Call( uivm, UI_INIT, ( cls.state >= CA_AUTHORIZING && cls.state < CA_ACTIVE ) );
+	CL_MapLoadTimingEvent( "UI init" );
 }
 
 

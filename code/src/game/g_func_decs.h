@@ -1275,6 +1275,7 @@ extern qboolean AICast_ScriptAction_NoSight ( cast_state_t * cs , char * params 
 extern qboolean AICast_ScriptAction_FoundSecret ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_ChangeLevel ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_EndGame ( cast_state_t * cs , char * params ) ;
+extern qboolean AICast_ScriptAction_RestoreOrigin ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_Teleport ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_SavePersistant ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_Unmount ( cast_state_t * cs , char * params ) ;

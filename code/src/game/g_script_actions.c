@@ -600,11 +600,21 @@ qboolean G_ScriptAction_AlertEntity( gentity_t *ent, char *params ) {
 	if ( alertent->client ) {
 		// call this entity's AlertEntity function
 		if ( !alertent->AIScript_AlertEntity ) {
+			if ( trap_Cvar_VariableIntegerValue( "g_crashTourRunning" ) ) {
+				G_Printf( "[crash_tour] skipped alertentity \"%s\" (classname = %s): missing AIScript_AlertEntity\n",
+						  params, alertent->classname ? alertent->classname : "<null>" );
+				return qtrue;
+			}
 			G_Error( "G_Scripting: alertentity \"%s\" (classname = %s) doesn't have an \"AIScript_AlertEntity\" function\n", params, alertent->classname );
 		}
 		alertent->AIScript_AlertEntity( alertent );
 	} else {
 		if ( !alertent->use ) {
+			if ( trap_Cvar_VariableIntegerValue( "g_crashTourRunning" ) ) {
+				G_Printf( "[crash_tour] skipped alertentity \"%s\" (classname = %s): missing use\n",
+						  params, alertent->classname ? alertent->classname : "<null>" );
+				return qtrue;
+			}
 			G_Error( "G_Scripting: alertentity \"%s\" (classname = %s) doesn't have a \"use\" function\n", params, alertent->classname );
 		}
 		alertent->use( alertent, NULL, NULL );
@@ -831,6 +841,7 @@ qboolean G_ScriptAction_MissionSuccess( gentity_t *ent, char *params ) {
 		trap_Cvar_Set( "cg_youGotMail", "2" ); // set flag to draw icon
 	}
 
+	G_SendMissionStats();
 	return qtrue;
 }
 
@@ -1084,6 +1095,10 @@ qboolean G_ScriptAction_StartCam( gentity_t *ent, char *params ) {
 	// issue a start camera command to the client
 	player = AICast_FindEntityForName( "player" );
 	if ( !player ) {
+		if ( trap_Cvar_VariableIntegerValue( "g_crashTourRunning" ) ) {
+			G_Printf( "[crash_tour] skipped startcam %s: player is not spawned yet\n", token );
+			return qtrue;
+		}
 		G_Error( "player not found, perhaps you should give them more time to spawn in" );
 	}
 	trap_SendServerCommand( player->s.number, va( "startCam %s", token ) );
