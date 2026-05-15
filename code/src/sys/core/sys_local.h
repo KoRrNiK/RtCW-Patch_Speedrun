@@ -4,7 +4,7 @@
 SDL system bridge declarations for the Windows SDL3 target.
 
 The engine-facing sys layer lives here, while OS-specific helpers stay under
-sys/platform/.
+sys/platform/windows/.
 
 ===========================================================================
 */
@@ -19,16 +19,6 @@ sys/platform/.
 #include <windows.h>
 #if defined( _MSC_VER ) && ( _MSC_VER >= 1200 )
 #pragma warning( pop )
-#endif
-
-#define DIRECTINPUT_VERSION 0x0800
-
-#ifdef DOOMSOUND
-#include "../mssdk/include/dinput.h"
-#include "../mssdk/include/dsound.h"
-#else
-#include <dinput.h>
-#include <dsound.h>
 #endif
 
 #include <winsock.h>
@@ -55,7 +45,6 @@ void IN_Shutdown( void );
 void IN_JoystickCommands( void );
 void IN_Move( usercmd_t *cmd );
 
-void IN_DeactivateWin32Mouse( void );
 void IN_Activate( qboolean active );
 void IN_DeactivateMouse( void );
 void IN_Frame( void );
@@ -65,7 +54,6 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
 void Conbuf_AppendText( const char *msg );
 
 void SNDDMA_Activate( void );
-int SNDDMA_InitDS( void );
 
 typedef struct {
 	HINSTANCE reflib_library;

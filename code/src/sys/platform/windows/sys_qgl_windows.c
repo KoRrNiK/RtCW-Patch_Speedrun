@@ -27,7 +27,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 /*
-** QGL_WIN.C
+** QGL_WINDOWS.C
 **
 ** This file implements the operating system binding of GL to QGL function
 ** pointers.  When doing a port of Quake3 you must implement the following
@@ -38,7 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 #include <float.h>
 #include "../../../renderer/tr_local.h"
-#include "sys_glw_win.h"
+#include "sys_glw_windows.h"
 
 void QGL_EnableLogging( qboolean enable );
 

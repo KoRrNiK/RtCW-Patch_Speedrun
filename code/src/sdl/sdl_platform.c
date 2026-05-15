@@ -1,7 +1,7 @@
 /*
 ===========================================================================
 
-SDL3 compatibility glue for the legacy WinMain/sys layer.
+SDL3 compatibility glue for Windows handles used by the sys layer.
 
 ===========================================================================
 */

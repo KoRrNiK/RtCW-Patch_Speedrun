@@ -26,7 +26,7 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-// net_wins.c
+// Windows UDP/IP networking backend.
 
 #include "../../../game/q_shared.h"
 #include "../../../qcommon/qcommon.h"
@@ -749,7 +749,7 @@ void NET_OpenIP( void ) {
 	int i;
 
 	ip = Cvar_Get( "net_ip", "localhost", CVAR_LATCH );
-	port = Cvar_Get( "net_port", va( "%i", PORT_SERVER ), CVAR_LATCH )->integer;
+	port = Cvar_Get( "net_port", va( "%i", PORT_CLIENT ), CVAR_LATCH )->integer;
 
 	// automatically scan for a valid port, so multiple
 	// dedicated servers can be started without requiring
@@ -827,7 +827,7 @@ NET_OpenIPX
 void NET_OpenIPX( void ) {
 	int port;
 
-	port = Cvar_Get( "net_port", va( "%i", PORT_SERVER ), CVAR_LATCH )->integer;
+	port = Cvar_Get( "net_port", va( "%i", PORT_CLIENT ), CVAR_LATCH )->integer;
 	ipx_socket = NET_IPXSocket( port );
 }
 

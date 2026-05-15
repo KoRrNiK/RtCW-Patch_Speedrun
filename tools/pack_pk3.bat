@@ -78,7 +78,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "    Write-Host 'First build or no previous state found.' -ForegroundColor Magenta;" ^
     "}" ^
     "" ^
-    "if (Test-Path $pk3) { Remove-Item $pk3 -Force }" ^
     "$tmp = $pk3 + '.tmp.zip';" ^
     "if (Test-Path $tmp) { Remove-Item $tmp -Force }" ^
     "" ^
@@ -96,6 +95,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "    $zip.Dispose();" ^
     "}" ^
     "" ^
+    "if (Test-Path $pk3) { Remove-Item -Path $pk3 -Force }" ^
     "Move-Item -Path $tmp -Destination $pk3 -Force;" ^
     "Set-Content -Path $state -Value $newSignature -Encoding UTF8;" ^
     "" ^

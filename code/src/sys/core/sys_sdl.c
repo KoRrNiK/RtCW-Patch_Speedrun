@@ -26,7 +26,7 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-// win_main.h
+// SDL system entry point
 
 #include "../../client/client.h"
 #include "../../qcommon/qcommon.h"
@@ -38,6 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <float.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <limits.h>
 #include <direct.h>
 #include <io.h>
 #include <conio.h>
@@ -54,6 +55,46 @@ If you have questions concerning this license or the applicable additional terms
 #define MEM_THRESHOLD 96 * 1024 * 1024
 
 static char sys_cmdline[MAX_STRING_CHARS];
+
+static void Sys_EnableDpiAwareness( void ) {
+#ifdef _WIN32
+	HMODULE user32;
+	HMODULE shcore;
+	typedef BOOL ( WINAPI *setProcessDpiAwarenessContextProc_t )( HANDLE );
+	typedef HRESULT ( WINAPI *setProcessDpiAwarenessProc_t )( int );
+	typedef BOOL ( WINAPI *setProcessDPIAwareProc_t )( void );
+
+	user32 = GetModuleHandleA( "user32.dll" );
+	if ( user32 ) {
+		setProcessDpiAwarenessContextProc_t setProcessDpiAwarenessContext =
+			(setProcessDpiAwarenessContextProc_t)GetProcAddress( user32, "SetProcessDpiAwarenessContext" );
+		if ( setProcessDpiAwarenessContext &&
+			 setProcessDpiAwarenessContext( (HANDLE)-4 ) ) { /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */
+			return;
+		}
+	}
+
+	shcore = LoadLibraryA( "shcore.dll" );
+	if ( shcore ) {
+		setProcessDpiAwarenessProc_t setProcessDpiAwareness =
+			(setProcessDpiAwarenessProc_t)GetProcAddress( shcore, "SetProcessDpiAwareness" );
+		if ( setProcessDpiAwareness &&
+			 SUCCEEDED( setProcessDpiAwareness( 2 ) ) ) { /* PROCESS_PER_MONITOR_DPI_AWARE */
+			FreeLibrary( shcore );
+			return;
+		}
+		FreeLibrary( shcore );
+	}
+
+	if ( user32 ) {
+		setProcessDPIAwareProc_t setProcessDPIAware =
+			(setProcessDPIAwareProc_t)GetProcAddress( user32, "SetProcessDPIAware" );
+		if ( setProcessDPIAware ) {
+			setProcessDPIAware();
+		}
+	}
+#endif
+}
 
 /*
 ==================
@@ -79,9 +120,14 @@ Sys_LowPhysicalMemory()
 */
 
 qboolean Sys_LowPhysicalMemory() {
-	MEMORYSTATUS stat;
-	GlobalMemoryStatus( &stat );
-	return ( stat.dwTotalPhys <= MEM_THRESHOLD ) ? qtrue : qfalse;
+	MEMORYSTATUSEX stat;
+
+	memset( &stat, 0, sizeof( stat ) );
+	stat.dwLength = sizeof( stat );
+	if ( !GlobalMemoryStatusEx( &stat ) ) {
+		return qfalse;
+	}
+	return ( stat.ullTotalPhys <= MEM_THRESHOLD ) ? qtrue : qfalse;
 }
 
 typedef struct {
@@ -98,6 +144,53 @@ typedef struct {
 } sysProcessMemoryCounters_t;
 
 typedef BOOL ( WINAPI *sysGetProcessMemoryInfoProc_t )( HANDLE, sysProcessMemoryCounters_t *, DWORD );
+
+static int Sys_SizeToKBInt( SIZE_T bytes ) {
+	SIZE_T kb = bytes / 1024;
+
+	if ( kb > (SIZE_T)INT_MAX ) {
+		return INT_MAX;
+	}
+	return (int)kb;
+}
+
+static qboolean Sys_GetOSVersionInfo( OSVERSIONINFO *versionInfo ) {
+	typedef LONG ( WINAPI *sysRtlGetVersionProc_t )( OSVERSIONINFOEXW * );
+	sysRtlGetVersionProc_t rtlGetVersion;
+	OSVERSIONINFOEXW versionInfoEx;
+	HMODULE ntdll;
+
+	if ( !versionInfo ) {
+		return qfalse;
+	}
+
+	memset( versionInfo, 0, sizeof( *versionInfo ) );
+	versionInfo->dwOSVersionInfoSize = sizeof( *versionInfo );
+
+	ntdll = GetModuleHandleA( "ntdll.dll" );
+	rtlGetVersion = ntdll ? (sysRtlGetVersionProc_t)GetProcAddress( ntdll, "RtlGetVersion" ) : NULL;
+	if ( rtlGetVersion ) {
+		memset( &versionInfoEx, 0, sizeof( versionInfoEx ) );
+		versionInfoEx.dwOSVersionInfoSize = sizeof( versionInfoEx );
+		if ( rtlGetVersion( &versionInfoEx ) == 0 ) {
+			versionInfo->dwMajorVersion = versionInfoEx.dwMajorVersion;
+			versionInfo->dwMinorVersion = versionInfoEx.dwMinorVersion;
+			versionInfo->dwBuildNumber = versionInfoEx.dwBuildNumber;
+			versionInfo->dwPlatformId = VER_PLATFORM_WIN32_NT;
+			versionInfo->szCSDVersion[0] = '\0';
+			return qtrue;
+		}
+	}
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4996)
+#endif
+	return GetVersionEx( versionInfo ) ? qtrue : qfalse;
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+}
 
 qboolean Sys_GetProcessMemoryStats( sysProcessMemoryStats_t *stats ) {
 	static qboolean attempted = qfalse;
@@ -132,15 +225,15 @@ qboolean Sys_GetProcessMemoryStats( sysProcessMemoryStats_t *stats ) {
 	}
 
 	memset( &counters, 0, sizeof( counters ) );
-	counters.cb = sizeof( counters );
-	if ( !getProcessMemoryInfo( GetCurrentProcess(), &counters, sizeof( counters ) ) ) {
+	counters.cb = (DWORD)sizeof( counters );
+	if ( !getProcessMemoryInfo( GetCurrentProcess(), &counters, (DWORD)sizeof( counters ) ) ) {
 		return qfalse;
 	}
 
-	stats->workingSetKB = (int)( counters.WorkingSetSize / 1024 );
-	stats->peakWorkingSetKB = (int)( counters.PeakWorkingSetSize / 1024 );
-	stats->pagefileKB = (int)( counters.PagefileUsage / 1024 );
-	stats->peakPagefileKB = (int)( counters.PeakPagefileUsage / 1024 );
+	stats->workingSetKB = Sys_SizeToKBInt( counters.WorkingSetSize );
+	stats->peakWorkingSetKB = Sys_SizeToKBInt( counters.PeakWorkingSetSize );
+	stats->pagefileKB = Sys_SizeToKBInt( counters.PagefileUsage );
+	stats->peakPagefileKB = Sys_SizeToKBInt( counters.PeakPagefileUsage );
 	return qtrue;
 }
 
@@ -1311,18 +1404,9 @@ void Sys_Init( void ) {
 	Cmd_AddCommand( "in_restart", Sys_In_Restart_f );
 	Cmd_AddCommand( "net_restart", Sys_Net_Restart_f );
 
-	g_wv.osversion.dwOSVersionInfoSize = sizeof( g_wv.osversion );
-
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable:4996)
-#endif
-	if ( !GetVersionEx( &g_wv.osversion ) ) {
+	if ( !Sys_GetOSVersionInfo( &g_wv.osversion ) ) {
 		Sys_Error( "Couldn't get OS info" );
 	}
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 	if ( g_wv.osversion.dwMajorVersion < 4 ) {
 		Sys_Error( "Wolf requires Windows version 4 or greater" );
@@ -1435,6 +1519,7 @@ int main( int argc, char **argv ) {
 	int i;
 
 	g_wv.hInstance = GetModuleHandle( NULL );
+	Sys_EnableDpiAwareness();
 	sys_cmdline[0] = '\0';
 	for ( i = 1; i < argc; i++ ) {
 		qboolean quote = strchr( argv[i], ' ' ) != NULL;

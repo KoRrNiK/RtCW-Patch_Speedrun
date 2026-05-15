@@ -469,7 +469,7 @@ void NET_OpenIP( void ) {
 
 	ip = Cvar_Get( "net_ip", "localhost", 0 );
 
-	port = Cvar_Get( "net_port", va( "%i", PORT_SERVER ), 0 )->value;
+	port = Cvar_Get( "net_port", va( "%i", PORT_CLIENT ), 0 )->value;
 
 	for ( i = 0 ; i < 10 ; i++ ) {
 		ip_socket = NET_IPSocket( ip->string, port + i );

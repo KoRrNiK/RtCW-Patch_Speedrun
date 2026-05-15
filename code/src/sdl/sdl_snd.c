@@ -24,7 +24,7 @@ static cvar_t *s_muteUnfocused;
 
 static int dmapos = 0;
 static int dmasize = 0;
-static qboolean sdlAudioPaused = qfalse;
+static qboolean sdlAudioMuted = qfalse;
 static SDL_AudioStream *sdlPlaybackStream = NULL;
 
 static int SNDDMA_NextPowerOfTwo( int value ) {
@@ -34,6 +34,47 @@ static int SNDDMA_NextPowerOfTwo( int value ) {
 		result <<= 1;
 	}
 	return result;
+}
+
+static qboolean SNDDMA_ShouldMuteUnfocused( void ) {
+	return s_muteUnfocused && s_muteUnfocused->integer &&
+		( !g_wv.activeApp || g_wv.isMinimized );
+}
+
+static void SNDDMA_AdvanceDMAPos( int bytes ) {
+	int sampleBytes;
+
+	if ( dma.samplebits <= 0 || dma.samples <= 0 ) {
+		return;
+	}
+
+	sampleBytes = dma.samplebits / 8;
+	if ( sampleBytes <= 0 ) {
+		return;
+	}
+
+	dmapos += bytes / sampleBytes;
+	if ( dmapos >= dma.samples ) {
+		dmapos %= dma.samples;
+	}
+	dma.samplepos = dmapos;
+}
+
+static void SNDDMA_PutSilence( SDL_AudioStream *stream, int bytes ) {
+	byte silence[4096];
+	int clear;
+
+	if ( bytes <= 0 ) {
+		return;
+	}
+
+	clear = ( dma.samplebits == 8 ) ? 0x80 : 0;
+	memset( silence, clear, sizeof( silence ) );
+	while ( bytes > 0 ) {
+		int chunk = bytes > (int)sizeof( silence ) ? (int)sizeof( silence ) : bytes;
+		SDL_PutAudioStreamData( stream, silence, chunk );
+		bytes -= chunk;
+	}
 }
 
 static void SDLCALL SNDDMA_AudioCallback( void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount ) {
@@ -61,6 +102,12 @@ static void SDLCALL SNDDMA_AudioCallback( void *userdata, SDL_AudioStream *strea
 	len = additional_amount;
 	len -= len % sampleBytes;
 	if ( len <= 0 ) {
+		return;
+	}
+
+	if ( SNDDMA_ShouldMuteUnfocused() ) {
+		SNDDMA_PutSilence( stream, len );
+		SNDDMA_AdvanceDMAPos( len );
 		return;
 	}
 
@@ -188,7 +235,7 @@ qboolean SNDDMA_Init( void ) {
 
 	Com_Printf( "Starting SDL audio callback...\n" );
 	snd_inited = qtrue;
-	sdlAudioPaused = qfalse;
+	sdlAudioMuted = qfalse;
 	SDL_ResumeAudioStreamDevice( sdlPlaybackStream );
 
 	Com_Printf( "SDL audio initialized.\n" );
@@ -213,7 +260,7 @@ void SNDDMA_Shutdown( void ) {
 	}
 	dmapos = 0;
 	dmasize = 0;
-	sdlAudioPaused = qfalse;
+	sdlAudioMuted = qfalse;
 	snd_inited = qfalse;
 	Com_Printf( "SDL audio shut down.\n" );
 }
@@ -231,24 +278,21 @@ void SNDDMA_BeginPainting( void ) {
 }
 
 void SNDDMA_Activate( void ) {
-	qboolean shouldPause;
+	qboolean shouldMute;
 
 	if ( !snd_inited || !sdlPlaybackStream ) {
 		return;
 	}
 
-	shouldPause = s_muteUnfocused && s_muteUnfocused->integer &&
-		( !g_wv.activeApp || g_wv.isMinimized );
-
-	if ( shouldPause == sdlAudioPaused ) {
+	shouldMute = SNDDMA_ShouldMuteUnfocused();
+	if ( shouldMute == sdlAudioMuted ) {
 		return;
 	}
 
-	if ( shouldPause ) {
-		SDL_PauseAudioStreamDevice( sdlPlaybackStream );
-	} else {
+	SDL_ClearAudioStream( sdlPlaybackStream );
+	if ( SDL_AudioStreamDevicePaused( sdlPlaybackStream ) ) {
 		SDL_ResumeAudioStreamDevice( sdlPlaybackStream );
 	}
 
-	sdlAudioPaused = shouldPause;
+	sdlAudioMuted = shouldMute;
 }

@@ -34,6 +34,7 @@ static SDL_Joystick *stick = NULL;
 static qboolean mouseAvailable = qfalse;
 static qboolean mouseActive = qfalse;
 static int vidRestartTime = 0;
+static int ignoreResizeUntil = 0;
 static int in_eventTime = 0;
 static int mouseDebugEvents = 0;
 static int mouseDebugState = -1;
@@ -622,6 +623,9 @@ static void IN_ProcessEvents( void ) {
 			break;
 
 		case SDL_EVENT_WINDOW_RESIZED:
+			if ( Sys_Milliseconds() < ignoreResizeUntil ) {
+				break;
+			}
 			if ( !cls.glconfig.isFullscreen ) {
 				int width;
 				int height;
@@ -639,6 +643,9 @@ static void IN_ProcessEvents( void ) {
 			break;
 
 		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+			if ( Sys_Milliseconds() < ignoreResizeUntil ) {
+				break;
+			}
 			if ( !cls.glconfig.isFullscreen ) {
 				int width = 0;
 				int height = 0;
@@ -721,6 +728,18 @@ void IN_Init( void ) {
 	IN_InitJoystick();
 	in_eventTime = Sys_Milliseconds();
 	Com_DPrintf( "----------------------------------------\n" );
+}
+
+void IN_SuppressResizeEvents( int msec ) {
+	int until;
+
+	if ( msec <= 0 ) {
+		return;
+	}
+	until = Sys_Milliseconds() + msec;
+	if ( until > ignoreResizeUntil ) {
+		ignoreResizeUntil = until;
+	}
 }
 
 void IN_Shutdown( void ) {

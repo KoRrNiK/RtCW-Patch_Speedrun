@@ -304,6 +304,7 @@
     <ClCompile Include="client\cl_cgame.c" />
     <ClCompile Include="client\cl_cin.c" />
     <ClCompile Include="client\cl_console.c" />
+    <ClCompile Include="client\cl_discord.c" />
     <ClCompile Include="client\cl_input.c" />
     <ClCompile Include="client\cl_keys.c" />
     <ClCompile Include="client\cl_livesplit.c" />
@@ -357,8 +358,8 @@
     <ClCompile Include="sdl\sdl_snd.c" />
     <ClCompile Include="sys\core\sys_console_sdl.c" />
     <ClCompile Include="sys\core\sys_sdl.c" />
-    <ClCompile Include="sys\platform\win32\sys_net_win32.c" />
-    <ClCompile Include="sys\platform\win32\sys_win32_shared.c" />
+    <ClCompile Include="sys\platform\windows\sys_net_windows.c" />
+    <ClCompile Include="sys\platform\windows\sys_windows_shared.c" />
     <ClCompile Include="thirdparty\imgui\backends\imgui_impl_opengl2.cpp" />
     <ClCompile Include="thirdparty\imgui\imgui.cpp" />
     <ClCompile Include="thirdparty\imgui\imgui_draw.cpp" />
@@ -368,7 +369,7 @@
   <ItemGroup>
     <ClInclude Include="sdl\sdl_local.h" />
     <ClInclude Include="sys\core\sys_local.h" />
-    <ClInclude Include="sys\platform\win32\sys_glw_win.h" />
+    <ClInclude Include="sys\platform\windows\sys_glw_windows.h" />
     <ClInclude Include="sys\resources\sys_resource_sdl.h" />
     <ClInclude Include="client\client.h" />
     <ClInclude Include="client\cl_speedrun_imgui.h" />

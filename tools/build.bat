@@ -87,7 +87,7 @@ if "%MSBUILD%"=="" (
 :: ----------------------------------------------------------------
 %PS% "Write-Host '================================' -ForegroundColor DarkCyan; Write-Host '  STEP 1: Compile Engine + DLLs  (bin\)' -ForegroundColor Cyan; Write-Host '================================' -ForegroundColor DarkCyan"
 
-"%MSBUILD%" "%SLN%" /t:wolf;cgame;game;ui /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% /nologo /nr:false /v:minimal
+"%MSBUILD%" "%SLN%" /t:extractfuncs;wolf;cgame;game;ui /p:Configuration=%CONFIG% /p:Platform=%PLATFORM% /nologo /nr:false /v:minimal
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -148,6 +148,12 @@ if not exist "%MAIN_DIR%" mkdir "%MAIN_DIR%"
 
 if exist "%PK3_SCRIPT%" (
     call "%PK3_SCRIPT%" "%BIN_CONFIG%"
+    if %ERRORLEVEL% neq 0 (
+        echo.
+        %PS% "Write-Host 'PK3 PACK FAILED!' -ForegroundColor Red"
+        pause
+        exit /b 1
+    )
 ) else (
     %PS% "Write-Host 'WARNING: pack_pk3.bat not found, skipping PK3 step.' -ForegroundColor Yellow"
 )

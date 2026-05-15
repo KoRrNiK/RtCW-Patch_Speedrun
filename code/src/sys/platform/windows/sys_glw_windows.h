@@ -6,8 +6,8 @@ Windows OpenGL state used by the SDL renderer bridge.
 ===========================================================================
 */
 
-#ifndef RTCW_SYS_GLW_WIN_H
-#define RTCW_SYS_GLW_WIN_H
+#ifndef RTCW_SYS_GLW_WINDOWS_H
+#define RTCW_SYS_GLW_WINDOWS_H
 
 #include <stdio.h>
 #if defined( _MSC_VER ) && ( _MSC_VER >= 1200 )

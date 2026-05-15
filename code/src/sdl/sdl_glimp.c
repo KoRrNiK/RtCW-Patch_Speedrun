@@ -11,7 +11,7 @@ SDL3 OpenGL backend for the test renderer target.
 
 #include "sdl_local.h"
 #include "../renderer/tr_local.h"
-#include "../sys/platform/win32/sys_glw_win.h"
+#include "../sys/platform/windows/sys_glw_windows.h"
 #include "../sys/core/sys_local.h"
 #include "../client/cl_speedrun_imgui.h"
 
@@ -82,6 +82,30 @@ static float SDLGL_GetDisplayScale( void ) {
 		scale = 3.0f;
 	}
 	return scale;
+}
+
+static SDL_DisplayID SDLGL_GetDisplayByIndex( int index, int *displayCount ) {
+	SDL_DisplayID *displays;
+	SDL_DisplayID display = 0;
+	int count = 0;
+
+	displays = SDL_GetDisplays( &count );
+	if ( displayCount ) {
+		*displayCount = count;
+	}
+	if ( displays && count > 0 ) {
+		if ( index < 0 || index >= count ) {
+			index = 0;
+		}
+		display = displays[index];
+	}
+	if ( displays ) {
+		SDL_free( displays );
+	}
+	if ( !display ) {
+		display = SDL_GetPrimaryDisplay();
+	}
+	return display;
 }
 
 static void SDLGL_InitExtensions( void ) {
@@ -239,9 +263,15 @@ static void SDLGL_DestroyWindow( void ) {
 }
 
 static rserr_t SDLGL_SetMode( int mode, qboolean fullscreen ) {
-	SDL_WindowFlags flags = SDL_WINDOW_OPENGL;
+	SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN;
+	SDL_DisplayID targetDisplay;
+	const char *displayName;
 	int windowWidth;
 	int windowHeight;
+	int createWidth;
+	int createHeight;
+	int displayIndex;
+	int displayCount = 0;
 	int colorBits;
 	int depthBits;
 	int stencilBits;
@@ -256,11 +286,22 @@ static rserr_t SDLGL_SetMode( int mode, qboolean fullscreen ) {
 
 	windowWidth = glConfig.vidWidth;
 	windowHeight = glConfig.vidHeight;
+	displayIndex = r_monitor ? r_monitor->integer : 0;
+	targetDisplay = SDLGL_GetDisplayByIndex( displayIndex, &displayCount );
+	if ( displayCount > 0 && ( displayIndex < 0 || displayIndex >= displayCount ) ) {
+		displayIndex = 0;
+		ri.Cvar_Set( "r_monitor", "0" );
+	}
+	displayName = targetDisplay ? SDL_GetDisplayName( targetDisplay ) : NULL;
+	createWidth = windowWidth;
+	createHeight = windowHeight;
 
-	ri.Printf( PRINT_ALL, "...setting SDL mode %d: %d %d %s\n",
-			   mode, windowWidth, windowHeight, fullscreen ? "fullscreen" : "windowed" );
+	ri.Printf( PRINT_ALL, "...setting SDL mode %d: %d %d %s on monitor %d%s%s\n",
+			   mode, windowWidth, windowHeight, fullscreen ? "fullscreen" : "windowed",
+			   displayIndex + 1, displayName ? " " : "", displayName ? displayName : "" );
 
 	SDLGL_DestroyWindow();
+	IN_SuppressResizeEvents( 1500 );
 	SDL_GL_ResetAttributes();
 
 	colorBits = r_colorbits->integer;
@@ -281,25 +322,37 @@ static rserr_t SDLGL_SetMode( int mode, qboolean fullscreen ) {
 	SDL_GL_SetAttribute( SDL_GL_ACCELERATED_VISUAL, 1 );
 
 	if ( !fullscreen ) {
-		flags |= SDL_WINDOW_RESIZABLE;
+		if ( ( !r_resizableWindow || r_resizableWindow->integer ) &&
+			 ( !r_sdlResizable || r_sdlResizable->integer ) ) {
+			flags |= SDL_WINDOW_RESIZABLE;
+		}
+		if ( r_borderless && r_borderless->integer ) {
+			flags |= SDL_WINDOW_BORDERLESS;
+		}
 		if ( r_sdlDpiScale && r_sdlDpiScale->integer ) {
 			flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
 		}
 	}
 
-	if ( fullscreen ) {
-		flags |= SDL_WINDOW_FULLSCREEN;
-	}
-
-	sdl_window = SDL_CreateWindow( "Return to Castle Wolfenstein", windowWidth, windowHeight, flags );
+	sdl_window = SDL_CreateWindow( "Return to Castle Wolfenstein", createWidth, createHeight, flags );
 	if ( !sdl_window ) {
 		ri.Printf( PRINT_ALL, "SDL_CreateWindow failed: %s\n", SDL_GetError() );
 		return fullscreen ? RSERR_INVALID_FULLSCREEN : RSERR_INVALID_MODE;
 	}
 
-	if ( !fullscreen ) {
-		SDL_SetWindowPosition( sdl_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED );
+	SDL_SetWindowPosition( sdl_window, SDL_WINDOWPOS_CENTERED_DISPLAY( targetDisplay ), SDL_WINDOWPOS_CENTERED_DISPLAY( targetDisplay ) );
+	if ( fullscreen ) {
+		SDL_DisplayMode closestMode;
+		if ( SDL_GetClosestFullscreenDisplayMode( targetDisplay, windowWidth, windowHeight, 0.0f, true, &closestMode ) ) {
+			SDL_SetWindowFullscreenMode( sdl_window, &closestMode );
+		}
+		if ( !SDL_SetWindowFullscreen( sdl_window, true ) ) {
+			ri.Printf( PRINT_ALL, "SDL_SetWindowFullscreen failed: %s\n", SDL_GetError() );
+			SDLGL_DestroyWindow();
+			return RSERR_INVALID_FULLSCREEN;
+		}
 	}
+	SDL_ShowWindow( sdl_window );
 	SDL_RaiseWindow( sdl_window );
 
 	sdl_gl_context = SDL_GL_CreateContext( sdl_window );

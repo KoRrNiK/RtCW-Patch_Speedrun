@@ -17,6 +17,8 @@ SDL3 platform glue for the Win32 test target.
 extern SDL_Window *sdl_window;
 extern SDL_GLContext sdl_gl_context;
 
+void IN_SuppressResizeEvents( int msec );
+
 qboolean SDLGL_InitGammaSupport( void );
 void SDLGL_RestoreGamma( void );
 
