@@ -29,6 +29,14 @@ If you have questions concerning this license or the applicable additional terms
 // cl_parse.c  -- parse a message received from the server
 
 #include "client.h"
+#include "../renderer2/r2_public.h"
+
+static void CL_ParseR2Status( const char *label ) {
+	if ( label && label[0] ) {
+		R2_DebugSetStatusTitle( va( "Return to Castle Wolfenstein - Renderer2 | parse %s | state %d msg %d",
+									label, cls.state, clc.serverMessageSequence ) );
+	}
+}
 
 char *svc_strings[256] = {
 	"svc_bad",
@@ -296,6 +304,8 @@ void CL_ParseSnapshot( msg_t *msg ) {
 	int oldMessageNum;
 	int i, packetNum;
 
+	CL_ParseR2Status( "snapshot start" );
+
 	// get the reliable sequence acknowledge number
 	// NOTE: now sent with all server to client messages
 	//clc.reliableAcknowledge = MSG_ReadLong( msg );
@@ -309,6 +319,8 @@ void CL_ParseSnapshot( msg_t *msg ) {
 	newSnap.serverCommandNum = clc.serverCommandSequence;
 
 	newSnap.serverTime = MSG_ReadLong( msg );
+	R2_DebugSetStatusTitle( va( "Return to Castle Wolfenstein - Renderer2 | parse snapshot serverTime %d | state %d msg %d",
+								newSnap.serverTime, cls.state, clc.serverMessageSequence ) );
 
 	newSnap.messageNum = clc.serverMessageSequence;
 
@@ -359,10 +371,13 @@ void CL_ParseSnapshot( msg_t *msg ) {
 	// read packet entities
 	SHOWNET( msg, "packet entities" );
 	CL_ParsePacketEntities( msg, old, &newSnap );
+	R2_DebugSetStatusTitle( va( "Return to Castle Wolfenstein - Renderer2 | parse snapshot entities %d valid %d flags %d",
+								newSnap.numEntities, newSnap.valid, newSnap.snapFlags ) );
 
 	// if not valid, dump the entire thing now that it has
 	// been properly read
 	if ( !newSnap.valid ) {
+		CL_ParseR2Status( "snapshot invalid" );
 		return;
 	}
 
@@ -399,6 +414,8 @@ void CL_ParseSnapshot( msg_t *msg ) {
 	}
 
 	cl.newSnapshots = qtrue;
+	R2_DebugSetStatusTitle( va( "Return to Castle Wolfenstein - Renderer2 | parse snapshot done entities %d flags %d | state %d",
+								cl.snap.numEntities, cl.snap.snapFlags, cls.state ) );
 }
 
 
@@ -822,6 +839,8 @@ void CL_ParseServerMessage( msg_t *msg ) {
 	int cmd;
 	msg_t msgback;
 
+	CL_ParseR2Status( "server message start" );
+
 	msgback = *msg;
 
 	if ( cl_shownet->integer == 1 ) {
@@ -871,20 +890,26 @@ void CL_ParseServerMessage( msg_t *msg ) {
 		case svc_nop:
 			break;
 		case svc_serverCommand:
+			CL_ParseR2Status( "serverCommand" );
 			CL_ParseCommandString( msg );
 			break;
 		case svc_gamestate:
+			CL_ParseR2Status( "gamestate" );
 			CL_ParseGamestate( msg );
 			break;
 		case svc_snapshot:
+			CL_ParseR2Status( "snapshot cmd" );
 			CL_ParseSnapshot( msg );
 			break;
 		case svc_download:
+			CL_ParseR2Status( "download" );
 			CL_ParseDownload( msg );
 			break;
 		case svc_demo_configstring:
+			CL_ParseR2Status( "demo configstring" );
 			CL_ParseDemoConfigstring( msg );
 			break;
 		}
 	}
+	CL_ParseR2Status( "server message done" );
 }

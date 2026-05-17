@@ -32,6 +32,11 @@ glwstate_t glw_state;
 
 static cvar_t *r_sdlResizable;
 static cvar_t *r_sdlDpiScale;
+static cvar_t *r_windowX;
+static cvar_t *r_windowY;
+static cvar_t *r_borderlessDragHeight;
+
+#define RTCW_SDL_WINDOW_POS_UNSET -32000
 
 HANDLE renderCommandsEvent;
 HANDLE renderCompletedEvent;
@@ -106,6 +111,114 @@ static SDL_DisplayID SDLGL_GetDisplayByIndex( int index, int *displayCount ) {
 		display = SDL_GetPrimaryDisplay();
 	}
 	return display;
+}
+
+static qboolean SDLGL_WindowRectOnAnyDisplay( int x, int y, int width, int height ) {
+	SDL_DisplayID *displays;
+	SDL_Rect windowRect;
+	SDL_Rect displayRect;
+	int count = 0;
+	int i;
+
+	if ( width <= 0 || height <= 0 ) {
+		return qfalse;
+	}
+
+	displays = SDL_GetDisplays( &count );
+	if ( !displays || count <= 0 ) {
+		if ( displays ) {
+			SDL_free( displays );
+		}
+		return qtrue;
+	}
+
+	windowRect.x = x;
+	windowRect.y = y;
+	windowRect.w = width;
+	windowRect.h = height;
+
+	for ( i = 0; i < count; i++ ) {
+		if ( !SDL_GetDisplayUsableBounds( displays[i], &displayRect ) ) {
+			continue;
+		}
+		if ( windowRect.x < displayRect.x + displayRect.w &&
+			 windowRect.x + windowRect.w > displayRect.x &&
+			 windowRect.y < displayRect.y + displayRect.h &&
+			 windowRect.y + windowRect.h > displayRect.y ) {
+			SDL_free( displays );
+			return qtrue;
+		}
+	}
+
+	SDL_free( displays );
+	return qfalse;
+}
+
+static void SDLGL_PositionWindow( SDL_DisplayID targetDisplay, int width, int height ) {
+	if ( r_windowX && r_windowY &&
+		 r_windowX->integer != RTCW_SDL_WINDOW_POS_UNSET &&
+		 r_windowY->integer != RTCW_SDL_WINDOW_POS_UNSET &&
+		 SDLGL_WindowRectOnAnyDisplay( r_windowX->integer, r_windowY->integer, width, height ) ) {
+		SDL_SetWindowPosition( sdl_window, r_windowX->integer, r_windowY->integer );
+		return;
+	}
+
+	SDL_SetWindowPosition( sdl_window,
+		SDL_WINDOWPOS_CENTERED_DISPLAY( targetDisplay ),
+		SDL_WINDOWPOS_CENTERED_DISPLAY( targetDisplay ) );
+}
+
+void SDLGL_RecordWindowPosition( void ) {
+	Uint64 flags;
+	int x;
+	int y;
+
+	if ( !sdl_window || !r_windowX || !r_windowY || ( r_fullscreen && r_fullscreen->integer ) ) {
+		return;
+	}
+
+	flags = SDL_GetWindowFlags( sdl_window );
+	if ( flags & SDL_WINDOW_MINIMIZED ) {
+		return;
+	}
+
+	if ( SDL_GetWindowPosition( sdl_window, &x, &y ) ) {
+		ri.Cvar_Set( "r_windowX", va( "%i", x ) );
+		ri.Cvar_Set( "r_windowY", va( "%i", y ) );
+	}
+}
+
+static SDL_HitTestResult SDLCALL SDLGL_BorderlessHitTest( SDL_Window *window, const SDL_Point *area, void *data ) {
+	int dragHeight;
+
+	(void)window;
+	(void)data;
+
+	if ( !area || !r_borderlessDragHeight || SDL_GetWindowRelativeMouseMode( window ) ) {
+		return SDL_HITTEST_NORMAL;
+	}
+
+	dragHeight = r_borderlessDragHeight->integer;
+	if ( dragHeight > 0 && area->y >= 0 && area->y < dragHeight ) {
+		return SDL_HITTEST_DRAGGABLE;
+	}
+
+	return SDL_HITTEST_NORMAL;
+}
+
+static void SDLGL_UpdateBorderlessHitTest( qboolean fullscreen ) {
+	if ( !sdl_window ) {
+		return;
+	}
+
+	if ( !fullscreen && r_borderless && r_borderless->integer &&
+		 r_borderlessDragHeight && r_borderlessDragHeight->integer > 0 ) {
+		if ( !SDL_SetWindowHitTest( sdl_window, SDLGL_BorderlessHitTest, NULL ) ) {
+			ri.Printf( PRINT_ALL, "SDL_SetWindowHitTest failed: %s\n", SDL_GetError() );
+		}
+	} else {
+		SDL_SetWindowHitTest( sdl_window, NULL, NULL );
+	}
 }
 
 static void SDLGL_InitExtensions( void ) {
@@ -248,6 +361,8 @@ static void SDLGL_InitExtensions( void ) {
 }
 
 static void SDLGL_DestroyWindow( void ) {
+	SDLGL_RecordWindowPosition();
+
 	if ( sdl_gl_context ) {
 		SDL_GL_MakeCurrent( sdl_window, NULL );
 		SDL_GL_DestroyContext( sdl_gl_context );
@@ -340,7 +455,6 @@ static rserr_t SDLGL_SetMode( int mode, qboolean fullscreen ) {
 		return fullscreen ? RSERR_INVALID_FULLSCREEN : RSERR_INVALID_MODE;
 	}
 
-	SDL_SetWindowPosition( sdl_window, SDL_WINDOWPOS_CENTERED_DISPLAY( targetDisplay ), SDL_WINDOWPOS_CENTERED_DISPLAY( targetDisplay ) );
 	if ( fullscreen ) {
 		SDL_DisplayMode closestMode;
 		if ( SDL_GetClosestFullscreenDisplayMode( targetDisplay, windowWidth, windowHeight, 0.0f, true, &closestMode ) ) {
@@ -351,7 +465,10 @@ static rserr_t SDLGL_SetMode( int mode, qboolean fullscreen ) {
 			SDLGL_DestroyWindow();
 			return RSERR_INVALID_FULLSCREEN;
 		}
+	} else {
+		SDLGL_PositionWindow( targetDisplay, createWidth, createHeight );
 	}
+	SDLGL_UpdateBorderlessHitTest( fullscreen );
 	SDL_ShowWindow( sdl_window );
 	SDL_RaiseWindow( sdl_window );
 
@@ -459,6 +576,9 @@ void GLimp_Init( void ) {
 
 	r_sdlResizable = ri.Cvar_Get( "r_sdlResizable", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_sdlDpiScale = ri.Cvar_Get( "r_sdlDpiScale", "1", CVAR_ARCHIVE | CVAR_LATCH );
+	r_windowX = ri.Cvar_Get( "r_windowX", "-32000", CVAR_ARCHIVE );
+	r_windowY = ri.Cvar_Get( "r_windowY", "-32000", CVAR_ARCHIVE );
+	r_borderlessDragHeight = ri.Cvar_Get( "r_borderlessDragHeight", "28", CVAR_ARCHIVE | CVAR_LATCH );
 	lastValidRenderer = ri.Cvar_Get( "r_lastValidRenderer", "(uninitialized)", CVAR_ARCHIVE );
 
 	if ( !QGL_Init( OPENGL_DRIVER_NAME ) ) {

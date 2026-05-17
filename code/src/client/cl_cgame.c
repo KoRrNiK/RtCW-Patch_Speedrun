@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "client.h"
 
 #include "../game/botlib.h"
+#include "../renderer2/r2_public.h"
 
 extern botlib_export_t *botlib_export;
 
@@ -66,6 +67,13 @@ static void CL_LoadTimingPrint( qboolean enabled, const char *label, int start, 
 	now = Sys_Milliseconds();
 	Com_Printf( "[load] client %-18s +%4d ms  total %4d ms\n", label, now - *last, now - start );
 	*last = now;
+}
+
+static void CL_R2Status( const char *label ) {
+	if ( label && label[0] ) {
+		R2_DebugSetStatusTitle( va( "Return to Castle Wolfenstein - Renderer2 | client %s | state %d",
+									label, cls.state ) );
+	}
 }
 
 
@@ -472,9 +480,19 @@ vmArg_t CL_CgameSystemCalls( vmArg_t *args ) {
 	case CG_PRINT:
 		Com_Printf( "%s", VMA( 1 ) );
 		return 0;
-	case CG_ERROR:
-		Com_Error( ERR_DROP, "%s", VMA( 1 ) );
+	case CG_ERROR: {
+		const char *cgError = (const char *)VMA( 1 );
+		char cgErrorLog[MAX_STRING_CHARS];
+
+		if ( !cgError ) {
+			cgError = "<null>";
+		}
+		Com_sprintf( cgErrorLog, sizeof( cgErrorLog ), "CG_ERROR: %s\n", cgError );
+		Com_Printf( S_COLOR_RED "%s", cgErrorLog );
+		FS_WriteFile( "renderer2_cg_error.log", cgErrorLog, (int)strlen( cgErrorLog ) );
+		Com_Error( ERR_DROP, "%s", cgError );
 		return 0;
+	}
 	case CG_MILLISECONDS:
 		return Sys_Milliseconds();
 	case CG_CVAR_REGISTER:
@@ -484,6 +502,12 @@ vmArg_t CL_CgameSystemCalls( vmArg_t *args ) {
 		Cvar_Update( VMA( 1 ) );
 		return 0;
 	case CG_CVAR_SET:
+		if ( !Q_stricmp( (const char *)VMA( 1 ), "r2_debugTitle" ) ) {
+			const char *status = (const char *)VMA( 2 );
+			R2_DebugSetStatusTitle( va( "Return to Castle Wolfenstein - Renderer2 | cgame %s | state %d",
+										status ? status : "<null>", cls.state ) );
+			return 0;
+		}
 		/* During demo freecam, block the cgame from resetting cg_thirdPerson
 		   to 0.  CG_MapRestart (save/load transitions) does this, which hides
 		   the player body model.  Keep it forced to "1" while freecam is on. */
@@ -1080,6 +1104,7 @@ void CL_InitCGame( void ) {
 	// otherwise server commands sent just before a gamestate are dropped
 	VM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
 	CL_LoadTimingPrint( loadTimings, "CG_INIT", t1, &loadLast );
+	CL_R2Status( "CL_InitCGame after CG_INIT" );
 
 	// reset any CVAR_CHEAT cvars registered by cgame
 	if ( !clc.demoplaying )
@@ -1095,22 +1120,29 @@ void CL_InitCGame( void ) {
 
 	// have the renderer touch all its images, so they are present
 	// on the card even if the driver does deferred loading
+	CL_R2Status( "CL_InitCGame before EndRegistration" );
 	re.EndRegistration();
 	CL_LoadTimingPrint( loadTimings, "EndRegistration", t1, &loadLast );
+	CL_R2Status( "CL_InitCGame after EndRegistration" );
 
 	// make sure everything is paged in
 	if ( cl_touchMemoryAfterLoad->integer && !Sys_LowPhysicalMemory() ) {
+		CL_R2Status( "CL_InitCGame before TouchMemory" );
 		Com_TouchMemory();
 		CL_LoadTimingPrint( loadTimings, "TouchMemory", t1, &loadLast );
+		CL_R2Status( "CL_InitCGame after TouchMemory" );
 	} else {
 		CL_LoadTimingPrint( loadTimings, "TouchMemory skipped", t1, &loadLast );
+		CL_R2Status( "CL_InitCGame TouchMemory skipped" );
 	}
 
 	// clear anything that got printed
 	Con_ClearNotify();
 
 	// Ridah, update the memory usage file
+	CL_R2Status( "CL_InitCGame before hunkusage" );
 	CL_UpdateLevelHunkUsage();
+	CL_R2Status( "CL_InitCGame done" );
 }
 
 // void CL_InitCGame( void ) {
@@ -1219,7 +1251,9 @@ CL_CGameRendering
 =====================
 */
 void CL_CGameRendering( stereoFrame_t stereo ) {
+	CL_R2Status( "CGameRendering before draw active" );
 	VM_Call( cgvm, CG_DRAW_ACTIVE_FRAME, cl.serverTime, stereo, clc.demoplaying );
+	CL_R2Status( "CGameRendering after draw active" );
 	VM_Debug( 0 );
 }
 
@@ -1310,11 +1344,14 @@ CL_FirstSnapshot
 ==================
 */
 void CL_FirstSnapshot( void ) {
+	CL_R2Status( "FirstSnapshot start" );
 	// ignore snapshots that don't have entities
 	if ( cl.snap.snapFlags & SNAPFLAG_NOT_ACTIVE ) {
+		CL_R2Status( "FirstSnapshot not active" );
 		return;
 	}
 	cls.state = CA_ACTIVE;
+	CL_R2Status( "FirstSnapshot active" );
 
 	// set the timedelta so we are exactly on this first frame
 	cl.serverTimeDelta = cl.snap.serverTime - cls.realtime;
@@ -1378,6 +1415,7 @@ void CL_FirstSnapshot( void ) {
 	}
 
 	Sys_BeginProfiling();
+	CL_R2Status( "FirstSnapshot done" );
 }
 
 /*
@@ -1415,10 +1453,12 @@ void CL_DemoResetWallClock( int newServerTime ) {
 }
 
 void CL_SetCGameTime( void ) {
+	CL_R2Status( "SetCGameTime start" );
 
 	// getting a valid frame message ends the connection process
 	if ( cls.state != CA_ACTIVE ) {
 		if ( cls.state != CA_PRIMED ) {
+			CL_R2Status( "SetCGameTime inactive return" );
 			return;
 		}
 		if ( clc.demoplaying ) {
@@ -1521,16 +1561,19 @@ void CL_SetCGameTime( void ) {
 
 	// if we have gotten to this point, cl.snap is guaranteed to be valid
 	if ( !cl.snap.valid ) {
+		CL_R2Status( "SetCGameTime invalid snap" );
 		Com_Error( ERR_DROP, "CL_SetCGameTime: !cl.snap.valid" );
 	}
 
 	// allow pause in single player
 	if ( sv_paused->integer && cl_paused->integer && com_sv_running->integer ) {
 		// paused
+		CL_R2Status( "SetCGameTime paused return" );
 		return;
 	}
 
 	if ( cl.snap.serverTime < cl.oldFrameServerTime ) {
+		CL_R2Status( "SetCGameTime backwards time" );
 		// Ridah, if this is a localhost, then we are probably loading a savegame
 		if ( !Q_stricmp( cls.servername, "localhost" ) ) {
 			// do nothing?
@@ -1551,6 +1594,7 @@ void CL_SetCGameTime( void ) {
 		}
 	}
 	cl.oldFrameServerTime = cl.snap.serverTime;
+	CL_R2Status( "SetCGameTime before adjust" );
 
 
 	// get our current view of time

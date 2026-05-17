@@ -19,6 +19,7 @@ extern SDL_GLContext sdl_gl_context;
 
 void IN_SuppressResizeEvents( int msec );
 
+void SDLGL_RecordWindowPosition( void );
 qboolean SDLGL_InitGammaSupport( void );
 void SDLGL_RestoreGamma( void );
 

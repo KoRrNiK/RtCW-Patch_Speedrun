@@ -657,6 +657,10 @@ static void IN_ProcessEvents( void ) {
 			}
 			break;
 
+		case SDL_EVENT_WINDOW_MOVED:
+			SDLGL_RecordWindowPosition();
+			break;
+
 		case SDL_EVENT_WINDOW_MINIMIZED:
 			g_wv.isMinimized = qtrue;
 			g_wv.activeApp = qfalse;

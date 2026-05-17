@@ -158,6 +158,11 @@
     <ClCompile Include="..\sdl\sdl_gamma.c" />
     <ClCompile Include="..\sdl\sdl_glimp.c" />
     <ClCompile Include="..\sys\platform\windows\sys_qgl_windows.c" />
+    <ClCompile Include="..\renderer2\r2_gl.c" />
+    <ClCompile Include="..\renderer2\r2_main.c" />
+    <ClCompile Include="..\renderer2\r2_model.c" />
+    <ClCompile Include="..\renderer2\r2_skin.c" />
+    <ClCompile Include="..\renderer2\r2_world.c" />
     <ClCompile Include="..\jpeg-6\jcapimin.c" />
     <ClCompile Include="..\jpeg-6\jccoefct.c" />
     <ClCompile Include="..\jpeg-6\jccolor.c" />

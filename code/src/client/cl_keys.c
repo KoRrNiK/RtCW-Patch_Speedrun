@@ -1642,7 +1642,7 @@ Called by the system for both key up and key down events
 ===================
 */
 //static int consoleCount = 0; // TTimo: unused
-#define CL_CINEMATIC_SKIP_INTENT_MS 750
+#define CL_CINEMATIC_SKIP_INTENT_MS 150
 #define CL_CINEMATIC_SKIP_RETRY_MS 50
 
 static int cl_cinematicSkipIntentKey = 0;
@@ -1841,6 +1841,8 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 	char    *kb;
 	char cmd[1024];
 	int activeMenu = 0;
+	qboolean skipContext;
+	qboolean uiOnlyKey;
 
 	// update auto-repeat status and BUTTON_ANY status
 	keys[key].down = down;
@@ -1891,8 +1893,10 @@ void CL_KeyEvent( int key, qboolean down, unsigned time ) {
 	/* Cutscene/cinematic skip must win over UI catchers.  The SDL backend can
 	   leave KEYCATCH_UI active for ImGui/race chat, and then SPACE never reaches
 	   the old skip path. */
+	skipContext = ( cls.state == CA_CINEMATIC || cl.cameraMode ) ? qtrue : qfalse;
+	uiOnlyKey = ( ( cls.keyCatchers & KEYCATCH_UI ) && !skipContext ) ? qtrue : qfalse;
 	if ( down && !( cls.keyCatchers & KEYCATCH_CONSOLE ) ) {
-		if ( CL_IsCinematicSkipKey( key ) && keys[key].repeats <= 1 ) {
+		if ( !uiOnlyKey && CL_IsCinematicSkipKey( key ) && keys[key].repeats <= 1 ) {
 			CL_RecordCinematicSkipIntent( key, time );
 		}
 		if ( cls.state == CA_CINEMATIC ) {

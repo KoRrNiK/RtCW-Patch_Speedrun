@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "client.h"
 #include "cl_speedrun_imgui.h"
+#include "../renderer2/r2_public.h"
 #include <limits.h>
 
 cvar_t  *cl_nodelta;
@@ -4381,6 +4382,7 @@ CL_InitRef
 void CL_InitRef( void ) {
 	refimport_t ri;
 	refexport_t *ret;
+	cvar_t *rendererBackend;
 
 	Com_Printf( "----- Initializing Renderer ----\n" );
 
@@ -4417,7 +4419,23 @@ void CL_InitRef( void ) {
 	ri.CIN_PlayCinematic = CIN_PlayCinematic;
 	ri.CIN_RunCinematic = CIN_RunCinematic;
 
-	ret = GetRefAPI( REF_API_VERSION, &ri );
+	rendererBackend = Cvar_Get( R2_BACKEND_CVAR, R2_BACKEND_LEGACY, CVAR_ARCHIVE | CVAR_LATCH );
+	if ( !Q_stricmp( rendererBackend->string, R2_BACKEND_RENDERER2 ) ) {
+		Com_Printf( "Renderer backend: %s\n", R2_BACKEND_RENDERER2 );
+		ret = R2_GetRefAPI( REF_API_VERSION, &ri );
+		if ( !ret ) {
+			Com_Printf( S_COLOR_YELLOW "Renderer2 unavailable, falling back to legacy renderer\n" );
+			ret = GetRefAPI( REF_API_VERSION, &ri );
+		}
+	} else {
+		if ( Q_stricmp( rendererBackend->string, R2_BACKEND_LEGACY ) ) {
+			Com_Printf( S_COLOR_YELLOW "Unknown %s \"%s\", using legacy renderer\n",
+						R2_BACKEND_CVAR, rendererBackend->string );
+			Cvar_Set( R2_BACKEND_CVAR, R2_BACKEND_LEGACY );
+		}
+		Com_Printf( "Renderer backend: %s\n", R2_BACKEND_LEGACY );
+		ret = GetRefAPI( REF_API_VERSION, &ri );
+	}
 
 #if 0 // MrE defined __USEA3D && defined __A3D_GEOM
 	hA3Dg_ExportRenderGeom( ret );
