@@ -1,0 +1,10 @@
+code/src/.vs/
+code/src/bin/
+code/src/Debug/
+code/src/Release/
+code/src/*/Debug/
+code/src/*/Release/
+code/src/*.vcxproj.user
+code/src/*/*.vcxproj.user
+tools/_release_tmp/
+tools/*.zip
