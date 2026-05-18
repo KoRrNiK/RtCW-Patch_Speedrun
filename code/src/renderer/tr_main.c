@@ -111,6 +111,7 @@ void R_Fog( glfog_t *curfog ) {
 //		setfog.hint = curfog->hint;
 //	}
 //	if(curfog->start != setfog.start || !setfog.registered) {
+
 	if ( backEnd.refdef.rdflags & RDF_SNOOPERVIEW ) {
 		qglFogf( GL_FOG_START, curfog->end );       // snooper starts GL fog out further
 	} else {
@@ -314,6 +315,35 @@ R_CullLocalBox
 Returns CULL_IN, CULL_CLIP, or CULL_OUT
 =================
 */
+static int R_CullBox( vec3_t bounds[2] ) {
+	int i;
+	int side;
+	int anyBack;
+	cplane_t *frust;
+
+	if ( r_nocull->integer ) {
+		return CULL_CLIP;
+	}
+
+	anyBack = 0;
+	for ( i = 0 ; i < 4 ; i++ ) {
+		frust = &tr.viewParms.frustum[i];
+		side = BoxOnPlaneSide( bounds[0], bounds[1], frust );
+		if ( side == 2 ) {
+			return CULL_OUT;
+		}
+		if ( side != 1 ) {
+			anyBack = 1;
+		}
+	}
+
+	if ( !anyBack ) {
+		return CULL_IN;
+	}
+
+	return CULL_CLIP;
+}
+
 int R_CullLocalBox( vec3_t bounds[2] ) {
 	int i, j;
 	vec3_t transformed[8];
@@ -325,6 +355,10 @@ int R_CullLocalBox( vec3_t bounds[2] ) {
 
 	if ( r_nocull->integer ) {
 		return CULL_CLIP;
+	}
+
+	if ( tr.currentEntityNum == ENTITYNUM_WORLD ) {
+		return R_CullBox( bounds );
 	}
 
 	// transform into world space

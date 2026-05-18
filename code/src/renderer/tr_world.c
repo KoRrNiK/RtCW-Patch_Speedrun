@@ -295,9 +295,11 @@ static void R_AddWorldSurface( msurface_t *surf, int dlightBits ) {
 	}
 
 	// check for dlighting
-	if ( dlightBits ) {
+	if ( dlightBits && tr.refdef.num_dlights ) {
 		dlightBits = R_DlightSurface( surf, dlightBits );
 		dlightBits = ( dlightBits != 0 );
+	} else {
+		dlightBits = 0;
 	}
 
 // GR - not tessellated

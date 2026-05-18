@@ -520,7 +520,7 @@ static qboolean GLW_InitDriver( const char *drivername, int colorbits ) {
 **
 ** Responsible for creating the Win32 window and initializing the OpenGL driver.
 */
-#define WINDOW_STYLE    ( WS_OVERLAPPED | WS_BORDER | WS_CAPTION | WS_VISIBLE )
+#define WINDOW_STYLE    ( WS_OVERLAPPED | WS_BORDER | WS_CAPTION | WS_VISIBLE | WS_MINIMIZEBOX )
 static qboolean GLW_CreateWindow( const char *drivername, int width, int height, int colorbits, qboolean cdsFullscreen ) {
 	RECT r;
 	cvar_t          *vid_xpos, *vid_ypos;
@@ -567,8 +567,8 @@ static qboolean GLW_CreateWindow( const char *drivername, int width, int height,
 		r.bottom = height;
 
 		if ( cdsFullscreen || !Q_stricmp( _3DFX_DRIVER_NAME, drivername ) ) {
-			exstyle = WS_EX_TOPMOST;
-			stylebits = WS_POPUP | WS_VISIBLE | WS_SYSMENU;
+			exstyle = 0;
+			stylebits = WS_POPUP | WS_VISIBLE | WS_SYSMENU | WS_MINIMIZEBOX;
 		} else
 		{
 			exstyle = 0;
@@ -787,6 +787,7 @@ static rserr_t GLW_SetMode( const char *drivername,
 				}
 
 				glw_state.cdsFullscreen = qtrue;
+				memcpy( &glw_state.dm, &dm, sizeof( dm ) );
 			} else
 			{
 				//
@@ -823,6 +824,7 @@ static rserr_t GLW_SetMode( const char *drivername,
 					}
 
 					glw_state.cdsFullscreen = qtrue;
+					memcpy( &glw_state.dm, &devmode, sizeof( devmode ) );
 				} else
 				{
 					ri.Printf( PRINT_ALL, " failed, " );

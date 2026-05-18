@@ -92,8 +92,13 @@ cvar_t  *in_joystick;
 cvar_t  *in_joyBallScale;
 cvar_t  *in_debugJoystick;
 cvar_t  *joy_threshold;
+cvar_t  *m_rawinput;
 
 qboolean in_appactive;
+
+static int raw_mouse_dx = 0;
+static int raw_mouse_dy = 0;
+static qboolean raw_mouse_registered = qfalse;
 
 // forward-referenced functions
 void IN_StartupJoystick( void );
@@ -189,6 +194,78 @@ void IN_Win32Mouse( int *mx, int *my ) {
 
 	*mx = current_pos.x - window_center_x;
 	*my = current_pos.y - window_center_y;
+}
+
+/*
+================
+IN_RawInput_Register
+================
+*/
+void IN_RawInput_Register( void ) {
+	RAWINPUTDEVICE rid;
+
+	if ( raw_mouse_registered ) {
+		return;
+	}
+
+	rid.usUsagePage = 0x01;
+	rid.usUsage = 0x02;
+	rid.dwFlags = 0;
+	rid.hwndTarget = g_wv.hWnd;
+
+	if ( RegisterRawInputDevices( &rid, 1, sizeof( rid ) ) ) {
+		raw_mouse_registered = qtrue;
+		raw_mouse_dx = 0;
+		raw_mouse_dy = 0;
+		// Com_Printf( "Raw mouse input enabled.\n" );
+	} else {
+		// Com_Printf( "^1Failed to register raw mouse input.\n" );
+	}
+}
+
+/*
+================
+IN_RawInput_Unregister
+================
+*/
+void IN_RawInput_Unregister( void ) {
+	RAWINPUTDEVICE rid;
+
+	if ( !raw_mouse_registered ) {
+		return;
+	}
+
+	rid.usUsagePage = 0x01;
+	rid.usUsage = 0x02;
+	rid.dwFlags = RIDEV_REMOVE;
+	rid.hwndTarget = NULL;
+
+	RegisterRawInputDevices( &rid, 1, sizeof( rid ) );
+	raw_mouse_registered = qfalse;
+	raw_mouse_dx = 0;
+	raw_mouse_dy = 0;
+}
+
+/*
+================
+IN_RawMouseEvent
+================
+*/
+void IN_RawMouseEvent( int dx, int dy ) {
+	raw_mouse_dx += dx;
+	raw_mouse_dy += dy;
+}
+
+/*
+================
+IN_RawInputMouse
+================
+*/
+static void IN_RawInputMouse( int *mx, int *my ) {
+	*mx = raw_mouse_dx;
+	*my = raw_mouse_dy;
+	raw_mouse_dx = 0;
+	raw_mouse_dy = 0;
 }
 
 
@@ -287,6 +364,10 @@ void IN_ActivateMouse( void ) {
 
 	s_wmv.mouseActive = qtrue;
 
+	if ( m_rawinput->integer ) {
+		IN_RawInput_Register();
+	}
+
 	IN_ActivateWin32Mouse();
 }
 
@@ -306,6 +387,8 @@ void IN_DeactivateMouse( void ) {
 		return;
 	}
 	s_wmv.mouseActive = qfalse;
+
+	IN_RawInput_Unregister();
 
 	IN_DeactivateWin32Mouse();
 }
@@ -368,7 +451,11 @@ IN_MouseMove
 void IN_MouseMove( void ) {
 	int mx, my;
 
-	IN_Win32Mouse( &mx, &my );
+	if ( m_rawinput->integer && raw_mouse_registered ) {
+		IN_RawInputMouse( &mx, &my );
+	} else {
+		IN_Win32Mouse( &mx, &my );
+	}
 
 	if ( !mx && !my ) {
 		return;
@@ -428,6 +515,7 @@ void IN_Init( void ) {
 
 	// mouse variables
 	in_mouse                = Cvar_Get( "in_mouse",                  "1",     CVAR_ARCHIVE | CVAR_LATCH );
+	m_rawinput              = Cvar_Get( "m_rawinput",                "1",     CVAR_ARCHIVE );
 
 	// joystick variables
 	in_joystick             = Cvar_Get( "in_joystick",               "0",     CVAR_ARCHIVE | CVAR_LATCH );
@@ -474,6 +562,17 @@ void IN_Frame( void ) {
 
 	if ( !s_wmv.mouseInitialized ) {
 		return;
+	}
+
+	if ( m_rawinput->modified ) {
+		m_rawinput->modified = qfalse;
+		if ( s_wmv.mouseActive ) {
+			if ( m_rawinput->integer ) {
+				IN_RawInput_Register();
+			} else {
+				IN_RawInput_Unregister();
+			}
+		}
 	}
 
 	if ( cls.keyCatchers & KEYCATCH_CONSOLE ) {

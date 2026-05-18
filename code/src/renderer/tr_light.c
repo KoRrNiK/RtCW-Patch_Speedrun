@@ -398,6 +398,10 @@ void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent ) {
 	ent->lightDir[0] = DotProduct( lightDir, ent->e.axis[0] );
 	ent->lightDir[1] = DotProduct( lightDir, ent->e.axis[1] );
 	ent->lightDir[2] = DotProduct( lightDir, ent->e.axis[2] );
+
+	if ( ent->e.renderfx & RF_LEFTHAND ) {
+		ent->lightDir[1] = -ent->lightDir[1];
+	}
 }
 
 /*

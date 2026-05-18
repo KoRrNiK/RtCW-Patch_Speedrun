@@ -3502,6 +3502,9 @@ qboolean R_TouchImage( image_t *inImage ) {
 	}
 
 	hash = inImage->hash;
+	if ( hash < 0 || hash >= FILE_HASH_SIZE ) {
+		return qfalse;
+	}
 	name = inImage->imgName;
 
 	bImage = backupHashTable[hash];
@@ -3537,7 +3540,15 @@ qboolean R_TouchImage( image_t *inImage ) {
 		bImage = bImage->next;
 	}
 
-	return qtrue;
+	bImage = hashTable[hash];
+	while ( bImage ) {
+		if ( bImage == inImage ) {
+			return qtrue;
+		}
+		bImage = bImage->next;
+	}
+
+	return qfalse;
 }
 
 /*

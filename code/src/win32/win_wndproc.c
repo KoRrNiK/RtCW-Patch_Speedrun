@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../client/client.h"
 #include "win_local.h"
+#include "glw_win.h"
 
 WinVars_t g_wv;
 
@@ -122,6 +123,17 @@ static void VID_AppActivate( BOOL fActive, BOOL minimize ) {
 	} else
 	{
 		IN_Activate( qtrue );
+	}
+
+	if ( glw_state.cdsFullscreen ) {
+		if ( !g_wv.activeApp ) {
+			ChangeDisplaySettings( NULL, 0 );
+			ShowWindow( g_wv.hWnd, SW_MINIMIZE );
+		} else {
+			ChangeDisplaySettings( &glw_state.dm, CDS_FULLSCREEN );
+			ShowWindow( g_wv.hWnd, SW_RESTORE );
+			SetForegroundWindow( g_wv.hWnd );
+		}
 	}
 }
 
@@ -263,6 +275,17 @@ static int MapKey( int key ) {
 		is_extended = qfalse;
 	}
 
+	/* For alphabetic keys, use MapVirtualKey to respect the current
+	   OS keyboard layout automatically.  This fixes QWERTZ (German),
+	   AZERTY (French), and any other layout without requiring
+	   cl_language to match the physical keyboard. */
+	{
+		unsigned int vk = MapVirtualKey( (unsigned int)modified, 1 /*MAPVK_VSC_TO_VK*/ );
+		if ( vk >= 'A' && vk <= 'Z' ) {
+			return (int)( vk + 32 );    /* return lowercase ascii */
+		}
+	}
+
 	result = s_scantokey[modified];
 	if ( cl_language->integer - 1 == LANGUAGE_FRENCH ) {
 		result = s_scantokey_french[modified];
@@ -370,12 +393,7 @@ LONG WINAPI MainWndProc(
 		r_fullscreen = Cvar_Get( "r_fullscreen", "1", CVAR_ARCHIVE | CVAR_LATCH );
 
 		MSH_MOUSEWHEEL = RegisterWindowMessage( "MSWHEEL_ROLLMSG" );
-		if ( r_fullscreen->integer ) {
-			WIN_DisableAltTab();
-		} else
-		{
-			WIN_EnableAltTab();
-		}
+		WIN_EnableAltTab();
 
 		break;
 #if 0
@@ -395,9 +413,7 @@ LONG WINAPI MainWndProc(
 	case WM_DESTROY:
 		// let sound and input know about this?
 		g_wv.hWnd = NULL;
-		if ( r_fullscreen->integer ) {
-			WIN_EnableAltTab();
-		}
+		WIN_EnableAltTab();
 		break;
 
 	case WM_CLOSE:
@@ -449,6 +465,23 @@ LONG WINAPI MainWndProc(
 
 // this is complicated because Win32 seems to pack multiple mouse events into
 // one update sometimes, so we always check all states and look for events
+	case WM_INPUT:
+	{
+		UINT dwSize = sizeof( RAWINPUT );
+		BYTE lpb[sizeof( RAWINPUT )];
+
+		if ( GetRawInputData( (HRAWINPUT)lParam, RID_INPUT, lpb, &dwSize,
+							   sizeof( RAWINPUTHEADER ) ) != (UINT)-1 ) {
+			RAWINPUT *raw = (RAWINPUT *)lpb;
+			if ( raw->header.dwType == RIM_TYPEMOUSE ) {
+				if ( ( raw->data.mouse.usFlags & 0x01 ) == MOUSE_MOVE_RELATIVE ) {
+					IN_RawMouseEvent( raw->data.mouse.lLastX, raw->data.mouse.lLastY );
+				}
+			}
+		}
+		break;
+	}
+
 	case WM_LBUTTONDOWN:
 	case WM_LBUTTONUP:
 	case WM_RBUTTONDOWN:

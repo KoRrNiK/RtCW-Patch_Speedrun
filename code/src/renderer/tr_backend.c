@@ -124,11 +124,18 @@ void GL_BindMultitexture( image_t *image0, GLuint env0, image_t *image1, GLuint 
 ** GL_Cull
 */
 void GL_Cull( int cullType ) {
+	qboolean mirrored;
+
 	if ( glState.faceCulling == cullType ) {
 		return;
 	}
 
 	glState.faceCulling = cullType;
+
+	mirrored = backEnd.viewParms.isMirror;
+	if ( backEnd.currentEntity && ( backEnd.currentEntity->e.renderfx & RF_LEFTHAND ) ) {
+		mirrored = !mirrored;
+	}
 
 	if ( cullType == CT_TWO_SIDED ) {
 		qglDisable( GL_CULL_FACE );
@@ -137,7 +144,7 @@ void GL_Cull( int cullType ) {
 		qglEnable( GL_CULL_FACE );
 
 		if ( cullType == CT_BACK_SIDED ) {
-			if ( backEnd.viewParms.isMirror ) {
+			if ( mirrored ) {
 				qglCullFace( GL_FRONT );
 			} else
 			{
@@ -145,7 +152,7 @@ void GL_Cull( int cullType ) {
 			}
 		} else
 		{
-			if ( backEnd.viewParms.isMirror ) {
+			if ( mirrored ) {
 				qglCullFace( GL_BACK );
 			} else
 			{
@@ -892,6 +899,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	int oldSort;
 	float originalTime;
 	int oldNumVerts, oldNumIndex;
+	qboolean oldEntityMirrored, entityMirrored;
 //GR - tessellation flag
 	int atiTess = 0, oldAtiTess;
 #ifdef __MACOS__
@@ -983,6 +991,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		//
 		if ( entityNum != oldEntityNum ) {
 			depthRange = qfalse;
+			oldEntityMirrored = ( backEnd.currentEntity && ( backEnd.currentEntity->e.renderfx & RF_LEFTHAND ) );
 
 			if ( entityNum != ENTITYNUM_WORLD ) {
 				backEnd.currentEntity = &backEnd.refdef.entities[entityNum];
@@ -1014,6 +1023,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 //				tess.shaderTime = backEnd.refdef.floatTime - tess.shader->timeOffset;
 
 				R_TransformDlights( backEnd.refdef.num_dlights, backEnd.refdef.dlights, &backEnd.or );
+			}
+
+			entityMirrored = ( backEnd.currentEntity && ( backEnd.currentEntity->e.renderfx & RF_LEFTHAND ) );
+			if ( oldEntityMirrored != entityMirrored ) {
+				glState.faceCulling = -1;
 			}
 
 			qglLoadMatrixf( backEnd.or.modelMatrix );

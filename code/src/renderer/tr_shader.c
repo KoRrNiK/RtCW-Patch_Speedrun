@@ -3098,6 +3098,25 @@ void R_PurgeShaders( int count ) {
 	sh = (shader_t **)&backupShaders;
 	for ( i = lastPurged; i < numBackupShaders; i++, sh++ ) {
 		if ( *sh ) {
+			{
+				long hash = generateHashValue( ( *sh )->name );
+				shader_t *entry = backupHashTable[hash];
+				shader_t *prev = NULL;
+
+				while ( entry ) {
+					if ( entry == *sh ) {
+						if ( !prev ) {
+							backupHashTable[hash] = entry->next;
+						} else {
+							prev->next = entry->next;
+						}
+						break;
+					}
+					prev = entry;
+					entry = entry->next;
+				}
+			}
+
 			// free all memory associated with this shader
 			for ( j = 0 ; j < ( *sh )->numUnfoggedPasses ; j++ ) {
 				if ( !( *sh )->stages[j] ) {
