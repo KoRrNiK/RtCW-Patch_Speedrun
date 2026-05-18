@@ -96,6 +96,103 @@ refexport_t re;
 
 ping_t cl_pinglist[MAX_PINGREQUESTS];
 
+typedef struct {
+	char magic[16];          // "RTCW145B_ASL_V1"
+	char version[8];         // "1.45b"
+	int structSize;
+	int sequence;
+	char map[32];            // normalized as "/escape1.bsp"
+	char rawMap[64];         // engine path, usually "maps/escape1.bsp"
+	int clientStatus;
+	int keyCatchers;
+	int cutscene;
+	int isLoading;
+	int finish;
+	int stuck;
+	int pmType;
+	int frameCount;
+	int savegameLoading;
+	int missionStatsActive;
+	int noRender;
+	int lrtMs;
+	int lrtSegmentMs;
+	float origin[3];
+	float camera[3];
+	float cameraFov;
+} rtcwASLState_t;
+
+__declspec(align(16)) rtcwASLState_t cl_aslState = {
+	"RTCW145B_ASL_V1",
+	PRODUCT_VERSION,
+	sizeof( rtcwASLState_t ),
+	0
+};
+
+static void CL_ASLSetMapName( const char *mapname ) {
+	const char *shortName;
+	char normalized[MAX_QPATH];
+
+	cl_aslState.rawMap[0] = '\0';
+	cl_aslState.map[0] = '\0';
+
+	if ( !mapname || !mapname[0] ) {
+		return;
+	}
+
+	Q_strncpyz( cl_aslState.rawMap, mapname, sizeof( cl_aslState.rawMap ) );
+	if ( !Q_strncmp( mapname, "maps/", 5 ) ) {
+		shortName = mapname + 4;
+	} else if ( mapname[0] == '/' ) {
+		shortName = mapname;
+	} else {
+		Com_sprintf( normalized, sizeof( normalized ), "/%s", mapname );
+		shortName = normalized;
+	}
+
+	Q_strncpyz( cl_aslState.map, shortName, sizeof( cl_aslState.map ) );
+}
+
+void CL_UpdateASLState( void ) {
+	int missionStatsActive;
+	int noRender;
+	int hasMap;
+
+	cl_aslState.sequence++;
+	cl_aslState.structSize = sizeof( cl_aslState );
+	Q_strncpyz( cl_aslState.version, PRODUCT_VERSION, sizeof( cl_aslState.version ) );
+	CL_ASLSetMapName( cl.mapname );
+	hasMap = cl_aslState.map[0] != '\0';
+
+	cl_aslState.clientStatus = cls.state;
+	cl_aslState.keyCatchers = cls.keyCatchers;
+	cl_aslState.cutscene = ( hasMap && ( cl.cameraMode || cls.state == CA_CINEMATIC ||
+		Cvar_VariableIntegerValue( "com_cameraMode" ) ) ) ? 1 : 0;
+	cl_aslState.finish = Cvar_VariableIntegerValue( "g_reloading" );
+	cl_aslState.savegameLoading = Cvar_VariableIntegerValue( "savegame_loading" );
+	missionStatsActive = ( cl_missionStats && strlen( cl_missionStats->string ) > 1 ) ? 1 : 0;
+	noRender = Cvar_VariableIntegerValue( "cg_norender" );
+	cl_aslState.missionStatsActive = missionStatsActive;
+	cl_aslState.noRender = noRender;
+	cl_aslState.lrtMs = SCR_LRTGetTime();
+	cl_aslState.lrtSegmentMs = SCR_LRTGetSegmentTime();
+
+	if ( cl.snap.valid ) {
+		cl_aslState.pmType = cl.snap.ps.pm_type;
+		cl_aslState.stuck = cl.snap.ps.pm_type;
+		VectorCopy( cl.snap.ps.origin, cl_aslState.origin );
+	} else {
+		cl_aslState.pmType = -1;
+		cl_aslState.stuck = -1;
+		VectorClear( cl_aslState.origin );
+	}
+
+	VectorClear( cl_aslState.camera );
+	cl_aslState.cameraFov = 0.0f;
+
+	cl_aslState.isLoading = SCR_LRTIsRunning() ? 0 : 1;
+	cl_aslState.frameCount = cls.framecount;
+}
+
 typedef struct serverStatus_s
 {
 	char string[BIG_INFO_STRING];
@@ -761,10 +858,10 @@ void CL_Disconnect( qboolean showMainMenu ) {
 
 	cls.state = CA_DISCONNECTED;
 
-	// allow cheats locally
+	// reset cheats while returning to the main menu
 #ifndef WOLF_SP_DEMO
 	// except for demo
-	Cvar_Set( "sv_cheats", "1" );
+	Cvar_Set( "sv_cheats", "0" );
 #endif
 
 	// not connected to a pure server anymore
@@ -1997,6 +2094,9 @@ void CL_Frame( int msec ) {
 				&& !com_sv_running->integer ) {
 		// if disconnected, bring up the menu
 		S_StopAllSounds();
+#ifndef WOLF_SP_DEMO
+		Cvar_Set( "sv_cheats", "0" );
+#endif
 		VM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_MAIN );
 	}
 
@@ -2676,6 +2776,7 @@ void CL_Shutdown( void ) {
 	Cmd_RemoveCommand( "cache_endgather" );
 
 	Cmd_RemoveCommand( "updatehunkusage" );
+	Cmd_RemoveCommand( "lrt_reset" );
 	// done.
 
 	Cvar_Set( "cl_running", "0" );

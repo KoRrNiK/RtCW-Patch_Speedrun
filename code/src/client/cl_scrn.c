@@ -38,6 +38,17 @@ cvar_t      *cl_graphheight;
 cvar_t      *cl_graphscale;
 cvar_t      *cl_graphshift;
 
+cvar_t      *scr_drawLRT;
+cvar_t      *scr_lrtTime;
+cvar_t      *scr_lrtLastRealTime;
+cvar_t      *scr_lrtReset;
+cvar_t      *scr_lrtX;
+cvar_t      *scr_lrtY;
+cvar_t      *scr_lrtScale;
+cvar_t      *scr_drawLRTSegment;
+cvar_t      *scr_lrtSegmentTime;
+cvar_t      *scr_lrtSegmentAlign;
+
 // Knightmare added
 cvar_t		*scr_surroundlayout;	// whether to keep HUD/menu elements on center screen in triple-wide video modes
 cvar_t		*scr_surroundleft;		// left placement of HUD/menu elements on center screen in triple-wide video modes
@@ -681,6 +692,357 @@ void SCR_DrawDebugGraph( void ) {
 
 //=============================================================================
 
+typedef struct {
+	qboolean initialized;
+	qboolean running;
+	int accumulatedMs;
+	int segmentMs;
+	int lastRealMs;
+	int lastPersistMs;
+	char segmentMapname[MAX_QPATH];
+} scrLRTTimer_t;
+
+static scrLRTTimer_t scr_lrtTimer;
+
+/*
+=================
+SCR_LRTPersist
+=================
+*/
+static void SCR_LRTPersist( qboolean force ) {
+	char value[32];
+	int diff;
+
+	diff = scr_lrtTimer.accumulatedMs - scr_lrtTimer.lastPersistMs;
+	if ( diff < 0 ) {
+		diff = -diff;
+	}
+	if ( !force && diff < 250 ) {
+		return;
+	}
+
+	Com_sprintf( value, sizeof( value ), "%d", scr_lrtTimer.accumulatedMs );
+	Cvar_Set( "cg_lrt_ms", value );
+	Com_sprintf( value, sizeof( value ), "%d", scr_lrtTimer.segmentMs );
+	Cvar_Set( "cg_lrt_segment_ms", value );
+	Com_sprintf( value, sizeof( value ), "%d", scr_lrtTimer.lastRealMs );
+	Cvar_Set( "cg_lrt_last_real_ms", value );
+	scr_lrtTimer.lastPersistMs = scr_lrtTimer.accumulatedMs;
+}
+
+/*
+=================
+SCR_LRTShouldRun
+=================
+*/
+static qboolean SCR_LRTShouldRun( void ) {
+	int savegameLoading;
+	int reloading;
+
+	if ( !cl.mapname[0] ) {
+		return qfalse;
+	}
+	if ( cls.state != CA_ACTIVE && cls.state != CA_CINEMATIC ) {
+		return qfalse;
+	}
+	if ( cl_missionStats && strlen( cl_missionStats->string ) > 1 ) {
+		return qfalse;
+	}
+	if ( Cvar_VariableIntegerValue( "cg_norender" ) ) {
+		savegameLoading = Cvar_VariableIntegerValue( "savegame_loading" );
+		reloading = Cvar_VariableIntegerValue( "g_reloading" );
+		if ( savegameLoading != 2 &&
+			 !( reloading == RELOAD_SAVEGAME && scr_lrtTimer.running ) ) {
+			return qfalse;
+		}
+	}
+	if ( com_sv_running && com_sv_running->integer &&
+		 cl_paused && cl_paused->integer &&
+		 sv_paused && sv_paused->integer ) {
+		return qfalse;
+	}
+	return qtrue;
+}
+
+/*
+=================
+SCR_LRTUpdateSegment
+=================
+*/
+static qboolean SCR_LRTUpdateSegment( qboolean reset ) {
+	if ( !cl.mapname[0] ) {
+		if ( reset ) {
+			scr_lrtTimer.segmentMs = 0;
+			scr_lrtTimer.segmentMapname[0] = '\0';
+		}
+		return reset;
+	}
+
+	if ( reset || !scr_lrtTimer.segmentMapname[0] ||
+		 Q_stricmp( scr_lrtTimer.segmentMapname, cl.mapname ) ) {
+		Q_strncpyz( scr_lrtTimer.segmentMapname, cl.mapname, sizeof( scr_lrtTimer.segmentMapname ) );
+		scr_lrtTimer.segmentMs = 0;
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
+/*
+=================
+SCR_LRTInit
+=================
+*/
+static void SCR_LRTInit( void ) {
+	int now;
+
+	scr_lrtTimer.accumulatedMs = scr_lrtTime ? scr_lrtTime->integer : 0;
+	if ( scr_lrtTimer.accumulatedMs < 0 ) {
+		scr_lrtTimer.accumulatedMs = 0;
+	}
+
+	now = Sys_Milliseconds();
+	scr_lrtTimer.lastRealMs = now;
+	scr_lrtTimer.lastPersistMs = scr_lrtTimer.accumulatedMs;
+	scr_lrtTimer.running = qfalse;
+	SCR_LRTUpdateSegment( qtrue );
+	scr_lrtTimer.initialized = qtrue;
+	SCR_LRTPersist( qtrue );
+}
+
+/*
+=================
+SCR_LRTReset
+=================
+*/
+static void SCR_LRTReset( void ) {
+	scr_lrtTimer.initialized = qtrue;
+	scr_lrtTimer.accumulatedMs = 0;
+	scr_lrtTimer.segmentMs = 0;
+	scr_lrtTimer.lastRealMs = Sys_Milliseconds();
+	scr_lrtTimer.lastPersistMs = -1;
+	scr_lrtTimer.running = qfalse;
+	SCR_LRTUpdateSegment( qtrue );
+	SCR_LRTPersist( qtrue );
+	Cvar_Set( "cg_lrt_reset", "0" );
+	Com_Printf( "^2LRT reset\n" );
+}
+
+/*
+=================
+SCR_LRTReset_f
+=================
+*/
+static void SCR_LRTReset_f( void ) {
+	SCR_LRTReset();
+}
+
+/*
+=================
+SCR_LRTUpdate
+=================
+*/
+static void SCR_LRTUpdate( void ) {
+	int now;
+	int delta;
+	qboolean shouldRun;
+
+	if ( !scr_lrtTimer.initialized ) {
+		SCR_LRTInit();
+	}
+
+	if ( scr_lrtReset && scr_lrtReset->integer ) {
+		SCR_LRTReset();
+		return;
+	}
+
+	now = Sys_Milliseconds();
+	if ( SCR_LRTUpdateSegment( qfalse ) ) {
+		scr_lrtTimer.running = qfalse;
+	}
+
+	shouldRun = SCR_LRTShouldRun();
+	if ( !shouldRun ) {
+		scr_lrtTimer.lastRealMs = now;
+		scr_lrtTimer.running = qfalse;
+		SCR_LRTPersist( qfalse );
+		return;
+	}
+	if ( !scr_lrtTimer.running ) {
+		scr_lrtTimer.lastRealMs = now;
+		scr_lrtTimer.running = qtrue;
+		SCR_LRTPersist( qfalse );
+		return;
+	}
+
+	delta = now - scr_lrtTimer.lastRealMs;
+	scr_lrtTimer.lastRealMs = now;
+	if ( delta <= 0 ) {
+		return;
+	}
+	if ( delta > 600000 ) {
+		return;
+	}
+
+	scr_lrtTimer.accumulatedMs += delta;
+	scr_lrtTimer.segmentMs += delta;
+	SCR_LRTPersist( qfalse );
+}
+
+int SCR_LRTGetTime( void ) {
+	return scr_lrtTimer.accumulatedMs;
+}
+
+int SCR_LRTGetSegmentTime( void ) {
+	return scr_lrtTimer.segmentMs;
+}
+
+qboolean SCR_LRTIsRunning( void ) {
+	return scr_lrtTimer.running;
+}
+
+/*
+=================
+SCR_LRTFormatTime
+=================
+*/
+static void SCR_LRTFormatTime( int msec, char *buffer, int bufferSize ) {
+	int hours;
+	int mins;
+	int seconds;
+	int hundredths;
+
+	if ( msec < 0 ) {
+		msec = 0;
+	}
+
+	hours = msec / 3600000;
+	msec -= hours * 3600000;
+	mins = msec / 60000;
+	msec -= mins * 60000;
+	seconds = msec / 1000;
+	hundredths = ( msec % 1000 ) / 10;
+
+	if ( hours > 0 ) {
+		Com_sprintf( buffer, bufferSize, "%d:%02d:%02d.%02d", hours, mins, seconds, hundredths );
+	} else {
+		Com_sprintf( buffer, bufferSize, "%d:%02d.%02d", mins, seconds, hundredths );
+	}
+}
+
+/*
+=================
+SCR_LRTScale
+=================
+*/
+static float SCR_LRTScale( float multiplier ) {
+	float scale;
+
+	scale = scr_lrtScale ? scr_lrtScale->value : 1.0f;
+	if ( scale < 0.25f ) {
+		scale = 0.25f;
+	} else if ( scale > 3.0f ) {
+		scale = 3.0f;
+	}
+
+	return scale * multiplier;
+}
+
+static int SCR_LRTSegmentAlign( void ) {
+	if ( !scr_lrtSegmentAlign ) {
+		return 0;
+	}
+	if ( !Q_stricmp( scr_lrtSegmentAlign->string, "left" ) ||
+		 scr_lrtSegmentAlign->integer == 1 ) {
+		return 1;
+	}
+	if ( !Q_stricmp( scr_lrtSegmentAlign->string, "center" ) ||
+		 scr_lrtSegmentAlign->integer == 2 ) {
+		return 2;
+	}
+	return 0;
+}
+
+/*
+=================
+SCR_LRTDrawTime
+=================
+*/
+static void SCR_LRTDrawTime( int x, int y, int msec, float scale ) {
+	char timeText[32];
+	float color[4];
+	float size;
+	float width;
+
+	SCR_LRTFormatTime( msec, timeText, sizeof( timeText ) );
+
+	size = BIGCHAR_WIDTH * scale;
+	width = SCR_Strlen( timeText ) * size;
+	color[0] = color[1] = color[2] = 1.0f;
+	color[3] = 1.0f;
+
+	SCR_DrawStringExt( (int)( x - width ), y, size, timeText, color, qfalse );
+}
+
+static void SCR_LRTDrawSegmentTime( int x, int y, int msec, float scale, float mainWidth ) {
+	char timeText[32];
+	float color[4];
+	float size;
+	float width;
+	int drawX;
+
+	SCR_LRTFormatTime( msec, timeText, sizeof( timeText ) );
+
+	size = BIGCHAR_WIDTH * scale;
+	width = SCR_Strlen( timeText ) * size;
+	color[0] = color[1] = color[2] = 1.0f;
+	color[3] = 1.0f;
+
+	switch ( SCR_LRTSegmentAlign() ) {
+	case 1:
+		drawX = (int)( x - mainWidth );
+		break;
+	case 2:
+		drawX = (int)( x - mainWidth * 0.5f - width * 0.5f );
+		break;
+	default:
+		drawX = (int)( x - width );
+		break;
+	}
+
+	SCR_DrawStringExt( drawX, y, size, timeText, color, qfalse );
+}
+
+/*
+=================
+SCR_DrawLRTOverlay
+=================
+*/
+static void SCR_DrawLRTOverlay( void ) {
+	int x;
+	int y;
+	float scale;
+	float segmentScale;
+	float mainWidth;
+	char timeText[32];
+
+	if ( !scr_drawLRT || !scr_drawLRT->integer ) {
+		return;
+	}
+
+	x = scr_lrtX ? scr_lrtX->integer : 500;
+	y = scr_lrtY ? scr_lrtY->integer : 0;
+	scale = SCR_LRTScale( 1.0f );
+	segmentScale = SCR_LRTScale( 0.65f );
+	SCR_LRTFormatTime( scr_lrtTimer.accumulatedMs, timeText, sizeof( timeText ) );
+	mainWidth = SCR_Strlen( timeText ) * BIGCHAR_WIDTH * scale;
+
+	SCR_LRTDrawTime( x, y + 2, scr_lrtTimer.accumulatedMs, scale );
+	if ( scr_drawLRTSegment && scr_drawLRTSegment->integer ) {
+		SCR_LRTDrawSegmentTime( x, (int)( y + 4 + BIGCHAR_HEIGHT * scale ), scr_lrtTimer.segmentMs, segmentScale, mainWidth );
+	}
+}
+
 /*
 ==================
 SCR_Init
@@ -693,6 +1055,18 @@ void SCR_Init( void )
 	cl_graphheight = Cvar_Get( "graphheight", "32", CVAR_CHEAT );
 	cl_graphscale = Cvar_Get( "graphscale", "1", CVAR_CHEAT );
 	cl_graphshift = Cvar_Get( "graphshift", "0", CVAR_CHEAT );
+
+	scr_drawLRT = Cvar_Get( "cg_drawLRT", "1", CVAR_ARCHIVE );
+	scr_lrtTime = Cvar_Get( "cg_lrt_ms", "0", 0 );
+	scr_lrtLastRealTime = Cvar_Get( "cg_lrt_last_real_ms", "0", 0 );
+	scr_lrtReset = Cvar_Get( "cg_lrt_reset", "0", 0 );
+	scr_lrtX = Cvar_Get( "cg_lrt_x", "500", CVAR_ARCHIVE );
+	scr_lrtY = Cvar_Get( "cg_lrt_y", "0", CVAR_ARCHIVE );
+	scr_lrtScale = Cvar_Get( "cg_lrt_scale", "1", CVAR_ARCHIVE );
+	scr_drawLRTSegment = Cvar_Get( "cg_drawLRTSegment", "0", CVAR_ARCHIVE );
+	scr_lrtSegmentTime = Cvar_Get( "cg_lrt_segment_ms", "0", 0 );
+	scr_lrtSegmentAlign = Cvar_Get( "cg_lrt_segment_align", "right", CVAR_ARCHIVE );
+	Cmd_AddCommand( "lrt_reset", SCR_LRTReset_f );
 
 	// Knightmare added
 	scr_surroundlayout = Cvar_Get ("scr_surroundlayout", "1", CVAR_ARCHIVE);	// whether to keep HUD/menu elements on center screen in triple-wide video modes
@@ -796,6 +1170,8 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 	if ( cl_debuggraph->integer || cl_timegraph->integer || cl_debugMove->integer ) {
 		SCR_DrawDebugGraph();
 	}
+
+	SCR_DrawLRTOverlay();
 }
 
 /*
@@ -817,6 +1193,9 @@ void SCR_UpdateScreen( void ) {
 		Com_Error( ERR_FATAL, "SCR_UpdateScreen: recursively called" );
 	}
 	recursive = 1;
+
+	SCR_LRTUpdate();
+	CL_UpdateASLState();
 
 	// if running in stereo, we need to draw the frame twice
 	if ( cls.glconfig.stereoEnabled ) {

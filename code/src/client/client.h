@@ -388,6 +388,7 @@ void CL_Init( void );
 void CL_FlushMemory( void );
 void CL_ShutdownAll( void );
 void CL_AddReliableCommand( const char *cmd );
+void CL_UpdateASLState( void );
 
 void CL_StartHunkUsers( void );
 
@@ -526,6 +527,9 @@ void Con_Close( void );
 //
 void    SCR_Init( void );
 void    SCR_UpdateScreen( void );
+int     SCR_LRTGetTime( void );
+int     SCR_LRTGetSegmentTime( void );
+qboolean SCR_LRTIsRunning( void );
 
 void    SCR_DebugGraph( float value, int color );
 
