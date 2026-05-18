@@ -1,0 +1,476 @@
+#include "ui/menudef.h"
+
+{
+
+menuDef {
+	name "ingame_livesplit"
+	visible 0
+	fullscreen 0
+	outOfBoundsClick
+	rect 100 125 443 340
+	focusColor 1 .75 0 1
+	style 1
+	border 1
+
+	onopen { hide grpSrTimer ; hide grpSrSpeedo ; hide grpSrHud ; hide grpSrView ; show grpSrTimer }
+	onEsc { close ingame_livesplit }
+
+	itemDef {
+		name window
+		rect 0 2 443 300
+		style WINDOW_STYLE_FILLED
+		border 1
+		bordercolor .5 .5 .5 .5
+		forecolor 1 1 1 1
+		backcolor 0 0 0 .25
+		visible 1
+		decoration
+	}
+
+	itemDef {
+		name window2
+		rect 2 4 439 20
+		style WINDOW_STYLE_FILLED
+		border 1
+		bordercolor .1 .1 .1 .2
+		forecolor 1 1 1 1
+		backcolor .3 .5 .2 .25
+		visible 1
+		decoration
+	}
+
+	itemDef {
+		name ctr_timer
+		text "Timer"
+		type 1
+		textscale .23
+		rect 16 10 78 12
+		textalign 1
+		textalignx 39
+		textaligny 10
+		forecolor 1 1 1 1
+		backcolor .1 .1 .1 0
+		visible 1
+		action { hide grpSrTimer ; hide grpSrSpeedo ; hide grpSrHud ; hide grpSrView ; show grpSrTimer }
+		mouseEnter { setitemcolor ctr_timer backcolor .1 .37 .1 1 }
+		mouseExit { setitemcolor ctr_timer backcolor .37 .1 .1 1 }
+	}
+
+	itemDef {
+		name ctr_speedo
+		text "Speedo"
+		type 1
+		textscale .23
+		rect 102 10 78 12
+		textalign 1
+		textalignx 39
+		textaligny 10
+		forecolor 1 1 1 1
+		backcolor .1 .1 .1 0
+		visible 1
+		action { hide grpSrTimer ; hide grpSrSpeedo ; hide grpSrHud ; hide grpSrView ; show grpSrSpeedo }
+		mouseEnter { setitemcolor ctr_speedo backcolor .1 .37 .1 1 }
+		mouseExit { setitemcolor ctr_speedo backcolor .37 .1 .1 1 }
+	}
+
+	itemDef {
+		name ctr_hud
+		text "HUD"
+		type 1
+		textscale .23
+		rect 188 10 78 12
+		textalign 1
+		textalignx 39
+		textaligny 10
+		forecolor 1 1 1 1
+		backcolor .1 .1 .1 0
+		visible 1
+		action { hide grpSrTimer ; hide grpSrSpeedo ; hide grpSrHud ; hide grpSrView ; show grpSrHud }
+		mouseEnter { setitemcolor ctr_hud backcolor .1 .37 .1 1 }
+		mouseExit { setitemcolor ctr_hud backcolor .37 .1 .1 1 }
+	}
+
+	itemDef {
+		name ctr_view
+		text "View"
+		type 1
+		textscale .23
+		rect 274 10 78 12
+		textalign 1
+		textalignx 39
+		textaligny 10
+		forecolor 1 1 1 1
+		backcolor .1 .1 .1 0
+		visible 1
+		action { hide grpSrTimer ; hide grpSrSpeedo ; hide grpSrHud ; hide grpSrView ; show grpSrView }
+		mouseEnter { setitemcolor ctr_view backcolor .1 .37 .1 1 }
+		mouseExit { setitemcolor ctr_view backcolor .37 .1 .1 1 }
+	}
+
+	itemDef {
+		name srTimer_lrt
+		group grpSrTimer
+		type ITEM_TYPE_YESNO
+		text "Show LRT:"
+		cvar "cg_drawLRT"
+		rect 82 40 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 1
+	}
+
+	itemDef {
+		name srTimer_segment
+		group grpSrTimer
+		type ITEM_TYPE_YESNO
+		text "Segment Timer:"
+		cvar "cg_drawLRTSegment"
+		rect 82 60 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 1
+	}
+
+	itemDef {
+		name srTimer_align
+		group grpSrTimer
+		type ITEM_TYPE_MULTI
+		text "Segment Align:"
+		cvar "cg_lrt_segment_align"
+		cvarStrList { "Left", "left", "Center", "center", "Right", "right" }
+		rect 82 80 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 1
+	}
+
+	itemDef {
+		name srTimer_x
+		group grpSrTimer
+		type ITEM_TYPE_SLIDER
+		text "Timer X:"
+		cvarfloat "cg_lrt_x" 500 0 640
+		rect 82 110 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 1
+	}
+
+	itemDef {
+		name srTimer_y
+		group grpSrTimer
+		type ITEM_TYPE_SLIDER
+		text "Timer Y:"
+		cvarfloat "cg_lrt_y" 0 0 480
+		rect 82 130 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 1
+	}
+
+	itemDef {
+		name srTimer_scale
+		group grpSrTimer
+		type ITEM_TYPE_SLIDER
+		text "Timer Scale:"
+		cvarfloat "cg_lrt_scale" 1 .25 3
+		rect 82 150 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 1
+	}
+
+	itemDef {
+		name srTimer_reset
+		group grpSrTimer
+		text "Reset LRT"
+		type 1
+		rect 160 185 120 16
+		textalign 1
+		textalignx 60
+		textaligny 12
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor .37 .1 .1 .65
+		forecolor 1 1 1 1
+		visible 1
+		action { exec "lrt_reset" ; setcvar cg_lrt_reset 1 ; play "sound/misc/zap.wav" }
+		mouseEnter { setitemcolor srTimer_reset backcolor .1 .37 .1 .85 }
+		mouseExit { setitemcolor srTimer_reset backcolor .37 .1 .1 .65 }
+	}
+
+	itemDef {
+		name srSpeedo_enable
+		group grpSrSpeedo
+		type ITEM_TYPE_YESNO
+		text "Show Velocity:"
+		cvar "cg_drawVelocity"
+		rect 82 40 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srSpeedo_position
+		group grpSrSpeedo
+		type ITEM_TYPE_MULTI
+		text "Position:"
+		cvar "cg_velocity_type"
+		cvarFloatList { "Bottom" 0 "Center" 1 }
+		rect 82 60 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srSpeedo_align
+		group grpSrSpeedo
+		type ITEM_TYPE_MULTI
+		text "Velocity Align:"
+		cvar "cg_velocity_align"
+		cvarFloatList { "Left" 0 "Center" 1 "Right" 2 }
+		rect 82 80 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srSpeedo_x
+		group grpSrSpeedo
+		type ITEM_TYPE_SLIDER
+		text "Velocity X:"
+		cvarfloat "cg_velocity_x" -1 -1 640
+		rect 82 100 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srSpeedo_y
+		group grpSrSpeedo
+		type ITEM_TYPE_SLIDER
+		text "Velocity Y:"
+		cvarfloat "cg_velocity_y" -1 -1 480
+		rect 82 120 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srSpeedo_scale
+		group grpSrSpeedo
+		type ITEM_TYPE_SLIDER
+		text "Velocity Scale:"
+		cvarfloat "cg_velocity_scale" 1 .25 4
+		rect 82 140 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srHud_fps
+		group grpSrHud
+		type ITEM_TYPE_YESNO
+		text "Show FPS:"
+		cvar "cg_drawFPS"
+		rect 82 40 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srHud_timer
+		group grpSrHud
+		type ITEM_TYPE_YESNO
+		text "Show Timer:"
+		cvar "cg_drawTimer"
+		rect 82 60 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srHud_maxfps
+		group grpSrHud
+		type ITEM_TYPE_MULTI
+		text "Max FPS:"
+		cvar "com_maxfps"
+		cvarFloatList { "30 FPS" 30 "60 FPS" 60 "83 FPS" 83 "90 FPS" 90 "125 FPS" 125 "142 FPS" 142 }
+		rect 82 80 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srView_fov_down
+		group grpSrView
+		type ITEM_TYPE_SLIDER
+		text "Field of View D-U:"
+		cvarfloat "cg_fov_down" 90 60 160
+		rect 82 40 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srView_fov
+		group grpSrView
+		type ITEM_TYPE_SLIDER
+		text "Field of View F-B:"
+		cvarfloat "cg_fov" 90 60 160
+		rect 82 60 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srView_fov_lr
+		group grpSrView
+		type ITEM_TYPE_SLIDER
+		text "Field of View L-R:"
+		cvarfloat "cg_fov_lr" 90 0 160
+		rect 82 80 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name srView_weapon
+		group grpSrView
+		type ITEM_TYPE_MULTI
+		text "Weapon:"
+		cvar "cg_drawGun"
+		cvarFloatList { "Hidden" 0 "Right" 1 "Left" 2 }
+		rect 82 100 290 12
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 142
+		textaligny 10
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor 1 1 1 .07
+		forecolor 1 1 1 1
+		visible 0
+	}
+
+	itemDef {
+		name close
+		text "Close"
+		type 1
+		rect 190 282 64 16
+		textalign 1
+		textalignx 32
+		textaligny 12
+		textscale .23
+		style WINDOW_STYLE_FILLED
+		backcolor .4 .4 .4 .6
+		forecolor .8 .8 .8 1
+		visible 1
+		action { close ingame_livesplit ; play "sound/misc/zap.wav" }
+		mouseEnter { setitemcolor close backcolor .15 .1 .1 .7 }
+		mouseExit { setitemcolor close backcolor .4 .4 .4 .6 }
+	}
+}
+
+}

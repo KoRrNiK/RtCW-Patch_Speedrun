@@ -691,6 +691,8 @@ void UI_DrawCenteredPic( qhandle_t image, int w, int h ) {
 int frameCount = 0;
 int startTime;
 
+static void UI_UpdateCurrentDateTime( void );
+
 #define UI_FPS_FRAMES   4
 void _UI_Refresh( int realtime ) {
 	static int index;
@@ -721,6 +723,7 @@ void _UI_Refresh( int realtime ) {
 
 
 	UI_UpdateCvars();
+	UI_UpdateCurrentDateTime();
 
 	if ( Menu_Count() > 0 ) {
 		// paint all the menus
@@ -7278,6 +7281,7 @@ vmCvar_t ui_hunkUsed;       //----(SA)	added
 vmCvar_t ui_cameraMode;     //----(SA)	added
 vmCvar_t ui_savegameListAutosave;       //----(SA)	added
 vmCvar_t ui_savegameName;
+vmCvar_t ui_currentDateTime;
 
 // NERVE - SMF - cvars for multiplayer
 vmCvar_t ui_serverFilterType;
@@ -7414,7 +7418,8 @@ cvarTable_t cvarTable[] = {
 	{ &ui_hunkUsed, "com_hunkused", "0", 0 },     //----(SA)	added
 	{ &ui_cameraMode, "com_cameraMode", "0", 0},  //----(SA)	added
 
-	{ &ui_savegameName, "ui_savegameName", "", CVAR_ROM}
+	{ &ui_savegameName, "ui_savegameName", "", CVAR_ROM},
+	{ &ui_currentDateTime, "ui_current_datetime", "", 0}
 
 
 };
@@ -7448,6 +7453,29 @@ void UI_UpdateCvars( void ) {
 	for ( i = 0, cv = cvarTable ; i < cvarTableSize ; i++, cv++ ) {
 		trap_Cvar_Update( cv->vmCvar );
 	}
+}
+
+static void UI_UpdateCurrentDateTime( void ) {
+	static int lastSecond = -1;
+	qtime_t q;
+	const char *month;
+	char text[64];
+
+	trap_RealTime( &q );
+	if ( q.tm_sec == lastSecond ) {
+		return;
+	}
+	lastSecond = q.tm_sec;
+
+	if ( q.tm_mon >= 0 && q.tm_mon < 12 ) {
+		month = MonthAbbrev[q.tm_mon];
+	} else {
+		month = "???";
+	}
+
+	Com_sprintf( text, sizeof( text ), "%s %i %i %02i:%02i:%02i",
+		month, q.tm_mday, 1900 + q.tm_year, q.tm_hour, q.tm_min, q.tm_sec );
+	trap_Cvar_Set( "ui_current_datetime", text );
 }
 
 // NERVE - SMF

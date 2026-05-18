@@ -400,6 +400,27 @@ menuDef {
 		mouseEnter { fadein message_accept }
 		action {close main ; open load_menu ; play "sound/misc/zap.wav"; }
     }
+
+//	SPEEDRUN	//
+
+	itemDef {
+		name speedrun
+		text "SPEEDRUN"
+		type 1
+		style 0
+		textstyle 6
+		rect 268 360 104 16
+		textalign 1
+		textscale .25
+		textalignx 52
+		textaligny 13
+		forecolor .75 .95 .55 .9
+		visible 1
+		textfont UI_FONT_NORMAL
+		mouseEnter { fadein message_accept ; setitemcolor speedrun forecolor .95 1.0 .85 1 }
+		mouseExit { setitemcolor speedrun forecolor .75 .95 .55 .9 }
+		action { open setup_livesplit ; play "sound/misc/zap.wav"; }
+    }
 	
 	itemDef {
 		name chapter
@@ -515,6 +536,34 @@ itemDef {
 		action {play "sound/misc/zap.wav";
 		open quit_popmenu}
 
+}
+
+itemDef {
+		name main_build_info
+		cvar sp_build_info
+		rect 8 478 300 20
+		textfont UI_FONT_BIG
+		textstyle ITEM_TEXTSTYLE_SHADOWED
+		textscale .14
+		textalign ITEM_ALIGN_LEFT
+		textalignx 0
+		forecolor .65 .65 .65 .85
+		visible 1
+		decoration
+}
+
+itemDef {
+		name main_build_time
+		cvar ui_current_datetime
+		rect 332 478 300 20
+		textfont UI_FONT_BIG
+		textstyle ITEM_TEXTSTYLE_SHADOWED
+		textscale .14
+		textalign ITEM_ALIGN_RIGHT
+		textalignx 300
+		forecolor .65 .65 .65 .85
+		visible 1
+		decoration
 }
 
 //itemDef {

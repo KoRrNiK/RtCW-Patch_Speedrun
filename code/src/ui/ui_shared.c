@@ -86,7 +86,7 @@ float GetScaleForAlign ( qboolean isY, scralign_t align );	// Knightmare added p
 #ifdef CGAME
 #define MEM_POOL_SIZE  128 * 1024
 #else
-#define MEM_POOL_SIZE  1024 * 1024
+#define MEM_POOL_SIZE  2048 * 1024
 #endif
 
 static char memoryPool[MEM_POOL_SIZE];
@@ -3248,7 +3248,7 @@ void Item_SetTextExtents( itemDef_t *item, int *width, int *height, const char *
 
 	// keeps us from computing the widths and heights more than once
 	if ( *width == 0 || ( item->type == ITEM_TYPE_OWNERDRAW && item->textalignment == ITEM_ALIGN_CENTER ) ) {
-		int originalWidth = DC->textWidth( item->text, item->font, item->textscale, 0 );
+		int originalWidth = DC->textWidth( textPtr, item->font, item->textscale, 0 );
 
 		if ( item->type == ITEM_TYPE_OWNERDRAW && ( item->textalignment == ITEM_ALIGN_CENTER || item->textalignment == ITEM_ALIGN_RIGHT ) ) {
 			originalWidth += DC->ownerDrawWidth( item->window.ownerDraw, item->font, item->textscale );
@@ -3889,6 +3889,93 @@ void BindingFromName( const char *cvar ) {
 	strcpy( g_nameBind1, "???" );
 }
 
+static qboolean UI_ValueStringIsNumeric( const char *text ) {
+	const char *p;
+	qboolean hasDigit = qfalse;
+	qboolean hasDot = qfalse;
+
+	if ( !text || !*text ) {
+		return qfalse;
+	}
+
+	p = text;
+	if ( *p == '-' || *p == '+' ) {
+		p++;
+	}
+
+	for ( ; *p; p++ ) {
+		if ( Q_isnumeric( *p ) ) {
+			hasDigit = qtrue;
+			continue;
+		}
+		if ( ( *p == '.' || *p == ',' ) && !hasDot ) {
+			hasDot = qtrue;
+			continue;
+		}
+		return qfalse;
+	}
+
+	return hasDigit;
+}
+
+static void UI_FormatSliderValue( const char *raw, char *out, int outSize ) {
+	char temp[64];
+	char *p;
+	float value;
+	int rounded;
+	int len;
+
+	if ( outSize <= 0 ) {
+		return;
+	}
+	out[0] = '\0';
+
+	if ( !UI_ValueStringIsNumeric( raw ) ) {
+		Q_strncpyz( out, raw ? raw : "", outSize );
+		return;
+	}
+
+	Q_strncpyz( temp, raw, sizeof( temp ) );
+	for ( p = temp; *p; p++ ) {
+		if ( *p == ',' ) {
+			*p = '.';
+		}
+	}
+
+	value = atof( temp );
+	rounded = (int)( value >= 0.0f ? value + 0.5f : value - 0.5f );
+	if ( Q_fabs( value - (float)rounded ) < 0.005f ) {
+		Com_sprintf( out, outSize, "%d", rounded );
+		return;
+	}
+
+	Com_sprintf( out, outSize, "%.2f", value );
+	for ( p = out; *p; p++ ) {
+		if ( *p == ',' ) {
+			*p = '.';
+		}
+	}
+	len = strlen( out );
+	while ( len > 0 && out[len - 1] == '0' ) {
+		out[--len] = '\0';
+	}
+	if ( len > 0 && ( out[len - 1] == '.' || out[len - 1] == ',' ) ) {
+		out[--len] = '\0';
+	}
+}
+
+static qboolean UI_ShouldDrawSliderValue( itemDef_t *item ) {
+	menuDef_t *parent;
+
+	if ( !item || !item->cvar || !item->parent ) {
+		return qfalse;
+	}
+
+	parent = (menuDef_t*)item->parent;
+	return (qboolean)( !Q_stricmp( parent->window.name, "setup_livesplit" ) ||
+					   !Q_stricmp( parent->window.name, "ingame_livesplit" ) );
+}
+
 void Item_Slider_Paint( itemDef_t *item ) {
 	vec4_t newColor, lowLight;
 	float x, y, value;
@@ -3918,6 +4005,19 @@ void Item_Slider_Paint( itemDef_t *item ) {
 
 	x = Item_Slider_ThumbPosition( item );
 	DC->drawHandlePic( x - ( SLIDER_THUMB_WIDTH / 2 ), y - 2, SLIDER_THUMB_WIDTH, SLIDER_THUMB_HEIGHT, DC->Assets.sliderThumb, item->window.rect.scrAlign );
+
+	if ( UI_ShouldDrawSliderValue( item ) ) {
+		char rawValue[64];
+		char displayValue[64];
+
+		DC->getCVarString( item->cvar, rawValue, sizeof( rawValue ) );
+		UI_FormatSliderValue( rawValue, displayValue, sizeof( displayValue ) );
+		if ( displayValue[0] ) {
+			DC->drawText( item->window.rect.x + item->window.rect.w + 8, y + item->textaligny,
+						  item->font, item->textscale * 0.85f, newColor, displayValue, 0, 0,
+						  item->textStyle, item->window.rect.scrAlign );
+		}
+	}
 }
 
 void Item_Bind_Paint( itemDef_t *item ) {
@@ -5165,9 +5265,15 @@ void Item_ValidateTypeData( itemDef_t *item ) {
 
 	if ( item->type == ITEM_TYPE_LISTBOX ) {
 		item->typeData = UI_Alloc( sizeof( listBoxDef_t ) );
+		if ( !item->typeData ) {
+			return;
+		}
 		memset( item->typeData, 0, sizeof( listBoxDef_t ) );
 	} else if ( item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_NUMERICFIELD || item->type == ITEM_TYPE_VALIDFILEFIELD || item->type == ITEM_TYPE_YESNO || item->type == ITEM_TYPE_BIND || item->type == ITEM_TYPE_SLIDER || item->type == ITEM_TYPE_TEXT ) {
 		item->typeData = UI_Alloc( sizeof( editFieldDef_t ) );
+		if ( !item->typeData ) {
+			return;
+		}
 		memset( item->typeData, 0, sizeof( editFieldDef_t ) );
 		if ( item->type == ITEM_TYPE_EDITFIELD || item->type == ITEM_TYPE_VALIDFILEFIELD ) {
 			if ( !( (editFieldDef_t *) item->typeData )->maxPaintChars ) {
@@ -6527,6 +6633,10 @@ qboolean MenuParse_itemDef( itemDef_t *item, int handle ) {
 	menuDef_t *menu = (menuDef_t*)item;
 	if ( menu->itemCount < MAX_MENUITEMS ) {
 		menu->items[menu->itemCount] = UI_Alloc( sizeof( itemDef_t ) );
+		if ( !menu->items[menu->itemCount] ) {
+			PC_SourceError( handle, "couldn't allocate menu item" );
+			return qfalse;
+		}
 		Item_Init( menu->items[menu->itemCount] );
 		if ( !Item_Parse( handle, menu->items[menu->itemCount] ) ) {
 			return qfalse;
