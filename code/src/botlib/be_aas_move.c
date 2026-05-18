@@ -115,6 +115,12 @@ int AAS_AgainstLadder( vec3_t origin, int ms_areanum ) {
 	aas_face_t *face;
 	aas_area_t *area;
 
+	if ( !( *aasworld ).loaded || !( *aasworld ).planes ||
+		 !( *aasworld ).areasettings || !( *aasworld ).areas ||
+		 !( *aasworld ).faces || !( *aasworld ).faceindex ) {
+		return qfalse;
+	}
+
 	VectorCopy( origin, org );
 	areanum = AAS_PointAreaNum( org );
 	if ( !areanum ) {

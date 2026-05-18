@@ -42,9 +42,21 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #define PRODUCT_NAME	"RTCW"
-#define PRODUCT_VERSION "1.45a"
+#define PRODUCT_VERSION "1.45b"
 #define PRODUCT_DATE __DATE__
+#define PRODUCT_TIME __TIME__
+#define SP_VERSION PRODUCT_VERSION
 
+#if defined( _DEBUG )
+#define PRODUCT_BUILD_CONFIG "Debug"
+#define PRODUCT_BUILD_CONFIG_SHORT "dbg"
+#else
+#define PRODUCT_BUILD_CONFIG "Release"
+#define PRODUCT_BUILD_CONFIG_SHORT "rel"
+#endif
+
+#define PRODUCT_BUILD_SEED PRODUCT_NAME "|" PRODUCT_VERSION "|" PRODUCT_BUILD_CONFIG "|" PRODUCT_DATE "|" PRODUCT_TIME
+#define PRODUCT_BUILD_INFO PRODUCT_NAME " " PRODUCT_VERSION " " PRODUCT_BUILD_CONFIG " " PRODUCT_DATE " " PRODUCT_TIME
 
 #define Q3_VERSION PRODUCT_NAME " " PRODUCT_VERSION
 

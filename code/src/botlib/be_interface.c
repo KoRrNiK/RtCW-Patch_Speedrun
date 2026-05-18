@@ -113,9 +113,9 @@ int Sys_MilliSeconds( void ) {
 // Changes Globals:		-
 //===========================================================================
 qboolean ValidClientNumber( int num, char *str ) {
-	if ( num < 0 || num > botlibglobals.maxclients ) {
+	if ( num < 0 || num >= botlibglobals.maxclients ) {
 		//weird: the disabled stuff results in a crash
-		botimport.Print( PRT_ERROR, "%s: invalid client number %d, [0, %d]\n",
+		botimport.Print( PRT_ERROR, "%s: invalid client number %d, [0, %d)\n",
 						 str, num, botlibglobals.maxclients );
 		return qfalse;
 	} //end if
@@ -128,8 +128,8 @@ qboolean ValidClientNumber( int num, char *str ) {
 // Changes Globals:		-
 //===========================================================================
 qboolean ValidEntityNumber( int num, char *str ) {
-	if ( num < 0 || num > botlibglobals.maxentities ) {
-		botimport.Print( PRT_ERROR, "%s: invalid entity number %d, [0, %d]\n",
+	if ( num < 0 || num >= botlibglobals.maxentities ) {
+		botimport.Print( PRT_ERROR, "%s: invalid entity number %d, [0, %d)\n",
 						 str, num, botlibglobals.maxentities );
 		return qfalse;
 	} //end if

@@ -222,19 +222,13 @@ int AAS_PointAreaNum( vec3_t point ) {
 	while ( nodenum > 0 )
 	{
 //		botimport.Print(PRT_MESSAGE, "[%d]", nodenum);
-#ifdef AAS_SAMPLE_DEBUG
 		if ( nodenum >= ( *aasworld ).numnodes ) {
-			botimport.Print( PRT_ERROR, "nodenum = %d >= (*aasworld).numnodes = %d\n", nodenum, ( *aasworld ).numnodes );
 			return 0;
 		} //end if
-#endif //AAS_SAMPLE_DEBUG
 		node = &( *aasworld ).nodes[nodenum];
-#ifdef AAS_SAMPLE_DEBUG
 		if ( node->planenum < 0 || node->planenum >= ( *aasworld ).numplanes ) {
-			botimport.Print( PRT_ERROR, "node->planenum = %d >= (*aasworld).numplanes = %d\n", node->planenum, ( *aasworld ).numplanes );
 			return 0;
 		} //end if
-#endif //AAS_SAMPLE_DEBUG
 		plane = &( *aasworld ).planes[node->planenum];
 		dist = DotProduct( point, plane->normal ) - plane->dist;
 		if ( dist > 0 ) {
@@ -397,12 +391,10 @@ aas_trace_t AAS_TraceClientBBox( vec3_t start, vec3_t end, int presencetype,
 		nodenum = tstack_p->nodenum;
 		//if it is an area
 		if ( nodenum < 0 ) {
-#ifdef AAS_SAMPLE_DEBUG
 			if ( -nodenum > ( *aasworld ).numareasettings ) {
 				botimport.Print( PRT_ERROR, "AAS_TraceBoundingBox: -nodenum out of range\n" );
 				return trace;
 			} //end if
-#endif //AAS_SAMPLE_DEBUG
 			//botimport.Print(PRT_MESSAGE, "areanum = %d, must be %d\n", -nodenum, AAS_PointAreaNum(start));
 			//if can't enter the area because it hasn't got the right presence type
 			if ( !( ( *aasworld ).areasettings[-nodenum].presencetype & presencetype ) ) {
@@ -484,14 +476,15 @@ aas_trace_t AAS_TraceClientBBox( vec3_t start, vec3_t end, int presencetype,
 			}
 			return trace;
 		} //end if
-#ifdef AAS_SAMPLE_DEBUG
-		if ( nodenum > ( *aasworld ).numnodes ) {
-			botimport.Print( PRT_ERROR, "AAS_TraceBoundingBox: nodenum out of range\n" );
+		if ( nodenum >= ( *aasworld ).numnodes ) {
 			return trace;
 		} //end if
-#endif //AAS_SAMPLE_DEBUG
 	   //the node to test against
 		aasnode = &( *aasworld ).nodes[nodenum];
+		//validate planenum before dereferencing
+		if ( aasnode->planenum < 0 || aasnode->planenum >= ( *aasworld ).numplanes ) {
+			return trace;
+		} //end if
 		//start point of current line to test against node
 		VectorCopy( tstack_p->start, cur_start );
 		//end point of the current line to test against node
@@ -648,12 +641,9 @@ int AAS_TraceAreas( vec3_t start, vec3_t end, int *areas, vec3_t *points, int ma
 		nodenum = tstack_p->nodenum;
 		//if it is an area
 		if ( nodenum < 0 ) {
-#ifdef AAS_SAMPLE_DEBUG
 			if ( -nodenum > ( *aasworld ).numareasettings ) {
-				botimport.Print( PRT_ERROR, "AAS_TraceAreas: -nodenum = %d out of range\n", -nodenum );
 				return numareas;
 			} //end if
-#endif //AAS_SAMPLE_DEBUG
 			//botimport.Print(PRT_MESSAGE, "areanum = %d, must be %d\n", -nodenum, AAS_PointAreaNum(start));
 			areas[numareas] = -nodenum;
 			if ( points ) {
@@ -669,14 +659,15 @@ int AAS_TraceAreas( vec3_t start, vec3_t end, int *areas, vec3_t *points, int ma
 		if ( !nodenum ) {
 			continue;
 		} //end if
-#ifdef AAS_SAMPLE_DEBUG
-		if ( nodenum > ( *aasworld ).numnodes ) {
-			botimport.Print( PRT_ERROR, "AAS_TraceAreas: nodenum out of range\n" );
+		if ( nodenum >= ( *aasworld ).numnodes ) {
 			return numareas;
 		} //end if
-#endif //AAS_SAMPLE_DEBUG
 	   //the node to test against
 		aasnode = &( *aasworld ).nodes[nodenum];
+		//validate planenum before dereferencing
+		if ( aasnode->planenum < 0 || aasnode->planenum >= ( *aasworld ).numplanes ) {
+			return numareas;
+		} //end if
 		//start point of current line to test against node
 		VectorCopy( tstack_p->start, cur_start );
 		//end point of the current line to test against node
@@ -1193,8 +1184,16 @@ aas_link_t *AAS_AASLinkEntity( vec3_t absmins, vec3_t absmaxs, int entnum ) {
 		if ( !nodenum ) {
 			continue;
 		}
+		//bounds-check nodenum
+		if ( nodenum >= ( *aasworld ).numnodes ) {
+			continue;
+		}
 		//the node to test against
 		aasnode = &( *aasworld ).nodes[nodenum];
+		//bounds-check planenum
+		if ( aasnode->planenum < 0 || aasnode->planenum >= ( *aasworld ).numplanes ) {
+			continue;
+		}
 		//the current node plane
 		plane = &( *aasworld ).planes[aasnode->planenum];
 		//get the side(s) the box is situated relative to the plane

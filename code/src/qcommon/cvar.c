@@ -42,6 +42,9 @@ int cvar_numIndexes;
 #define FILE_HASH_SIZE      256
 static cvar_t*     hashTable[FILE_HASH_SIZE];
 
+#define SV_CHEATS_CONFIRM_TIME 10000
+static int cvar_svCheatsConfirmTime;
+
 cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force );
 
 /*
@@ -187,6 +190,33 @@ void    Cvar_CommandCompletion( void ( *callback )(const char *s) ) {
 	}
 }
 
+/*
+============
+Cvar_CompletionInfo
+============
+*/
+qboolean Cvar_CompletionInfo( const char *var_name, char *value, int valueSize,
+							  char *defaultValue, int defaultValueSize, qboolean *modified ) {
+	cvar_t *var;
+
+	var = Cvar_FindVar( var_name );
+	if ( !var ) {
+		return qfalse;
+	}
+
+	if ( value && valueSize > 0 ) {
+		Q_strncpyz( value, var->string, valueSize );
+	}
+	if ( defaultValue && defaultValueSize > 0 ) {
+		Q_strncpyz( defaultValue, var->resetString, defaultValueSize );
+	}
+	if ( modified ) {
+		*modified = (qboolean)( var->resetString && strcmp( var->string, var->resetString ) );
+	}
+
+	return qtrue;
+}
+
 
 /*
 ============
@@ -329,9 +359,31 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 		value = var->resetString;
 	}
 
+	if ( !Q_stricmp( var_name, "sv_cheats" ) && ( force || atoi( value ) == 0 ) ) {
+		cvar_svCheatsConfirmTime = 0;
+	}
+
 	if ( !strcmp( value,var->string ) ) {
 		return var;
 	}
+
+	if ( !force && !Q_stricmp( var_name, "sv_cheats" ) ) {
+		if ( atoi( value ) != 0 && var->integer == 0 ) {
+			int now = Sys_Milliseconds();
+
+			if ( !cvar_svCheatsConfirmTime || now < cvar_svCheatsConfirmTime
+				 || now - cvar_svCheatsConfirmTime > SV_CHEATS_CONFIRM_TIME ) {
+				cvar_svCheatsConfirmTime = now;
+				Com_Printf( "^1WARNING:^7 enabling sv_cheats invalidates the current speedrun attempt.\n" );
+				Com_Printf( "Type ^3sv_cheats 1^7 again within 10 seconds to enable cheats.\n" );
+				return var;
+			}
+
+			cvar_svCheatsConfirmTime = 0;
+			Com_Printf( "^1sv_cheats enabled. Current speedrun attempt is invalidated.^7\n" );
+		}
+	}
+
 	// note what types of cvars have been modified (userinfo, archive, serverinfo, systeminfo)
 	cvar_modifiedFlags |= var->flags;
 
@@ -895,7 +947,7 @@ Reads in all archived cvars
 ============
 */
 void Cvar_Init( void ) {
-	cvar_cheats = Cvar_Get( "sv_cheats", "0", CVAR_ROM | CVAR_SYSTEMINFO );
+	cvar_cheats = Cvar_Get( "sv_cheats", "0", CVAR_SYSTEMINFO );
 
 	Cmd_AddCommand( "toggle", Cvar_Toggle_f );
 	Cmd_AddCommand( "set", Cvar_Set_f );

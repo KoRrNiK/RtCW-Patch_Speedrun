@@ -38,7 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #define MIN_DEDICATED_COMHUNKMEGS 1
 #define MIN_COMHUNKMEGS 54      // RF, optimizing
-#define DEF_COMHUNKMEGS "72"
+#define DEF_COMHUNKMEGS "256"
 #define DEF_COMZONEMEGS "30"
 
 int com_argc;
@@ -98,6 +98,42 @@ qboolean com_errorEntered;
 qboolean com_fullyInitialized;
 
 char com_errorMessage[MAXPRINTMSG];
+
+static unsigned int Com_BuildHash( void ) {
+	const unsigned char *seed = (const unsigned char *)PRODUCT_BUILD_SEED;
+	unsigned int hash = 2166136261u;
+
+	while ( *seed ) {
+		hash ^= *seed++;
+		hash *= 16777619u;
+	}
+
+	return hash;
+}
+
+static const char *Com_BuildIDString( void ) {
+	static char id[64];
+	static qboolean initialized = qfalse;
+
+	if ( !initialized ) {
+		Com_sprintf( id, sizeof( id ), "SR-%s-%s+%08x", PRODUCT_VERSION, PRODUCT_BUILD_CONFIG_SHORT, Com_BuildHash() );
+		initialized = qtrue;
+	}
+
+	return id;
+}
+
+static const char *Com_BuildInfoString( void ) {
+	static char info[128];
+	static qboolean initialized = qfalse;
+
+	if ( !initialized ) {
+		Com_sprintf( info, sizeof( info ), "%s %s", PRODUCT_NAME, PRODUCT_VERSION );
+		initialized = qtrue;
+	}
+
+	return info;
+}
 
 void Com_WriteConfig_f( void );
 void CIN_CloseAllVideos();
@@ -1961,7 +1997,7 @@ Com_Init
 void Com_Init( char *commandLine ) {
 	char    *s;
 
-	Com_Printf("%s %s %s\n", Q3_VERSION, CPUSTRING, PRODUCT_DATE);
+	Com_Printf( "%s %s %s\n", Q3_VERSION, Com_BuildIDString(), CPUSTRING );
 
 	if ( setjmp( abortframe ) ) {
 		Sys_Error( "Error during initialization" );
@@ -2075,9 +2111,12 @@ void Com_Init( char *commandLine ) {
 	Cmd_AddCommand( "writeconfig", Com_WriteConfig_f );
 
 
-	s = va("%s - %s", Q3_VERSION, PRODUCT_DATE);
+	s = va( "%s %s", Q3_VERSION, PRODUCT_DATE );
 
 	com_version = Cvar_Get( "version", s, CVAR_ROM | CVAR_SERVERINFO );
+	Cvar_Get( "sp_version", SP_VERSION, CVAR_ROM | CVAR_SERVERINFO );
+	Cvar_Get( "sp_build_id", Com_BuildIDString(), CVAR_ROM );
+	Cvar_Get( "sp_build_info", Com_BuildInfoString(), CVAR_ROM );
 
 	Sys_Init();
 	Netchan_Init( Com_Milliseconds() & 0xffff );    // pick a port value that should be nice and random
@@ -2853,6 +2892,27 @@ static void PrintMatches( const char *s ) {
 	}
 }
 
+static void PrintCvarMatches( const char *s ) {
+	char value[MAX_STRING_CHARS];
+	char defaultValue[MAX_STRING_CHARS];
+	qboolean modified;
+
+	if ( Q_stricmpn( s, shortestMatch, strlen( shortestMatch ) ) ) {
+		return;
+	}
+
+	if ( !Cvar_CompletionInfo( s, value, sizeof( value ), defaultValue, sizeof( defaultValue ), &modified ) ) {
+		Com_Printf( "    %s\n", s );
+		return;
+	}
+
+	if ( modified ) {
+		Com_Printf( "    %s = %s  (default = %s)\n", s, value, defaultValue );
+	} else {
+		Com_Printf( "    %s = %s\n", s, value );
+	}
+}
+
 static void keyConcatArgs( void ) {
 	int i;
 	char    *arg;
@@ -2943,6 +3003,6 @@ void Field_CompleteCommand( field_t *field ) {
 
 	// run through again, printing matches
 	Cmd_CommandCompletion( PrintMatches );
-	Cvar_CommandCompletion( PrintMatches );
+	Cvar_CommandCompletion( PrintCvarMatches );
 }
 

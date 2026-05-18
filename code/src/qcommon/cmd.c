@@ -372,9 +372,9 @@ char    *Cmd_Args( void ) {
 
 	cmd_args[0] = 0;
 	for ( i = 1 ; i < cmd_argc ; i++ ) {
-		strcat( cmd_args, cmd_argv[i] );
+		Q_strcat( cmd_args, sizeof( cmd_args ), cmd_argv[i] );
 		if ( i != cmd_argc - 1 ) {
-			strcat( cmd_args, " " );
+			Q_strcat( cmd_args, sizeof( cmd_args ), " " );
 		}
 	}
 
@@ -397,9 +397,9 @@ char *Cmd_ArgsFrom( int arg ) {
 		arg = 0;
 	}
 	for ( i = arg ; i < cmd_argc ; i++ ) {
-		strcat( cmd_args, cmd_argv[i] );
+		Q_strcat( cmd_args, sizeof( cmd_args ), cmd_argv[i] );
 		if ( i != cmd_argc - 1 ) {
-			strcat( cmd_args, " " );
+			Q_strcat( cmd_args, sizeof( cmd_args ), " " );
 		}
 	}
 

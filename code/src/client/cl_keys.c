@@ -1008,6 +1008,27 @@ static void PrintMatches( const char *s ) {
 	}
 }
 
+static void PrintCvarMatches( const char *s ) {
+	char value[MAX_STRING_CHARS];
+	char defaultValue[MAX_STRING_CHARS];
+	qboolean modified;
+
+	if ( Q_stricmpn( s, shortestMatch, strlen( shortestMatch ) ) ) {
+		return;
+	}
+
+	if ( !Cvar_CompletionInfo( s, value, sizeof( value ), defaultValue, sizeof( defaultValue ), &modified ) ) {
+		Com_Printf( "    %s\n", s );
+		return;
+	}
+
+	if ( modified ) {
+		Com_Printf( "    %s = %s  (default = %s)\n", s, value, defaultValue );
+	} else {
+		Com_Printf( "    %s = %s\n", s, value );
+	}
+}
+
 static void keyConcatArgs( void ) {
 	int i;
 	char    *arg;
@@ -1099,7 +1120,7 @@ static void CompleteCommand( void ) {
 
 	// run through again, printing matches
 	Cmd_CommandCompletion( PrintMatches );
-	Cvar_CommandCompletion( PrintMatches );
+	Cvar_CommandCompletion( PrintCvarMatches );
 }
 
 

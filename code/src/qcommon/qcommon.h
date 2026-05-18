@@ -477,6 +477,9 @@ void    Cvar_VariableStringBuffer( const char *var_name, char *buffer, int bufsi
 void Cvar_CommandCompletion( void ( *callback )( const char *s ) );
 // callback with each valid string
 
+qboolean Cvar_CompletionInfo( const char *var_name, char *value, int valueSize,
+							  char *defaultValue, int defaultValueSize, qboolean *modified );
+
 void    Cvar_Reset( const char *var_name );
 
 void    Cvar_SetCheatState( void );

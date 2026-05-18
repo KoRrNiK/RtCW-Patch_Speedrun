@@ -91,9 +91,23 @@ void LinkMemoryBlock( memoryblock_t *block ) {
 //===========================================================================
 void UnlinkMemoryBlock( memoryblock_t *block ) {
 	if ( block->prev ) {
+		/* Validate prev pointer before dereferencing */
+		if ( block->prev->id != MEM_ID && block->prev->id != HUNK_ID ) {
+			/* Corrupted prev - just detach head */
+			memory = block->next;
+			if ( memory && ( memory->id == MEM_ID || memory->id == HUNK_ID ) ) {
+				memory->prev = NULL;
+			} else {
+				memory = NULL;
+			}
+			return;
+		}
 		block->prev->next = block->next;
 	} else { memory = block->next;}
 	if ( block->next ) {
+		if ( block->next->id != MEM_ID && block->next->id != HUNK_ID ) {
+			return; /* Corrupted next - skip relinking */
+		}
 		block->next->prev = block->prev;
 	}
 } //end of the function UnlinkMemoryBlock
@@ -113,6 +127,9 @@ void *GetMemory( unsigned long size )
 	memoryblock_t *block;
 
 	ptr = botimport.GetMemory( size + sizeof( memoryblock_t ) );
+	if ( !ptr ) {
+		return NULL;
+	}
 	block = (memoryblock_t *) ptr;
 	block->id = MEM_ID;
 	block->ptr = (char *) ptr + sizeof( memoryblock_t );
@@ -292,6 +309,14 @@ void PrintMemoryLabels( void ) {
 	Log_Write( "\r\n" );
 	for ( block = memory; block; block = block->next )
 	{
+		// Validate the block id before touching file/label/next.
+		// After Hunk_Clear() orphaned hunk blocks may still be in the
+		// list with overwritten headers; reading their fields would crash.
+		if ( block->id != MEM_ID && block->id != HUNK_ID ) {
+			Log_Write( "%6d, CORRUPT block at %p (id=0x%08lX) -- stopping list walk\r\n",
+					   i, (void *)block, block->id );
+			break;
+		}
 #ifdef MEMDEBUG
 		if ( block->id == HUNK_ID ) {
 			Log_Write( "%6d, hunk %p, %8d: %24s line %6d: %s\r\n", i, block->ptr, block->size, block->file, block->line, block->label );
@@ -315,6 +340,11 @@ void DumpMemory( void ) {
 
 	for ( block = memory; block; block = memory )
 	{
+		// If the head block is corrupted, just detach it and stop.
+		if ( block->id != MEM_ID && block->id != HUNK_ID ) {
+			memory = NULL;
+			break;
+		}
 		FreeMemory( block->ptr );
 	} //end for
 	totalmemorysize = 0;
@@ -364,7 +394,9 @@ void *GetClearedMemory( unsigned long size )
 #else
 ptr = GetMemory( size );
 #endif //MEMDEBUG
-memset( ptr, 0, size );
+if ( ptr ) {
+	memset( ptr, 0, size );
+}
 return ptr;
 } //end of the function GetClearedMemory
 //===========================================================================
@@ -419,6 +451,10 @@ return ptr;
 //===========================================================================
 void FreeMemory( void *ptr ) {
 	unsigned long int *memid;
+
+	if ( !ptr ) {
+		return;
+	}
 
 	memid = (unsigned long int *) ( (char *) ptr - sizeof( unsigned long int ) );
 

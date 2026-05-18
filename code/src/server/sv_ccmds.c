@@ -158,7 +158,9 @@ static void SV_Map_f( void ) {
 
 	buildScript = Cvar_VariableIntegerValue( "com_buildScript" );
 
-	if ( !buildScript && sv_reloading->integer && sv_reloading->integer != RELOAD_NEXTMAP ) {  // game is in 'reload' mode, don't allow starting new maps yet.
+	if ( !buildScript && sv_reloading->integer
+		 && sv_reloading->integer != RELOAD_NEXTMAP
+		 && sv_reloading->integer != RELOAD_FAILED ) {  // game is in 'reload' mode, don't allow starting new maps yet.
 		return;
 	}
 
@@ -172,7 +174,7 @@ static void SV_Map_f( void ) {
 		if ( !( strstr( map, "save/" ) == map ) ) {
 			Com_sprintf( savemap, sizeof( savemap ), "save/%s", map );
 		} else {
-			strcpy( savemap, map );
+			Q_strncpyz( savemap, map, sizeof( savemap ) );
 		}
 
 		size = FS_ReadFile( savemap, NULL );
@@ -208,7 +210,7 @@ static void SV_Map_f( void ) {
 		Cvar_Set( "savegame_filename", savemap );
 
 		// the mapname is at the very start of the savegame file
-		Com_sprintf( savemap, sizeof( savemap ), ( char * )( buffer + sizeof( int ) ) );  // skip the version
+		Com_sprintf( savemap, sizeof( savemap ), "%s", ( char * )( buffer + sizeof( int ) ) );  // skip the version
 		Q_strncpyz( smapname, savemap, sizeof( smapname ) );
 		map = smapname;
 
@@ -456,9 +458,9 @@ void    SV_LoadGame_f( void ) {
 	if ( Cvar_VariableIntegerValue( "savegame_loading" ) ) {
 		return;
 	}
-	if ( sv_reloading->integer ) {
-		// (SA) disabling
-//	if(sv_reloading->integer && sv_reloading->integer != RELOAD_FAILED )	// game is in 'reload' mode, don't allow starting new maps yet.
+	if ( sv_reloading->integer && sv_reloading->integer != RELOAD_NEXTMAP
+		 && sv_reloading->integer != RELOAD_FAILED ) {
+		// game is in 'reload' mode, don't allow starting new maps yet.
 		return;
 	}
 
@@ -489,7 +491,7 @@ void    SV_LoadGame_f( void ) {
 	FS_ReadFile( filename, (void **)&buffer );
 
 	// read the mapname, if it is the same as the current map, then do a fast load
-	Com_sprintf( mapname, sizeof( mapname ), (const char*)( buffer + sizeof( int ) ) );
+	Com_sprintf( mapname, sizeof( mapname ), "%s", (const char*)( buffer + sizeof( int ) ) );
 
 	if ( com_sv_running->integer && ( com_frameTime != sv.serverId ) ) {
 		// check mapname
