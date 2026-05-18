@@ -2252,6 +2252,40 @@ qboolean AICast_ScriptAction_Teleport( cast_state_t *cs, char *params ) {
 	return qtrue;
 }
 
+/*
+==============
+AICast_ScriptAction_RestoreOrigin
+
+Returns an AI actor to the origin it was created at. This is useful for
+cinematic cleanup where a script needs the actor to resume from its map
+spawn point without using a visible teleporter destination.
+==============
+*/
+qboolean AICast_ScriptAction_RestoreOrigin( cast_state_t *cs, char *params ) {
+	gentity_t *ent;
+
+	ent = &g_entities[cs->entityNum];
+	if ( !ent->client ) {
+		return qtrue;
+	}
+
+	trap_UnlinkEntity( ent );
+
+	VectorClear( ent->client->ps.velocity );
+	VectorCopy( cs->startOrigin, ent->client->ps.origin );
+	VectorCopy( cs->startOrigin, cs->bs->origin );
+	VectorClear( cs->bs->velocity );
+	VectorCopy( cs->startOrigin, ent->s.origin );
+	G_SetOrigin( ent, cs->startOrigin );
+
+	BG_PlayerStateToEntityState( &ent->client->ps, &ent->s, qtrue );
+	VectorCopy( ent->client->ps.origin, ent->r.currentOrigin );
+
+	trap_LinkEntity( ent );
+
+	return qtrue;
+}
+
 
 
 extern void G_EndGame( void );

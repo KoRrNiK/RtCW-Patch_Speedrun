@@ -549,28 +549,188 @@ int G_Save_Encode( byte *raw, byte *out, int rawsize, int outsize ) {
 G_Save_Decode
 ===============
 */
-void G_Save_Decode( byte *in, int insize, byte *out, int outsize ) {
+int G_Save_Decode( byte *in, int insize, byte *out, int outsize ) {
 	int incount, outcount;
 	byte count;     //DAJ was in but caused endian bugs
 	//
+	if ( !in || !out || insize < 0 || outsize < 0 ) {
+		return 0;
+	}
 	incount = 0;
 	outcount = 0;
 	while ( incount < insize ) {
+		int decodedCount;
+		int writeCount;
+
 		// read the count
 		count = 0;
+		if ( incount + SAVE_ENCODE_COUNT_BYTES > insize ) {
+			G_Error( "G_LoadGame: malformed encoded chunk" );
+		}
 		memcpy( &count, in + incount, SAVE_ENCODE_COUNT_BYTES );
 		incount += SAVE_ENCODE_COUNT_BYTES;
 		// if it's negative, zero it out
 		if ( count & ( 1 << ( ( SAVE_ENCODE_COUNT_BYTES * 8 ) - 1 ) ) ) {
 			count &= ~( 1 << ( ( SAVE_ENCODE_COUNT_BYTES * 8 ) - 1 ) );
-			memset( out + outcount, 0, count );
-			outcount += count;
+			decodedCount = count;
+			writeCount = decodedCount;
+			if ( outcount + writeCount > outsize ) {
+				writeCount = outsize - outcount;
+			}
+			if ( writeCount > 0 ) {
+				memset( out + outcount, 0, writeCount );
+			}
+			outcount += decodedCount;
 		} else {
+			decodedCount = count;
+			if ( incount + decodedCount > insize ) {
+				G_Error( "G_LoadGame: malformed encoded chunk" );
+			}
+			writeCount = decodedCount;
+			if ( outcount + writeCount > outsize ) {
+				writeCount = outsize - outcount;
+			}
 			// copy the data from "in"
-			memcpy( out + outcount, in + incount, count );
-			outcount += count;
-			incount += count;
+			if ( writeCount > 0 ) {
+				memcpy( out + outcount, in + incount, writeCount );
+			}
+			outcount += decodedCount;
+			incount += decodedCount;
 		}
+	}
+	return outcount;
+}
+
+static int G_SaveStructCopySize( const char *label, int savedSize, int currentSize ) {
+	static int warnedClientSaved = -1;
+	static int warnedClientCurrent = -1;
+	static int warnedEntitySaved = -1;
+	static int warnedEntityCurrent = -1;
+	static int warnedCastSaved = -1;
+	static int warnedCastCurrent = -1;
+	qboolean printWarning;
+
+	if ( savedSize < 0 ) {
+		G_Error( "G_LoadGame: %s structure has invalid size (%i)", label, savedSize );
+	}
+	if ( savedSize > currentSize ) {
+		printWarning = qtrue;
+		if ( !Q_stricmp( label, "client" ) ) {
+			printWarning = warnedClientSaved != savedSize || warnedClientCurrent != currentSize;
+			warnedClientSaved = savedSize;
+			warnedClientCurrent = currentSize;
+		} else if ( !Q_stricmp( label, "entity" ) ) {
+			printWarning = warnedEntitySaved != savedSize || warnedEntityCurrent != currentSize;
+			warnedEntitySaved = savedSize;
+			warnedEntityCurrent = currentSize;
+		} else if ( !Q_stricmp( label, "cast_state" ) ) {
+			printWarning = warnedCastSaved != savedSize || warnedCastCurrent != currentSize;
+			warnedCastSaved = savedSize;
+			warnedCastCurrent = currentSize;
+		}
+		if ( printWarning ) {
+			G_Printf( "G_LoadGame: WARNING - %s structure is %i bytes in savegame, current is %i; truncating\n", label, savedSize, currentSize );
+		}
+		return currentSize;
+	}
+	return savedSize;
+}
+
+static void G_SaveReadLegacyStruct( fileHandle_t f, byte *out, int outsize, int savedSize, const char *label ) {
+	byte discard[1024];
+	int copySize;
+	int remaining;
+	int chunk;
+
+	copySize = G_SaveStructCopySize( label, savedSize, outsize );
+	if ( copySize > 0 ) {
+		trap_FS_Read( out, copySize, f );
+	}
+	remaining = savedSize - copySize;
+	while ( remaining > 0 ) {
+		chunk = remaining;
+		if ( chunk > sizeof( discard ) ) {
+			chunk = sizeof( discard );
+		}
+		trap_FS_Read( discard, chunk, f );
+		remaining -= chunk;
+	}
+}
+
+static qboolean G_SaveAngleIsUsable( float angle ) {
+	return !IS_NAN( angle ) && angle > -360000.0f && angle < 360000.0f;
+}
+
+static float G_SaveSanitizeAngle( float angle, float fallback, qboolean clampPitch ) {
+	if ( !G_SaveAngleIsUsable( angle ) ) {
+		angle = fallback;
+	}
+	if ( !G_SaveAngleIsUsable( angle ) ) {
+		angle = 0.0f;
+	}
+
+	angle = AngleNormalize180( angle );
+	if ( clampPitch ) {
+		if ( angle > 89.0f ) {
+			angle = 89.0f;
+		} else if ( angle < -89.0f ) {
+			angle = -89.0f;
+		}
+	}
+	return angle;
+}
+
+static void G_SaveSanitizeLoadedClient( gclient_t *client, gentity_t *ent, int clientNum, qboolean sizeMismatch ) {
+	usercmd_t currentCmd;
+	vec3_t viewangles;
+	int axis;
+
+	if ( !client || !ent ) {
+		return;
+	}
+
+	if ( ent->client != client ) {
+		ent->client = client;
+	}
+
+	client->ps.clientNum = clientNum;
+	VectorCopy( client->ps.viewangles, viewangles );
+	for ( axis = 0 ; axis < 3 ; axis++ ) {
+		viewangles[axis] = G_SaveSanitizeAngle( viewangles[axis], ent->s.angles[axis], axis == PITCH );
+	}
+
+	trap_GetUsercmd( clientNum, &currentCmd );
+	if ( sizeMismatch ) {
+		currentCmd.buttons = 0;
+		currentCmd.wbuttons = 0;
+		currentCmd.forwardmove = 0;
+		currentCmd.rightmove = 0;
+		currentCmd.upmove = 0;
+		currentCmd.wolfkick = 0;
+		currentCmd.cld = 0;
+	}
+	client->pers.cmd = currentCmd;
+	client->pers.oldcmd = currentCmd;
+	client->lastCmdTime = level.time;
+
+	SetClientViewAngle( ent, viewangles );
+
+	if ( sizeMismatch ) {
+		client->buttons = currentCmd.buttons;
+		client->oldbuttons = currentCmd.buttons;
+		client->latched_buttons = 0;
+		client->wbuttons = currentCmd.wbuttons;
+		client->oldwbuttons = currentCmd.wbuttons;
+		client->latched_wbuttons = 0;
+		VectorCopy( client->ps.origin, client->oldOrigin );
+		client->sniperRifleFiredTime = 0;
+		client->sniperRifleMuzzleYaw = 0.0f;
+		client->sniperRifleMuzzlePitch = 0.0f;
+		VectorCopy( viewangles, ent->s.apos.trBase );
+		VectorClear( ent->s.apos.trDelta );
+		ent->s.apos.trType = TR_STATIONARY;
+		ent->s.apos.trTime = level.time;
+		ent->s.apos.trDuration = 0;
 	}
 }
 
@@ -633,18 +793,33 @@ void ReadClient( fileHandle_t f, gclient_t *client, int size ) {
 	gclient_t temp;
 	gentity_t   *ent;
 	int decodedSize;
+	int copySize;
+	int decodedRawSize;
+	int clientNum;
+	qboolean clientSizeMismatch;
+
+	if ( !client ) {
+		G_Printf( "ReadClient: WARNING - NULL client pointer, skipping\n" );
+		return;
+	}
+	memset( &temp, 0, sizeof( temp ) );
+	copySize = G_SaveStructCopySize( "client", size, sizeof( temp ) );
+	clientSizeMismatch = size != sizeof( temp );
 
 	if ( ver == 10 ) {
-		trap_FS_Read( &temp, size, f );
+		G_SaveReadLegacyStruct( f, (byte *)&temp, sizeof( temp ), size, "client" );
 	} else {
 		// read the encoded chunk
 		trap_FS_Read( &decodedSize, sizeof( int ), f );
-		if ( decodedSize > sizeof( clientBuf ) ) {
+		if ( decodedSize < 0 || decodedSize > sizeof( clientBuf ) ) {
 			G_Error( "G_LoadGame: encoded chunk is greater than buffer" );
 		}
 		trap_FS_Read( clientBuf, decodedSize, f ); \
 		// decode it
-		G_Save_Decode( clientBuf, decodedSize, (byte *)&temp, sizeof( temp ) );
+		decodedRawSize = G_Save_Decode( clientBuf, decodedSize, (byte *)&temp, sizeof( temp ) );
+		if ( decodedRawSize > sizeof( temp ) && size <= sizeof( temp ) ) {
+			G_Error( "G_LoadGame: decoded client structure is greater than buffer" );
+		}
 	}
 
 	// convert any feilds back to the correct data
@@ -660,7 +835,7 @@ void ReadClient( fileHandle_t f, gclient_t *client, int size ) {
 	}
 
 	// now copy the temp structure into the existing structure
-	memcpy( client, &temp, size );
+	memcpy( client, &temp, copySize );
 
 	// make sure they face the right way
 	//client->ps.pm_flags |= PMF_RESPAWNED;
@@ -673,7 +848,11 @@ void ReadClient( fileHandle_t f, gclient_t *client, int size ) {
 	}
 	//}
 
-	ent = &g_entities[client->ps.clientNum];
+	clientNum = client - level.clients;
+	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
+		G_Error( "ReadClient: client pointer out of range" );
+	}
+	ent = &g_entities[clientNum];
 
 	// make sure they face the right way
 	// if it's the player, see if we need to put them at a mission marker
@@ -700,8 +879,7 @@ void ReadClient( fileHandle_t f, gclient_t *client, int size ) {
 		}
 	} else {
 */
-	trap_GetUsercmd( ent->client - level.clients, &ent->client->pers.cmd );
-	SetClientViewAngle( ent, ent->client->ps.viewangles );
+	G_SaveSanitizeLoadedClient( client, ent, clientNum, clientSizeMismatch );
 //	}
 
 	// dead characters should stay on last frame after a loadgame
@@ -791,20 +969,26 @@ void ReadEntity( fileHandle_t f, gentity_t *ent, int size ) {
 	gentity_t temp = { {0} }, backup, backup2;
 	vmCvar_t cvar;
 	int decodedSize;
+	int copySize;
+	int decodedRawSize;
 
 	backup = *ent;
+	copySize = G_SaveStructCopySize( "entity", size, sizeof( temp ) );
 
 	if ( ver == 10 ) {
-		trap_FS_Read( &temp, size, f );
+		G_SaveReadLegacyStruct( f, (byte *)&temp, sizeof( temp ), size, "entity" );
 	} else {
 		// read the encoded chunk
 		trap_FS_Read( &decodedSize, sizeof( int ), f );
-		if ( decodedSize > sizeof( entityBuf ) ) {
+		if ( decodedSize < 0 || decodedSize > sizeof( entityBuf ) ) {
 			G_Error( "G_LoadGame: encoded chunk is greater than buffer" );
 		}
 		trap_FS_Read( entityBuf, decodedSize, f );
 		// decode it
-		G_Save_Decode( entityBuf, decodedSize, (byte *)&temp, sizeof( temp ) );
+		decodedRawSize = G_Save_Decode( entityBuf, decodedSize, (byte *)&temp, sizeof( temp ) );
+		if ( decodedRawSize > sizeof( temp ) && size <= sizeof( temp ) ) {
+			G_Error( "G_LoadGame: decoded entity structure is greater than buffer" );
+		}
 	}
 
 	// convert any fields back to the correct data
@@ -834,7 +1018,7 @@ void ReadEntity( fileHandle_t f, gentity_t *ent, int size ) {
 	}
 
 	// now copy the temp structure into the existing structure
-	memcpy( ent, &temp, size );
+	memcpy( ent, &temp, copySize );
 
 	// notify server of changes in position/orientation
 	if ( ent->r.linked && ( !( ent->r.svFlags & SVF_CASTAI ) || !ent->aiInactive ) ) {
@@ -956,18 +1140,26 @@ void ReadCastState( fileHandle_t f, cast_state_t *cs, int size ) {
 	ignoreField_t *ifield;
 	cast_state_t temp;
 	int decodedSize;
+	int copySize;
+	int decodedRawSize;
+
+	memset( &temp, 0, sizeof( temp ) );
+	copySize = G_SaveStructCopySize( "cast_state", size, sizeof( temp ) );
 
 	if ( ver == 10 ) {
-		trap_FS_Read( &temp, size, f );
+		G_SaveReadLegacyStruct( f, (byte *)&temp, sizeof( temp ), size, "cast_state" );
 	} else {
 		// read the encoded chunk
 		trap_FS_Read( &decodedSize, sizeof( int ), f );
-		if ( decodedSize > sizeof( castStateBuf ) ) {
+		if ( decodedSize < 0 || decodedSize > sizeof( castStateBuf ) ) {
 			G_Error( "G_LoadGame: encoded chunk is greater than buffer" );
 		}
 		trap_FS_Read( castStateBuf, decodedSize, f ); \
 		// decode it
-		G_Save_Decode( castStateBuf, decodedSize, (byte *)&temp, sizeof( temp ) );
+		decodedRawSize = G_Save_Decode( castStateBuf, decodedSize, (byte *)&temp, sizeof( temp ) );
+		if ( decodedRawSize > sizeof( temp ) && size <= sizeof( temp ) ) {
+			G_Error( "G_LoadGame: decoded cast_state structure is greater than buffer" );
+		}
 	}
 
 	// convert any feilds back to the correct data
@@ -983,7 +1175,7 @@ void ReadCastState( fileHandle_t f, cast_state_t *cs, int size ) {
 	}
 
 	// now copy the temp structure into the existing structure
-	memcpy( cs, &temp, size );
+	memcpy( cs, &temp, copySize );
 
 	// if this is an AI, init the cur_ps
 	if ( cs->bs && !cs->deathTime ) {

@@ -96,6 +96,7 @@ qboolean AICast_ScriptAction_SavePersistant( cast_state_t *cs, char *params );
 qboolean AICast_ScriptAction_ChangeLevel( cast_state_t *cs, char *params );
 qboolean AICast_ScriptAction_EndGame( cast_state_t *cs, char *params ); //----(SA)	added
 qboolean AICast_ScriptAction_Teleport( cast_state_t *cs, char *params );    //----(SA)	added
+qboolean AICast_ScriptAction_RestoreOrigin( cast_state_t *cs, char *params );
 qboolean AICast_ScriptAction_FoundSecret( cast_state_t *cs, char *params );
 qboolean AICast_ScriptAction_NoSight( cast_state_t *cs, char *params );
 qboolean AICast_ScriptAction_Sight( cast_state_t *cs, char *params );
@@ -183,6 +184,7 @@ cast_script_stack_action_t scriptActions[] =
 	{"changelevel",      AICast_ScriptAction_ChangeLevel},
 	{"endgame",          AICast_ScriptAction_EndGame},   //----(SA)	added
 	{"teleport",     AICast_ScriptAction_Teleport},  //----(SA)	added
+	{"restoreorigin",    AICast_ScriptAction_RestoreOrigin},
 	{"foundsecret",      AICast_ScriptAction_FoundSecret},
 	{"nosight",          AICast_ScriptAction_NoSight},
 	{"sight",            AICast_ScriptAction_Sight},

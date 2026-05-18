@@ -143,7 +143,7 @@ AICast_GetCastState
 ============
 */
 cast_state_t *AICast_GetCastState( int entitynum ) {
-	if ( entitynum < 0 || entitynum > level.maxclients ) {
+	if ( !caststates || entitynum < 0 || entitynum >= aicast_maxclients ) {
 		return NULL;
 	}
 	//
@@ -499,8 +499,8 @@ void AICast_Init( void ) {
 	aicast_skillscale = (float)trap_Cvar_VariableIntegerValue( "g_gameSkill" ) / (float)GSKILL_MAX;
 
 	caststates = G_Alloc( aicast_maxclients * sizeof( cast_state_t ) );
-	memset( caststates, 0, sizeof( caststates ) );
-	for ( i = 0; i < MAX_CLIENTS; i++ ) {
+	memset( caststates, 0, aicast_maxclients * sizeof( *caststates ) );
+	for ( i = 0; i < aicast_maxclients; i++ ) {
 		caststates[i].entityNum = i;
 	}
 
@@ -861,6 +861,9 @@ void AICast_Activate( int activatorNum, int entNum ) {
 	cast_state_t *cs;
 
 	cs = AICast_GetCastState( entNum );
+	if ( !cs ) {
+		return;
+	}
 	if ( cs->activate ) {
 		cs->activate( entNum, activatorNum );
 	}
@@ -876,7 +879,7 @@ AICast_NoFlameDamage
 qboolean AICast_NoFlameDamage( int entNum ) {
 	cast_state_t *cs;
 
-	if ( entNum >= MAX_CLIENTS ) {
+	if ( entNum >= aicast_maxclients ) {
 		return qfalse;
 	}
 
@@ -886,6 +889,9 @@ qboolean AICast_NoFlameDamage( int entNum ) {
 	}
 
 	cs = AICast_GetCastState( entNum );
+	if ( !cs ) {
+		return qfalse;
+	}
 	return ( ( cs->aiFlags & AIFL_NO_FLAME_DAMAGE ) != 0 );
 }
 
@@ -897,7 +903,7 @@ AICast_SetFlameDamage
 void AICast_SetFlameDamage( int entNum, qboolean status ) {
 	cast_state_t *cs;
 
-	if ( entNum >= MAX_CLIENTS ) {
+	if ( entNum >= aicast_maxclients ) {
 		return;
 	}
 
@@ -907,6 +913,9 @@ void AICast_SetFlameDamage( int entNum, qboolean status ) {
 	}
 
 	cs = AICast_GetCastState( entNum );
+	if ( !cs ) {
+		return;
+	}
 
 	if ( status ) {
 		cs->aiFlags |= AIFL_NO_FLAME_DAMAGE;
@@ -935,6 +944,9 @@ AICast_AdjustIdealYawForMover
 void AICast_AdjustIdealYawForMover( int entnum, float yaw ) {
 	cast_state_t *cs = AICast_GetCastState( entnum );
 	//
+	if ( !cs ) {
+		return;
+	}
 	cs->ideal_viewangles[YAW] += yaw;
 }
 
@@ -946,6 +958,9 @@ AICast_AgePlayTime
 void AICast_AgePlayTime( int entnum ) {
 	cast_state_t *cs = AICast_GetCastState( entnum );
 	//
+	if ( !cs ) {
+		return;
+	}
 	if ( saveGamePending ) {
 		return;
 	}
@@ -972,6 +987,9 @@ AICast_NoReload
 int AICast_NoReload( int entnum ) {
 	cast_state_t *cs = AICast_GetCastState( entnum );
 	//
+	if ( !cs ) {
+		return qfalse;
+	}
 	return ( ( cs->aiFlags & AIFL_NO_RELOAD ) != 0 );
 }
 
@@ -983,6 +1001,9 @@ AICast_PlayTime
 */
 int AICast_PlayTime( int entnum ) {
 	cast_state_t *cs = AICast_GetCastState( entnum );
+	if ( !cs ) {
+		return 0;
+	}
 	return ( cs->totalPlayTime );
 }
 
@@ -993,6 +1014,9 @@ AICast_NumAttempts
 */
 int AICast_NumAttempts( int entnum ) {
 	cast_state_t *cs = AICast_GetCastState( entnum );
+	if ( !cs ) {
+		return 0;
+	}
 	return ( cs->attempts );
 }
 

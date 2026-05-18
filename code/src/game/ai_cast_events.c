@@ -574,7 +574,7 @@ void AICast_ProcessActivate( int entNum, int activatorNum ) {
 		}
 
 		// if they have a wait goal, free it
-		if ( cs->followEntity >= MAX_CLIENTS && g_entities[cs->followEntity].classname && !strcmp( g_entities[cs->followEntity].classname, "AI_wait_goal" ) ) {
+		if ( cs->followEntity >= aicast_maxclients && g_entities[cs->followEntity].classname && !strcmp( g_entities[cs->followEntity].classname, "AI_wait_goal" ) ) {
 			G_FreeEntity( &g_entities[cs->followEntity] );
 		}
 

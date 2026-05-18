@@ -631,7 +631,7 @@ extern void ReadEntity ( fileHandle_t f , gentity_t * ent , int size ) ;
 extern void WriteEntity ( fileHandle_t f , gentity_t * ent ) ;
 extern void ReadClient ( fileHandle_t f , gclient_t * client , int size ) ;
 extern void WriteClient ( fileHandle_t f , gclient_t * cl ) ;
-extern void G_Save_Decode ( byte * in , int insize , byte * out , int outsize ) ;
+extern int G_Save_Decode ( byte * in , int insize , byte * out , int outsize ) ;
 extern int G_Save_Encode ( byte * raw , byte * out , int rawsize , int outsize ) ;
 extern void ReadField ( fileHandle_t f , saveField_t * field , byte * base ) ;
 extern void WriteField2 ( fileHandle_t f , saveField_t * field , byte * base ) ;
@@ -1266,6 +1266,7 @@ extern qboolean AICast_ScriptAction_NoSight ( cast_state_t * cs , char * params 
 extern qboolean AICast_ScriptAction_FoundSecret ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_ChangeLevel ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_EndGame ( cast_state_t * cs , char * params ) ;
+extern qboolean AICast_ScriptAction_RestoreOrigin ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_Teleport ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_SavePersistant ( cast_state_t * cs , char * params ) ;
 extern qboolean AICast_ScriptAction_Unmount ( cast_state_t * cs , char * params ) ;

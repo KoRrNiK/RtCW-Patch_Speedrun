@@ -1266,6 +1266,7 @@
 {"AICast_ScriptAction_FoundSecret", (byte *)AICast_ScriptAction_FoundSecret},
 {"AICast_ScriptAction_ChangeLevel", (byte *)AICast_ScriptAction_ChangeLevel},
 {"AICast_ScriptAction_EndGame", (byte *)AICast_ScriptAction_EndGame},
+{"AICast_ScriptAction_RestoreOrigin", (byte *)AICast_ScriptAction_RestoreOrigin},
 {"AICast_ScriptAction_Teleport", (byte *)AICast_ScriptAction_Teleport},
 {"AICast_ScriptAction_SavePersistant", (byte *)AICast_ScriptAction_SavePersistant},
 {"AICast_ScriptAction_Unmount", (byte *)AICast_ScriptAction_Unmount},

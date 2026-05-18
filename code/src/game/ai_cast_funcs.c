@@ -714,7 +714,7 @@ char *AIFunc_InspectFriendly( cast_state_t *cs ) {
 	// if the entity is not ready yet
 	if ( !followent->inuse ) {
 		// if it's a connecting client, wait
-		if (    cs->followEntity < MAX_CLIENTS
+		if (    cs->followEntity < aicast_maxclients
 				&&  (   ( followent->client && followent->client->pers.connected == CON_CONNECTING )
 						|| ( level.time < 3000 ) ) ) {
 			return AIFunc_ChaseGoalIdleStart( cs, cs->followEntity, cs->followDist );
@@ -1554,7 +1554,7 @@ char *AIFunc_ChaseGoalIdleStart( cast_state_t *cs, int entitynum, float reachdis
 	trap_BotInitAvoidReach( cs->bs->ms );
 
 	// if we are following someone, always use the default (ready for action) anim
-	if ( entitynum < MAX_CLIENTS ) {
+	if ( entitynum < aicast_maxclients ) {
 		g_entities[cs->entityNum].client->ps.eFlags &= ~EF_STAND_IDLE2;
 	} else {
 		// randomly choose idle animation
@@ -1619,7 +1619,7 @@ char *AIFunc_ChaseGoal( cast_state_t *cs ) {
 	// if the entity is not ready yet
 	if ( !followent->inuse ) {
 		// if it's a connecting client, wait
-		if (    cs->followEntity < MAX_CLIENTS
+		if (    cs->followEntity < aicast_maxclients
 				&&  (   ( followent->client && followent->client->pers.connected == CON_CONNECTING )
 						|| ( level.time < 3000 ) ) ) {
 			return AIFunc_ChaseGoalIdleStart( cs, cs->followEntity, cs->followDist );
@@ -2163,7 +2163,7 @@ char *AIFunc_BattleHunt( cast_state_t *cs ) {
 	// if the entity is not ready yet
 	if ( !followent->inuse ) {
 		// if it's a connecting client, wait
-		if ( !(   ( cs->enemyNum < MAX_CLIENTS )
+		if ( !(   ( cs->enemyNum < aicast_maxclients )
 				  && (   ( followent->client && followent->client->pers.connected == CON_CONNECTING )
 						 || ( level.time < 3000 ) ) ) ) { // they don't exist anymore, stop attacking
 			cs->enemyNum = -1;
@@ -2698,7 +2698,7 @@ char *AIFunc_BattleChase( cast_state_t *cs ) {
 	// if the entity is not ready yet
 	if ( !followent->inuse ) {
 		// if it's a connecting client, wait
-		if ( !(   ( cs->enemyNum < MAX_CLIENTS )
+		if ( !(   ( cs->enemyNum < aicast_maxclients )
 				  && (   ( followent->client && followent->client->pers.connected == CON_CONNECTING )
 						 || ( level.time < 3000 ) ) ) ) { // they don't exist anymore, stop attacking
 			cs->enemyNum = -1;
@@ -3240,7 +3240,7 @@ char *AIFunc_AvoidDanger( cast_state_t *cs ) {
 	}
 	//
 	// if we are now safe from the danger, stop running away
-	if ( cs->dangerEntity >= MAX_CLIENTS && Distance( cs->dangerEntityPos, cs->bs->origin ) > cs->dangerDist * 1.5 ) {
+	if ( cs->dangerEntity >= aicast_maxclients && Distance( cs->dangerEntityPos, cs->bs->origin ) > cs->dangerDist * 1.5 ) {
 		// don't move, wait for danger to pass
 	} else
 	// are we close enough to the goal?
@@ -3818,7 +3818,7 @@ char *AIFunc_GrenadeFlush( cast_state_t *cs ) {
 	// if the entity is not ready yet
 	if ( !followent->inuse ) {
 		// if it's a connecting client, wait
-		if ( !(   ( cs->enemyNum < MAX_CLIENTS )
+		if ( !(   ( cs->enemyNum < aicast_maxclients )
 				  && (   ( followent->client && followent->client->pers.connected == CON_CONNECTING )
 						 || ( level.time < 3000 ) ) ) ) { // they don't exist anymore, stop attacking
 			cs->enemyNum = -1;

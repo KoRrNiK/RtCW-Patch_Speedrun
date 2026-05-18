@@ -228,74 +228,74 @@ cvarTable_t gameCvarTable[] = {
 	{ &g_gameskill, "g_gameskill", "2", CVAR_SERVERINFO | CVAR_LATCH, 0, qfalse  },   // (SA) new default '2' (was '1')
 	// done
 
-	// Knightmare- game balancing cvars
-	{ &sk_rot_health, "sk_rot_health", "0", 0, 0, qfalse  },
-	{ &sk_rot_armor, "sk_rot_armor", "0", 0, 0, qfalse  },
-	{ &sk_brandy_ignore_max_health, "sk_brandy_ignore_max_health", "0", 0, 0, qfalse  },
-	{ &sk_dropped_weapon_min_ammo, "sk_dropped_weapon_min_ammo", "0.25", 0, 0, qfalse  },
+	// Knightmare- game balancing cvars (all sk_ require sv_cheats 1)
+	{ &sk_rot_health, "sk_rot_health", "0", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_rot_armor, "sk_rot_armor", "0", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_brandy_ignore_max_health, "sk_brandy_ignore_max_health", "0", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_dropped_weapon_min_ammo, "sk_dropped_weapon_min_ammo", "0.25", CVAR_CHEAT, 0, qfalse  },
 
-	{ &sk_max_mega_health, "sk_max_mega_health", "200", 0, 0, qfalse  },
-	{ &sk_max_armor, "sk_max_armor", "100", 0, 0, qfalse  },
-	{ &sk_max_9mm, "sk_max_9mm", "300", 0, 0, qfalse  },
-	{ &sk_max_45cal, "sk_max_45cal", "300", 0, 0, qfalse  },
-	{ &sk_max_792mm, "sk_max_792mm", "200", 0, 0, qfalse  },
-	{ &sk_max_30cal, "sk_max_30cal", "20", 0, 0, qfalse  },
-	{ &sk_max_127mm, "sk_max_127mm", "1000", 0, 0, qfalse  },
-	{ &sk_max_pf_rockets, "sk_max_pf_rockets", "5", 0, 0, qfalse  },
-	{ &sk_max_fuel, "sk_max_fuel", "150", 0, 0, qfalse  },
-	{ &sk_max_cells, "sk_max_cells", "300", 0, 0, qfalse  },
-	{ &sk_max_grenades, "sk_max_grenades", "15", 0, 0, qfalse  },
-	{ &sk_max_pineapples, "sk_max_pineapples", "15", 0, 0, qfalse  },
-	{ &sk_max_dynamite, "sk_max_dynamite", "10", 0, 0, qfalse  },
+	{ &sk_max_mega_health, "sk_max_mega_health", "200", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_armor, "sk_max_armor", "100", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_9mm, "sk_max_9mm", "300", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_45cal, "sk_max_45cal", "300", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_792mm, "sk_max_792mm", "200", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_30cal, "sk_max_30cal", "20", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_127mm, "sk_max_127mm", "1000", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_pf_rockets, "sk_max_pf_rockets", "5", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_fuel, "sk_max_fuel", "150", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_cells, "sk_max_cells", "300", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_grenades, "sk_max_grenades", "15", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_pineapples, "sk_max_pineapples", "15", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_max_dynamite, "sk_max_dynamite", "10", CVAR_CHEAT, 0, qfalse  },
 
-	{ &sk_plr_dmg_knife, "sk_plr_dmg_knife", "5", 0, 0, qfalse  },
-	{ &sk_plr_dmg_kick, "sk_plr_dmg_kick", "15", 0, 0, qfalse  },
-	{ &sk_plr_dmg_luger, "sk_plr_dmg_luger", "6", 0, 0, qfalse  },
-	{ &sk_plr_dmg_colt, "sk_plr_dmg_colt", "8", 0, 0, qfalse  },
-	{ &sk_plr_dmg_mp40, "sk_plr_dmg_mp40", "6", 0, 0, qfalse  },
-	{ &sk_plr_dmg_thompson, "sk_plr_dmg_thompson", "8", 0, 0, qfalse  },
-	{ &sk_plr_dmg_sten, "sk_plr_dmg_sten", "10", 0, 0, qfalse  },
-	{ &sk_plr_dmg_mauser, "sk_plr_dmg_mauser", "20", 0, 0, qfalse  },
-	{ &sk_plr_dmg_sniperrifle, "sk_plr_dmg_sniperrifle", "55", 0, 0, qfalse  },
-	{ &sk_plr_dmg_garand, "sk_plr_dmg_garand", "25", 0, 0, qfalse  },
-	{ &sk_plr_dmg_snooperscope, "sk_plr_dmg_snooperscope", "25", 0, 0, qfalse  },
-	{ &sk_plr_dmg_fg42, "sk_plr_dmg_fg42", "20", 0, 0, qfalse  },
-	{ &sk_plr_dmg_fg42scope, "sk_plr_dmg_fg42scope", "35", 0, 0, qfalse  },
-	{ &sk_plr_dmg_panzerfaust, "sk_plr_dmg_panzerfaust", "200", 0, 0, qfalse  },
-	{ &sk_plr_dmg_panzerfaust_splash, "sk_plr_dmg_panzerfaust_splash", "200", 0, 0, qfalse  },
-	{ &sk_plr_dmg_venom, "sk_plr_dmg_venom", "12", 0, 0, qfalse  },
-	{ &sk_plr_dmg_flamethrower, "sk_plr_dmg_flamethrower", "2", 0, 0, qfalse  },
-	{ &sk_plr_dmg_tesla, "sk_plr_dmg_tesla", "8", 0, 0, qfalse  },
-	{ &sk_plr_dmg_grenade, "sk_plr_dmg_grenade", "200", 0, 0, qfalse  },
-	{ &sk_plr_dmg_grenade_radius, "sk_plr_dmg_grenade_radius", "150", 0, 0, qfalse  },
-	{ &sk_plr_dmg_pineapple, "sk_plr_dmg_pineapple", "160", 0, 0, qfalse  },
-	{ &sk_plr_dmg_pineapple_radius, "sk_plr_dmg_pineapple_radius", "300", 0, 0, qfalse  },
-	{ &sk_plr_dmg_dynamite, "sk_plr_dmg_dynamite", "800", 0, 0, qfalse  },
-	{ &sk_plr_dmg_dynamite_radius, "sk_plr_dmg_dynamite_radius", "400", 0, 0, qfalse  },
+	{ &sk_plr_dmg_knife, "sk_plr_dmg_knife", "5", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_kick, "sk_plr_dmg_kick", "15", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_luger, "sk_plr_dmg_luger", "6", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_colt, "sk_plr_dmg_colt", "8", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_mp40, "sk_plr_dmg_mp40", "6", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_thompson, "sk_plr_dmg_thompson", "8", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_sten, "sk_plr_dmg_sten", "10", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_mauser, "sk_plr_dmg_mauser", "20", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_sniperrifle, "sk_plr_dmg_sniperrifle", "55", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_garand, "sk_plr_dmg_garand", "25", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_snooperscope, "sk_plr_dmg_snooperscope", "25", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_fg42, "sk_plr_dmg_fg42", "20", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_fg42scope, "sk_plr_dmg_fg42scope", "35", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_panzerfaust, "sk_plr_dmg_panzerfaust", "200", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_panzerfaust_splash, "sk_plr_dmg_panzerfaust_splash", "200", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_venom, "sk_plr_dmg_venom", "12", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_flamethrower, "sk_plr_dmg_flamethrower", "2", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_tesla, "sk_plr_dmg_tesla", "8", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_grenade, "sk_plr_dmg_grenade", "200", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_grenade_radius, "sk_plr_dmg_grenade_radius", "150", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_pineapple, "sk_plr_dmg_pineapple", "160", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_pineapple_radius, "sk_plr_dmg_pineapple_radius", "300", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_dynamite, "sk_plr_dmg_dynamite", "800", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_plr_dmg_dynamite_radius, "sk_plr_dmg_dynamite_radius", "400", CVAR_CHEAT, 0, qfalse  },
 
-	{ &sk_ai_dmg_knife, "sk_ai_dmg_knife", "5", 0, 0, qfalse  },
-	{ &sk_ai_dmg_luger, "sk_ai_dmg_luger", "6", 0, 0, qfalse  },
-	{ &sk_ai_dmg_colt, "sk_ai_dmg_colt", "8", 0, 0, qfalse  },
-	{ &sk_ai_dmg_mp40, "sk_ai_dmg_mp40", "6", 0, 0, qfalse  },
-	{ &sk_ai_dmg_thompson, "sk_ai_dmg_thompson", "8", 0, 0, qfalse  },
-	{ &sk_ai_dmg_sten, "sk_ai_dmg_sten", "8", 0, 0, qfalse  },
-	{ &sk_ai_dmg_mauser, "sk_ai_dmg_mauser", "20", 0, 0, qfalse  },
-	{ &sk_ai_dmg_sniperrifle, "sk_ai_dmg_sniperrifle", "50", 0, 0, qfalse  },
-	{ &sk_ai_dmg_garand, "sk_ai_dmg_garand", "20", 0, 0, qfalse  },
-	{ &sk_ai_dmg_snooperscope, "sk_ai_dmg_snooperscope", "25", 0, 0, qfalse  },
-	{ &sk_ai_dmg_fg42, "sk_ai_dmg_fg42", "15", 0, 0, qfalse  },
-	{ &sk_ai_dmg_fg42scope, "sk_ai_dmg_fg42scope", "15", 0, 0, qfalse  },
-	{ &sk_ai_dmg_panzerfaust, "sk_ai_dmg_panzerfaust", "100", 0, 0, qfalse  },
-	{ &sk_ai_dmg_panzerfaust_splash, "sk_ai_dmg_panzerfaust_splash", "120", 0, 0, qfalse  },
-	{ &sk_ai_dmg_venom, "sk_ai_dmg_venom", "10", 0, 0, qfalse  },
-	{ &sk_ai_dmg_flamethrower, "sk_ai_dmg_flamethrower", "1", 0, 0, qfalse  },
-	{ &sk_ai_dmg_tesla, "sk_ai_dmg_tesla", "4", 0, 0, qfalse  },
-	{ &sk_ai_dmg_grenade, "sk_ai_dmg_grenade", "100", 0, 0, qfalse  },
-	{ &sk_ai_dmg_grenade_radius, "sk_ai_dmg_grenade_radius", "150", 0, 0, qfalse  },
-	{ &sk_ai_dmg_pineapple, "sk_ai_dmg_pineapple", "80", 0, 0, qfalse  },
-	{ &sk_ai_dmg_pineapple_radius, "sk_ai_dmg_pineapple_radius", "300", 0, 0, qfalse  },
-	{ &sk_ai_dmg_dynamite, "sk_ai_dmg_dynamite", "400", 0, 0, qfalse  },
-	{ &sk_ai_dmg_dynamite_radius, "sk_ai_dmg_dynamite_radius", "400", 0, 0, qfalse  },
+	{ &sk_ai_dmg_knife, "sk_ai_dmg_knife", "5", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_luger, "sk_ai_dmg_luger", "6", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_colt, "sk_ai_dmg_colt", "8", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_mp40, "sk_ai_dmg_mp40", "6", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_thompson, "sk_ai_dmg_thompson", "8", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_sten, "sk_ai_dmg_sten", "8", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_mauser, "sk_ai_dmg_mauser", "20", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_sniperrifle, "sk_ai_dmg_sniperrifle", "50", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_garand, "sk_ai_dmg_garand", "20", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_snooperscope, "sk_ai_dmg_snooperscope", "25", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_fg42, "sk_ai_dmg_fg42", "15", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_fg42scope, "sk_ai_dmg_fg42scope", "15", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_panzerfaust, "sk_ai_dmg_panzerfaust", "100", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_panzerfaust_splash, "sk_ai_dmg_panzerfaust_splash", "120", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_venom, "sk_ai_dmg_venom", "10", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_flamethrower, "sk_ai_dmg_flamethrower", "1", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_tesla, "sk_ai_dmg_tesla", "4", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_grenade, "sk_ai_dmg_grenade", "100", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_grenade_radius, "sk_ai_dmg_grenade_radius", "150", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_pineapple, "sk_ai_dmg_pineapple", "80", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_pineapple_radius, "sk_ai_dmg_pineapple_radius", "300", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_dynamite, "sk_ai_dmg_dynamite", "400", CVAR_CHEAT, 0, qfalse  },
+	{ &sk_ai_dmg_dynamite_radius, "sk_ai_dmg_dynamite_radius", "400", CVAR_CHEAT, 0, qfalse  },
 	// end Knightmare
 
 	{ &g_reloading, "g_reloading", "0", CVAR_ROM },   //----(SA)	added
@@ -634,12 +634,25 @@ void G_CheckForCursorHints( gentity_t *ent ) {
 
 	if (traceEnt->classname && Q_stricmp(traceEnt->classname, "trigger_hurt") == 0) {
 		// ignore trigger_hurt so it's possible to pickup chalice (-1472 -3472 284) at the end of map crypt2
-		trap_Trace(tr, tr->endpos, NULL, NULL, end, tr->entityNum, trace_contents);
+		vec3_t remainEnd;
+		float maxDist = zooming ? CH_MAX_DIST_ZOOM : CH_MAX_DIST;
+		float remainDist = maxDist * (1.0f - tr->fraction);
 
-		// muzzle and trigger_hurt are in player bbox?
-		if (tr->entityNum == ps->clientNum) {
+		if (remainDist < 1.0f) {
 			tr->entityNum = ENTITYNUM_NONE;
 			tr->fraction = 1;
+		} else {
+			if (remainDist > 32.0f) {
+				remainDist = 32.0f;
+			}
+			VectorMA(tr->endpos, remainDist, forward, remainEnd);
+			trap_Trace(tr, tr->endpos, NULL, NULL, remainEnd, tr->entityNum, trace_contents);
+
+			// muzzle and trigger_hurt are in player bbox?
+			if (tr->entityNum == ps->clientNum) {
+				tr->entityNum = ENTITYNUM_NONE;
+				tr->fraction = 1;
+			}
 		}
 	}
 

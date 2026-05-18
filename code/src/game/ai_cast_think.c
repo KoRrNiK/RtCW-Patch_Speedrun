@@ -1122,6 +1122,12 @@ void AICast_PredictMovement( cast_state_t *cs, int numframes, float frametime, a
 
 	move->stopevent = PREDICTSTOP_NONE;
 
+	memset( &pm, 0, sizeof( pm ) );
+	pm.ps = &ps;
+	pm.tracemask = g_entities[cs->entityNum].clipmask;
+	pm.trace = trap_TraceCapsule; //trap_Trace;
+	pm.pointcontents = trap_PointContents;
+
 	if ( checkHitEnt >= 0 && !Q_stricmp( g_entities[checkHitEnt].classname, "ai_marker" ) ) {
 		checkReachMarker = qtrue;
 		VectorSubtract( g_entities[checkHitEnt].r.currentOrigin, ps.origin, startHitVec );
@@ -1180,7 +1186,7 @@ void AICast_PredictMovement( cast_state_t *cs, int numframes, float frametime, a
 				if ( pm.touchents[i] == checkHitEnt ) {
 					move->stopevent = PREDICTSTOP_HITENT;
 					goto done;
-				} else if ( pm.touchents[i] < MAX_CLIENTS ||
+				} else if ( pm.touchents[i] < aicast_maxclients ||
 							( pm.touchents[i] != ENTITYNUM_WORLD && ( g_entities[pm.touchents[i]].s.eType != ET_MOVER || g_entities[pm.touchents[i]].moverState != MOVER_POS1 ) ) ) {
 					// we have hit another entity, so abort
 					move->stopevent = PREDICTSTOP_HITCLIENT;
@@ -1210,10 +1216,10 @@ done:
 
 	// hack, if we are above ground, chances are it's because we only did one frame, and gravity isn't applied until
 	// after the frame, so try and drop us down some
-	if ( move->groundEntityNum == ENTITYNUM_NONE ) {
-		VectorCopy( move->endpos, end );
+	if ( pm.ps->groundEntityNum == ENTITYNUM_NONE ) {
+		VectorCopy( pm.ps->origin, end );
 		end[2] -= 32;
-		trap_Trace( &tr, move->endpos, pm.mins, pm.maxs, end, pm.ps->clientNum, pm.tracemask );
+		trap_Trace( &tr, pm.ps->origin, pm.mins, pm.maxs, end, pm.ps->clientNum, pm.tracemask );
 		if ( !tr.startsolid && !tr.allsolid && tr.fraction < 1 ) {
 			VectorCopy( tr.endpos, pm.ps->origin );
 			pm.ps->groundEntityNum = tr.entityNum;
@@ -1244,7 +1250,7 @@ qboolean AICast_GetAvoid( cast_state_t *cs, bot_goal_t *goal, vec3_t outpos, qbo
 	usercmd_t ucmd;
 	qboolean enemyVisible;
 	float angleDiff;
-	int starttraveltime = 0, besttraveltime, traveltime;         // TTimo: init
+	int starttraveltime = 0, traveltime;
 	int invert;
 	float inc;
 	qboolean averting = qfalse;
@@ -1273,7 +1279,6 @@ qboolean AICast_GetAvoid( cast_state_t *cs, bot_goal_t *goal, vec3_t outpos, qbo
 	// look for a good direction to move out of the way
 	bestmoved = 0;
 	bestyaw = 360;
-	besttraveltime = 9999999;
 	if ( goal ) {
 		starttraveltime = trap_AAS_AreaTravelTimeToGoalArea( cs->bs->areanum, cs->bs->origin, goal->areanum, cs->travelflags );
 	}
@@ -1304,7 +1309,7 @@ qboolean AICast_GetAvoid( cast_state_t *cs, bot_goal_t *goal, vec3_t outpos, qbo
 		angleDiff = 140;
 		inc = 35;
 	}
-	if ( blockEnt > aicast_maxclients ) {
+	if ( blockEnt >= aicast_maxclients ) {
 		maxYaw = angleDiff;
 		simTime = 0.5;
 	}
@@ -1336,7 +1341,6 @@ qboolean AICast_GetAvoid( cast_state_t *cs, bot_goal_t *goal, vec3_t outpos, qbo
 				if ( !goal || ( traveltime = trap_AAS_AreaTravelTimeToGoalArea( BotPointAreaNum( castmove.endpos ), castmove.endpos, goal->areanum, cs->travelflags ) ) < ( starttraveltime + 200 ) ) {
 					bestyaw = yaw;
 					bestmoved = distmoved;
-					besttraveltime = traveltime;
 					VectorCopy( castmove.endpos, bestpos );
 				}
 			}
@@ -1407,7 +1411,7 @@ void AICast_Blocked( cast_state_t *cs, bot_moveresult_t *moveresult, int activat
 			// try and get them to move, in case we can't get around them
 			blockEnt = -1;
 			for ( i = 0; i < move.numtouch; i++ ) {
-				if ( move.touchents[i] >= MAX_CLIENTS ) {
+				if ( move.touchents[i] >= aicast_maxclients ) {
 					if ( !Q_stricmp( g_entities[move.touchents[i]].classname, "script_mover" ) ) {
 						// avoid script_mover's
 						blockEnt = move.touchents[i];
@@ -1421,6 +1425,10 @@ void AICast_Blocked( cast_state_t *cs, bot_moveresult_t *moveresult, int activat
 				}
 				//
 				ocs = AICast_GetCastState( move.touchents[i] );
+				if ( !ocs ) {
+					blockEnt = move.touchents[i];
+					continue;
+				}
 				if ( !ocs->bs ) {
 					blockEnt = move.touchents[i];
 				}
@@ -1500,7 +1508,7 @@ void AICast_Blocked( cast_state_t *cs, bot_moveresult_t *moveresult, int activat
 			VectorSubtract( pos, cs->bs->cur_ps.origin, dir );
 			VectorNormalize( dir );
 			cs->blockedAvoidYaw = vectoyaw( dir );
-			if ( blockEnt >= MAX_CLIENTS ) {
+			if ( blockEnt >= aicast_maxclients ) {
 				cs->blockedAvoidTime = level.time + 100 + rand() % 200;
 			} else {
 				cs->blockedAvoidTime = level.time + 300 + rand() % 400;
@@ -1644,12 +1652,37 @@ AICast_QueryThink
 */
 void AICast_QueryThink( cast_state_t *cs ) {
 	gentity_t *ent;
+	gentity_t *enemyEnt;
 	qboolean visible;
 	cast_state_t *ocs;
 	vec3_t vec;
 
+	if ( !cs || !cs->bs ) {
+		return;
+	}
+
+	if ( cs->entityNum < 0 || cs->entityNum >= aicast_maxclients ) {
+		return;
+	}
+
 	ent = &g_entities[cs->entityNum];
+	if ( !ent->inuse || !ent->client ) {
+		return;
+	}
+
+	if ( cs->enemyNum < 0 || cs->enemyNum >= aicast_maxclients ) {
+		cs->enemyNum = -1;
+		AICast_StateChange( cs, AISTATE_RELAXED );
+		return;
+	}
+
+	enemyEnt = &g_entities[cs->enemyNum];
 	ocs = AICast_GetCastState( cs->enemyNum );
+	if ( !ocs || !enemyEnt->inuse || !enemyEnt->client || enemyEnt->health <= 0 ) {
+		cs->enemyNum = -1;
+		AICast_StateChange( cs, AISTATE_RELAXED );
+		return;
+	}
 
 	// never crouch while in this state (by choice anyway)
 	cs->attackcrouch_time = 0;
@@ -1660,7 +1693,7 @@ void AICast_QueryThink( cast_state_t *cs ) {
 	vectoangles( vec, cs->ideal_viewangles );
 
 	// are they visible now?
-	visible = AICast_VisibleFromPos( cs->bs->origin, cs->entityNum, g_entities[cs->enemyNum].r.currentOrigin, cs->enemyNum, qfalse );
+	visible = AICast_VisibleFromPos( cs->bs->origin, cs->entityNum, enemyEnt->r.currentOrigin, cs->enemyNum, qfalse );
 
 	// make sure we dont process the sighting of this enemy by going into query mode again, without them being visible again after we leave here
 	cs->vislist[cs->enemyNum].flags &= ~AIVIS_PROCESS_SIGHTING;

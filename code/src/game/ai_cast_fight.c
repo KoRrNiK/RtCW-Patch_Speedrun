@@ -396,7 +396,7 @@ qboolean AICast_EntityVisible( cast_state_t *cs, int enemynum, qboolean directvi
 	int reactionTime;
 	float dist;
 
-	if ( enemynum >= MAX_CLIENTS ) {
+	if ( !cs || enemynum < 0 || enemynum >= aicast_maxclients ) {
 		return qtrue;           // FIXME: do a visibility calculation on non-client entities?
 
 	}
@@ -503,6 +503,10 @@ AICast_SameTeam
 ==================
 */
 qboolean AICast_SameTeam( cast_state_t *cs, int enemynum ) {
+
+	if ( !cs || cs->entityNum < 0 || cs->entityNum >= aicast_maxclients || enemynum < 0 || enemynum >= aicast_maxclients ) {
+		return qfalse;
+	}
 
 	if ( g_entities[cs->entityNum].aiTeam != g_entities[enemynum].aiTeam ) {
 		if ( g_entities[cs->entityNum].aiTeam == AITEAM_NEUTRAL || g_entities[enemynum].aiTeam == AITEAM_NEUTRAL ) {
@@ -628,7 +632,7 @@ qboolean AICast_CheckAttack_real( cast_state_t *cs, int enemy, qboolean allowHit
 	int passEnt;
 	int weapnum;
 	//
-	if ( enemy < 0 ) {
+	if ( !cs || enemy < 0 || enemy >= aicast_maxclients ) {
 		return qfalse;
 	}
 	ent = &g_entities[cs->entityNum];
@@ -805,7 +809,7 @@ qboolean AICast_CheckAttack_real( cast_state_t *cs, int enemy, qboolean allowHit
 			}
 
 			//if the entity is a client
-			if ( trace.entityNum >= 0 && trace.entityNum < MAX_CLIENTS ) {
+			if ( trace.entityNum >= 0 && trace.entityNum < aicast_maxclients ) {
 				//if a teammate is hit
 				if ( AICast_SameTeam( cs, trace.entityNum ) ) {
 					return qfalse;
@@ -839,6 +843,9 @@ qboolean AICast_CheckAttackAtPos( int entnum, int enemy, vec3_t pos, qboolean du
 	cast_state_t *cs;
 
 	cs = AICast_GetCastState( entnum );
+	if ( !cs || !cs->bs || enemy < 0 || enemy >= aicast_maxclients ) {
+		return qfalse;
+	}
 	ent = &g_entities[cs->bs->entitynum];
 
 	VectorCopy( ent->r.currentOrigin, savepos );
@@ -871,6 +878,10 @@ AICast_CheckAttack
 ==================
 */
 qboolean AICast_CheckAttack( cast_state_t *cs, int enemy, qboolean allowHitWorld ) {
+	if ( !cs || enemy < 0 || enemy >= aicast_maxclients ) {
+		return qfalse;
+	}
+
 	if ( cs->bs ) {
 		if (    ( cs->checkAttackCache.time == level.time )
 				&&  ( cs->checkAttackCache.enemy == enemy )
@@ -899,8 +910,8 @@ void AICast_UpdateBattleInventory( cast_state_t *cs, int enemy ) {
 	vec3_t dir;
 	int i;
 
-	if ( enemy >= 0 ) {
-		VectorSubtract( cs->vislist[cs->enemyNum].visible_pos, cs->bs->origin, dir );
+	if ( enemy >= 0 && enemy < aicast_maxclients ) {
+		VectorSubtract( cs->vislist[enemy].visible_pos, cs->bs->origin, dir );
 		cs->enemyHeight = (int) dir[2];
 		cs->enemyDist = (int) VectorLength( dir );
 	}
@@ -1543,6 +1554,10 @@ qboolean AICast_AimAtEnemy( cast_state_t *cs ) {
 	cast_visibility_t *vis;
 
 	//
+	if ( !cs || !cs->bs ) {
+		return qfalse;
+	}
+	//
 	if ( cs->castScriptStatus.scriptNoAttackTime >= ( level.time + 500 ) ) {
 		return qfalse;
 	}
@@ -1554,7 +1569,7 @@ qboolean AICast_AimAtEnemy( cast_state_t *cs ) {
 	bs = cs->bs;
 	//
 	//if the bot has no enemy
-	if ( cs->enemyNum < 0 ) {
+	if ( cs->enemyNum < 0 || cs->enemyNum >= aicast_maxclients || !g_entities[cs->enemyNum].inuse || !g_entities[cs->enemyNum].client ) {
 		return qfalse;
 	}
 	//
@@ -1586,7 +1601,11 @@ qboolean AICast_AimAtEnemy( cast_state_t *cs ) {
 		// then predict where they are going to be
 		if ( cs->weaponNum == WP_GRENADE_LAUNCHER || cs->weaponNum == WP_GRENADE_PINEAPPLE ) {
 			aicast_predictmove_t move;
-			AICast_PredictMovement( AICast_GetCastState( cs->enemyNum ), 1, 1.0, &move, &g_entities[cs->enemyNum].client->pers.cmd, -1 );
+			cast_state_t *enemyCs = AICast_GetCastState( cs->enemyNum );
+			if ( !enemyCs ) {
+				return qfalse;
+			}
+			AICast_PredictMovement( enemyCs, 1, 1.0, &move, &g_entities[cs->enemyNum].client->pers.cmd, -1 );
 			VectorCopy( move.endpos, bestorigin );
 		} else {    // they are visible, use actual position
 			VectorCopy( g_entities[cs->enemyNum].client->ps.origin, bestorigin );
@@ -2201,7 +2220,7 @@ void AICast_CheckDangerousEntity( gentity_t *ent, int dangerFlags, float dangerD
 		if ( cs->castScriptStatus.scriptNoSightTime >= level.time ) {
 			continue;       // absolutely no sight (or hear) information allowed
 		}
-		if ( !hurtFriendly && ent->s.number < MAX_CLIENTS && AICast_SameTeam( cs, ent->s.number ) ) {
+		if ( !hurtFriendly && ent->s.number < aicast_maxclients && AICast_SameTeam( cs, ent->s.number ) ) {
 			continue;   // trust that friends will not hurt us
 		}
 		if ( ( dangerFlags & DANGER_FLAMES ) && ( cs->aiFlags & AIFL_NO_FLAME_DAMAGE ) ) {
@@ -2258,7 +2277,14 @@ void AICast_CheckDangerousEntity( gentity_t *ent, int dangerFlags, float dangerD
 
 
 qboolean AICast_HasFiredWeapon( int entNum, int weapon ) {
-	if ( AICast_GetCastState( entNum )->weaponFireTimes[weapon] ) {
+	cast_state_t *cs;
+
+	if ( weapon < 0 || weapon >= MAX_WEAPONS ) {
+		return qfalse;
+	}
+
+	cs = AICast_GetCastState( entNum );
+	if ( cs && cs->weaponFireTimes[weapon] ) {
 		return qtrue;
 	}
 
@@ -2266,13 +2292,16 @@ qboolean AICast_HasFiredWeapon( int entNum, int weapon ) {
 }
 
 qboolean AICast_AllowFlameDamage( int entNum ) {
+	cast_state_t *cs;
+
 	// DHM - Nerve :: caststates are not initialized in multiplayer
 	if ( g_gametype.integer != GT_SINGLE_PLAYER ) {
 		return qtrue;
 	}
 	// dhm
 
-	if ( caststates[entNum].aiFlags & AIFL_NO_FLAME_DAMAGE ) {
+	cs = AICast_GetCastState( entNum );
+	if ( cs && ( cs->aiFlags & AIFL_NO_FLAME_DAMAGE ) ) {
 		return qfalse;
 	}
 	return qtrue;
