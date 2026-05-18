@@ -42,9 +42,120 @@ menuDef_t *menuScoreboard = NULL;
 int sortedTeamPlayers[TEAM_MAXOVERLAY];
 int numSortedTeamPlayers;
 
+static void CG_drawVelocity( void );
+static void CG_DrawSpeedrunIntegrity( void );
+
 char systemChat[256];
 char teamChat1[256];
 char teamChat2[256];
+
+#define CG_SPEEDRUN_CVAR_MAX 96
+#define CG_SPEEDRUN_NOTICE_TIME 4200
+#define CG_SPEEDRUN_CVAR_VALUE_MAX 64
+
+typedef struct {
+	const char *name;
+	const char *defaultValue;
+} cgSpeedrunCvarCheck_t;
+
+typedef struct {
+	qboolean initialized;
+	qboolean detected[CG_SPEEDRUN_CVAR_MAX];
+	char lastValues[CG_SPEEDRUN_CVAR_MAX][CG_SPEEDRUN_CVAR_VALUE_MAX];
+	qboolean finishActive;
+	qboolean endHeinrichDead;
+	int modifiedCount;
+	int lastModifiedCount;
+	int lastSvCheats;
+	int noticeStartTime;
+	int noticeDuration;
+	qboolean noticeIsFinish;
+	char noticeTitle[64];
+	char noticeDetail[128];
+	vec4_t noticeColor;
+} cgSpeedrunIntegrity_t;
+
+static const cgSpeedrunCvarCheck_t cg_speedrunCvarChecks[] = {
+	{ "g_speed",                       "320" },
+	{ "g_gravity",                     "800" },
+	{ "timescale",                     "1" },
+	{ "g_knockback",                   "1000" },
+
+	{ "sk_rot_health",                 "0" },
+	{ "sk_rot_armor",                  "0" },
+	{ "sk_brandy_ignore_max_health",   "0" },
+	{ "sk_max_mega_health",            "200" },
+	{ "sk_max_armor",                  "100" },
+	{ "sk_max_9mm",                    "300" },
+	{ "sk_max_45cal",                  "300" },
+	{ "sk_max_792mm",                  "200" },
+	{ "sk_max_30cal",                  "20" },
+	{ "sk_max_127mm",                  "1000" },
+	{ "sk_max_pf_rockets",             "5" },
+	{ "sk_max_fuel",                   "150" },
+	{ "sk_max_cells",                  "300" },
+	{ "sk_max_grenades",               "15" },
+	{ "sk_max_pineapples",             "15" },
+	{ "sk_max_dynamite",               "10" },
+
+	{ "sk_plr_dmg_knife",              "5" },
+	{ "sk_plr_dmg_kick",               "15" },
+	{ "sk_plr_dmg_luger",              "6" },
+	{ "sk_plr_dmg_colt",               "8" },
+	{ "sk_plr_dmg_mp40",               "6" },
+	{ "sk_plr_dmg_thompson",           "8" },
+	{ "sk_plr_dmg_sten",               "10" },
+	{ "sk_plr_dmg_mauser",             "20" },
+	{ "sk_plr_dmg_sniperrifle",        "55" },
+	{ "sk_plr_dmg_garand",             "25" },
+	{ "sk_plr_dmg_snooperscope",       "25" },
+	{ "sk_plr_dmg_fg42",               "20" },
+	{ "sk_plr_dmg_fg42scope",          "35" },
+	{ "sk_plr_dmg_panzerfaust",        "200" },
+	{ "sk_plr_dmg_panzerfaust_splash", "200" },
+	{ "sk_plr_dmg_venom",              "12" },
+	{ "sk_plr_dmg_flamethrower",       "2" },
+	{ "sk_plr_dmg_tesla",              "8" },
+	{ "sk_plr_dmg_grenade",            "200" },
+	{ "sk_plr_dmg_grenade_radius",     "150" },
+	{ "sk_plr_dmg_pineapple",          "160" },
+	{ "sk_plr_dmg_pineapple_radius",   "300" },
+	{ "sk_plr_dmg_dynamite",           "800" },
+	{ "sk_plr_dmg_dynamite_radius",    "400" },
+
+	{ "sk_ai_dmg_knife",               "5" },
+	{ "sk_ai_dmg_luger",               "6" },
+	{ "sk_ai_dmg_colt",                "8" },
+	{ "sk_ai_dmg_mp40",                "6" },
+	{ "sk_ai_dmg_thompson",            "8" },
+	{ "sk_ai_dmg_sten",                "8" },
+	{ "sk_ai_dmg_mauser",              "20" },
+	{ "sk_ai_dmg_sniperrifle",         "50" },
+	{ "sk_ai_dmg_garand",              "20" },
+	{ "sk_ai_dmg_snooperscope",        "25" },
+	{ "sk_ai_dmg_fg42",                "15" },
+	{ "sk_ai_dmg_fg42scope",           "15" },
+	{ "sk_ai_dmg_panzerfaust",         "100" },
+	{ "sk_ai_dmg_panzerfaust_splash",  "120" },
+	{ "sk_ai_dmg_venom",               "10" },
+	{ "sk_ai_dmg_flamethrower",        "1" },
+	{ "sk_ai_dmg_tesla",               "4" },
+	{ "sk_ai_dmg_grenade",             "100" },
+	{ "sk_ai_dmg_grenade_radius",      "150" },
+	{ "sk_ai_dmg_pineapple",           "80" },
+	{ "sk_ai_dmg_pineapple_radius",    "300" },
+	{ "sk_ai_dmg_dynamite",            "400" },
+	{ "sk_ai_dmg_dynamite_radius",     "400" },
+
+	{ "sk_dropped_weapon_min_ammo",     "0.25" },
+	{ "g_debugDamage",                 "0" },
+	{ "g_debugBullets",                "0" },
+	{ "g_debugAlloc",                  "0" },
+
+	{ NULL, NULL }
+};
+
+static cgSpeedrunIntegrity_t cg_speedrunIntegrity;
 
 ////////////////////////
 ////////////////////////
@@ -3369,6 +3480,380 @@ static void CG_ScreenFade( void ) {
 CG_Draw2D
 =================
 */
+static qboolean CG_SpeedrunCvarDiffers( const char *value, const char *defaultValue ) {
+	float defaultFloat;
+	float valueFloat;
+	float diff;
+
+	if ( !value || !value[0] ) {
+		return qfalse;
+	}
+
+	defaultFloat = atof( defaultValue );
+	valueFloat = atof( value );
+
+	if ( defaultFloat == 0.0f && valueFloat == 0.0f ) {
+		return (qboolean)( Q_stricmp( value, defaultValue ) &&
+			Q_stricmp( value, "0" ) &&
+			Q_stricmp( value, "0.0" ) );
+	}
+
+	diff = valueFloat - defaultFloat;
+	if ( diff < 0.0f ) {
+		diff = -diff;
+	}
+
+	return (qboolean)( diff > 0.001f );
+}
+
+static int CG_SpeedrunGetCheats( void ) {
+	char value[16];
+
+	trap_Cvar_VariableStringBuffer( "sv_cheats", value, sizeof( value ) );
+	return atoi( value );
+}
+
+static void CG_SpeedrunNotice( const char *title, const char *detail, float r, float g, float b, int duration ) {
+	Q_strncpyz( cg_speedrunIntegrity.noticeTitle, title, sizeof( cg_speedrunIntegrity.noticeTitle ) );
+	Q_strncpyz( cg_speedrunIntegrity.noticeDetail, detail, sizeof( cg_speedrunIntegrity.noticeDetail ) );
+	cg_speedrunIntegrity.noticeColor[0] = r;
+	cg_speedrunIntegrity.noticeColor[1] = g;
+	cg_speedrunIntegrity.noticeColor[2] = b;
+	cg_speedrunIntegrity.noticeColor[3] = 1.0f;
+	cg_speedrunIntegrity.noticeStartTime = cg.time;
+	cg_speedrunIntegrity.noticeDuration = duration;
+	cg_speedrunIntegrity.noticeIsFinish = qfalse;
+}
+
+static qboolean CG_SpeedrunAppendListItem( char *buffer, int bufferSize, const char *item ) {
+	int len;
+	int itemLen;
+	const char *prefix;
+
+	len = strlen( buffer );
+	prefix = len ? ", " : "";
+	itemLen = strlen( prefix ) + strlen( item );
+
+	if ( len + itemLen >= bufferSize ) {
+		if ( len + 5 < bufferSize ) {
+			Q_strcat( buffer, bufferSize, ", ..." );
+		}
+		return qfalse;
+	}
+
+	Q_strcat( buffer, bufferSize, prefix );
+	Q_strcat( buffer, bufferSize, item );
+	return qtrue;
+}
+
+static void CG_SpeedrunBuildModifiedList( char *buffer, int bufferSize, int svCheats ) {
+	const cgSpeedrunCvarCheck_t *check;
+	char value[128];
+
+	buffer[0] = '\0';
+
+	if ( svCheats && !CG_SpeedrunAppendListItem( buffer, bufferSize, "sv_cheats" ) ) {
+		return;
+	}
+
+	for ( check = cg_speedrunCvarChecks; check->name; check++ ) {
+		trap_Cvar_VariableStringBuffer( check->name, value, sizeof( value ) );
+		if ( CG_SpeedrunCvarDiffers( value, check->defaultValue ) &&
+			!CG_SpeedrunAppendListItem( buffer, bufferSize, check->name ) ) {
+			return;
+		}
+	}
+
+	if ( !buffer[0] ) {
+		Q_strncpyz( buffer, "none", bufferSize );
+	}
+}
+
+static qboolean CG_SpeedrunIsEndHeinrichScene( void ) {
+	int i;
+
+	if ( Q_stricmp( cgs.mapname, "maps/end.bsp" ) ) {
+		cg_speedrunIntegrity.endHeinrichDead = qfalse;
+		return qfalse;
+	}
+
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		centity_t *cent = &cg_entities[i];
+
+		if ( !cent->currentValid ) {
+			continue;
+		}
+		if ( cent->currentState.aiChar != AICHAR_HEINRICH ) {
+			continue;
+		}
+		if ( cent->currentState.eFlags & EF_DEAD ) {
+			cg_speedrunIntegrity.endHeinrichDead = qtrue;
+		}
+	}
+
+	return (qboolean)( cg.cameraMode && cg_speedrunIntegrity.endHeinrichDead );
+}
+
+static void CG_SpeedrunUpdateIntegrity( void ) {
+	const cgSpeedrunCvarCheck_t *check;
+	char value[128];
+	char changeDetail[128];
+	int idx;
+	int newCount;
+	int changedValues;
+	int oldModifiedCount;
+	int svCheats;
+	qboolean finishNow;
+	qboolean wasInitialized;
+
+	newCount = 0;
+	changedValues = 0;
+	changeDetail[0] = '\0';
+	wasInitialized = cg_speedrunIntegrity.initialized;
+	oldModifiedCount = wasInitialized ? cg_speedrunIntegrity.lastModifiedCount : 0;
+
+	for ( idx = 0, check = cg_speedrunCvarChecks; check->name; idx++, check++ ) {
+		qboolean differs;
+		qboolean valueChanged;
+		char previousValue[CG_SPEEDRUN_CVAR_VALUE_MAX];
+
+		trap_Cvar_VariableStringBuffer( check->name, value, sizeof( value ) );
+		if ( idx < CG_SPEEDRUN_CVAR_MAX && cg_speedrunIntegrity.lastValues[idx][0] ) {
+			Q_strncpyz( previousValue, cg_speedrunIntegrity.lastValues[idx], sizeof( previousValue ) );
+		} else {
+			Q_strncpyz( previousValue, check->defaultValue, sizeof( previousValue ) );
+		}
+		valueChanged = (qboolean)( Q_stricmp( previousValue, value ) != 0 );
+
+		differs = CG_SpeedrunCvarDiffers( value, check->defaultValue );
+		if ( differs ) {
+			newCount++;
+			if ( idx < CG_SPEEDRUN_CVAR_MAX &&
+				( !cg_speedrunIntegrity.detected[idx] || ( wasInitialized && valueChanged ) ) ) {
+				cg_speedrunIntegrity.detected[idx] = qtrue;
+				if ( !changeDetail[0] ) {
+					Com_sprintf( changeDetail, sizeof( changeDetail ), "%s: %s -> %s",
+						check->name, previousValue, value );
+				}
+				changedValues++;
+				CG_Printf( "^1Speedrun CVAR changed:^7 %s: %s -> %s ^1(default: ^2%s^1)\n",
+					check->name, previousValue, value, check->defaultValue );
+			}
+		} else if ( idx < CG_SPEEDRUN_CVAR_MAX ) {
+			if ( cg_speedrunIntegrity.detected[idx] && wasInitialized && valueChanged ) {
+				if ( !changeDetail[0] ) {
+					Com_sprintf( changeDetail, sizeof( changeDetail ), "%s: %s -> %s",
+						check->name, previousValue, value );
+				}
+				changedValues++;
+				CG_Printf( "^2Speedrun CVAR restored:^7 %s: %s -> %s\n",
+					check->name, previousValue, value );
+			}
+			cg_speedrunIntegrity.detected[idx] = qfalse;
+		}
+
+		if ( idx < CG_SPEEDRUN_CVAR_MAX ) {
+			Q_strncpyz( cg_speedrunIntegrity.lastValues[idx], value, sizeof( cg_speedrunIntegrity.lastValues[idx] ) );
+		}
+	}
+
+	if ( !cg_speedrunIntegrity.initialized ) {
+		cg_speedrunIntegrity.initialized = qtrue;
+	}
+
+	cg_speedrunIntegrity.modifiedCount = newCount;
+
+	if ( changedValues > 0 ) {
+		char detail[128];
+		char title[64];
+
+		if ( changedValues > 1 ) {
+			Com_sprintf( detail, sizeof( detail ), "%s (+%d more)", changeDetail, changedValues - 1 );
+		} else {
+			Q_strncpyz( detail, changeDetail, sizeof( detail ) );
+		}
+		if ( newCount > 0 ) {
+			Com_sprintf( title, sizeof( title ), "CVARS CHANGED (%d)", newCount );
+			CG_SpeedrunNotice( title, detail, 1.0f, 0.78f, 0.20f, CG_SPEEDRUN_NOTICE_TIME );
+		} else {
+			CG_SpeedrunNotice( "CVAR SETTINGS RESTORED", detail, 0.35f, 0.95f, 0.45f, 3000 );
+		}
+	} else if ( oldModifiedCount > 0 && newCount == 0 ) {
+		char detail[128];
+
+		Com_sprintf( detail, sizeof( detail ), "Modified CVARs: %d -> 0", oldModifiedCount );
+		CG_SpeedrunNotice( "CVAR SETTINGS RESTORED", detail, 0.35f, 0.95f, 0.45f, 3000 );
+	}
+
+	cg_speedrunIntegrity.lastModifiedCount = newCount;
+
+	svCheats = CG_SpeedrunGetCheats();
+	if ( svCheats && ( !wasInitialized || !cg_speedrunIntegrity.lastSvCheats ) ) {
+		CG_SpeedrunNotice( "SV_CHEATS ENABLED", "This state is visible and marks the run invalid.", 1.0f, 0.34f, 0.24f, 5200 );
+	} else if ( !svCheats && wasInitialized && cg_speedrunIntegrity.lastSvCheats ) {
+		CG_SpeedrunNotice( "SV_CHEATS DISABLED", "Cheats are off again.", 0.35f, 0.95f, 0.45f, 2800 );
+	}
+	cg_speedrunIntegrity.lastSvCheats = svCheats;
+
+	finishNow = (qboolean)( cg_reloading.integer == RELOAD_NEXTMAP_WAITING ||
+		cg_reloading.integer == RELOAD_ENDGAME ||
+		cg.snap->ps.pm_type == PM_INTERMISSION ||
+		CG_SpeedrunIsEndHeinrichScene() );
+
+	if ( finishNow && !cg_speedrunIntegrity.finishActive ) {
+		char detail[128];
+		char title[64];
+		int finishCount;
+
+		cg_speedrunIntegrity.finishActive = qtrue;
+		if ( svCheats || newCount > 0 ) {
+			finishCount = newCount + ( svCheats ? 1 : 0 );
+			Com_sprintf( title, sizeof( title ), "FINISH CHECK: NOT CLEAN (%d)", finishCount );
+			CG_SpeedrunBuildModifiedList( detail, sizeof( detail ), svCheats );
+			CG_SpeedrunNotice( title, detail, 1.0f, 0.34f, 0.24f, 6200 );
+			cg_speedrunIntegrity.noticeIsFinish = qtrue;
+		} else {
+			CG_SpeedrunNotice( "FINISH CHECK: CLEAN", "sv_cheats off and tracked CVARs at defaults.", 0.35f, 0.95f, 0.45f, 5200 );
+			cg_speedrunIntegrity.noticeIsFinish = qtrue;
+		}
+	} else if ( !finishNow ) {
+		if ( cg_speedrunIntegrity.finishActive && cg_speedrunIntegrity.noticeIsFinish ) {
+			cg_speedrunIntegrity.noticeStartTime = 0;
+			cg_speedrunIntegrity.noticeIsFinish = qfalse;
+		}
+		cg_speedrunIntegrity.finishActive = qfalse;
+	}
+}
+
+static void CG_DrawSpeedrunNotice( void ) {
+	int elapsed;
+	int duration;
+	float alpha;
+	float t;
+	float x;
+	float y;
+	float w;
+	vec4_t bg;
+	vec4_t border;
+	vec4_t shadow;
+	vec4_t titleColor;
+	vec4_t detailColor;
+	int titleLen;
+	int detailLen;
+
+	if ( !cg_speedrunIntegrity.noticeStartTime ) {
+		return;
+	}
+
+	duration = cg_speedrunIntegrity.noticeDuration;
+	elapsed = cg.time - cg_speedrunIntegrity.noticeStartTime;
+	if ( elapsed < 0 || elapsed > duration ) {
+		cg_speedrunIntegrity.noticeStartTime = 0;
+		return;
+	}
+
+	if ( elapsed < 220 ) {
+		t = (float)elapsed / 220.0f;
+		alpha = t * t;
+	} else if ( elapsed > duration - 600 ) {
+		t = (float)( elapsed - ( duration - 600 ) ) / 600.0f;
+		alpha = 1.0f - t * t;
+	} else {
+		alpha = 1.0f;
+	}
+
+	if ( alpha <= 0.0f ) {
+		return;
+	}
+
+	titleLen = strlen( cg_speedrunIntegrity.noticeTitle );
+	detailLen = strlen( cg_speedrunIntegrity.noticeDetail );
+	w = 36.0f + max( titleLen * 7.0f, detailLen * 5.0f );
+	if ( w < 236.0f ) {
+		w = 236.0f;
+	}
+	if ( w > 420.0f ) {
+		w = 420.0f;
+	}
+
+	x = 8.0f;
+	y = 410.0f + ( 1.0f - alpha ) * 10.0f;
+
+	bg[0] = 0.025f; bg[1] = 0.030f; bg[2] = 0.036f; bg[3] = 0.82f * alpha;
+	shadow[0] = 0.0f; shadow[1] = 0.0f; shadow[2] = 0.0f; shadow[3] = 0.32f * alpha;
+	border[0] = cg_speedrunIntegrity.noticeColor[0];
+	border[1] = cg_speedrunIntegrity.noticeColor[1];
+	border[2] = cg_speedrunIntegrity.noticeColor[2];
+	border[3] = 0.92f * alpha;
+	titleColor[0] = border[0]; titleColor[1] = border[1]; titleColor[2] = border[2]; titleColor[3] = alpha;
+	detailColor[0] = 0.88f; detailColor[1] = 0.90f; detailColor[2] = 0.88f; detailColor[3] = 0.94f * alpha;
+
+	CG_FillRect( x + 3, y + 4, w, 42, shadow, ALIGN_BOTTOMLEFT );
+	CG_FillRect( x, y, w, 42, bg, ALIGN_BOTTOMLEFT );
+	CG_FillRect( x, y, 3, 42, border, ALIGN_BOTTOMLEFT );
+	CG_FillRect( x + 3, y, w - 3, 1, border, ALIGN_BOTTOMLEFT );
+	CG_DrawStringExt( (int)( x + 12 ), (int)( y + 8 ), cg_speedrunIntegrity.noticeTitle,
+		titleColor, qtrue, qtrue, 7, 9, 0, ALIGN_BOTTOMLEFT );
+	CG_DrawStringExt( (int)( x + 12 ), (int)( y + 25 ), cg_speedrunIntegrity.noticeDetail,
+		detailColor, qtrue, qtrue, 5, 7, 0, ALIGN_BOTTOMLEFT );
+}
+
+static int CG_DrawSpeedrunTag( int x, int y, const char *text, const vec4_t color ) {
+	CG_DrawStringExt( x, y, text, color, qtrue, qtrue, 3, 5, 0, ALIGN_BOTTOMLEFT );
+	return x + CG_DrawStrlen( text ) * 3 + 4;
+}
+
+static const char *CG_DifficultyTag( int skill ) {
+	switch ( skill ) {
+	case 0:
+	case 1:
+		return "DHM";
+	case 2:
+		return "BEO";
+	case 3:
+		return "IADI";
+	default:
+		return va( "SKILL:%d", skill );
+	}
+}
+
+static void CG_DrawSpeedrunStatus( void ) {
+	int svCheats;
+	int x;
+	int y;
+	char text[32];
+	vec4_t skillColor = { 0.31f, 0.31f, 0.22f, 0.92f };
+	vec4_t cheatColor = { 1.0f, 0.34f, 0.28f, 0.92f };
+	vec4_t cvarColor = { 1.0f, 0.78f, 0.24f, 0.90f };
+
+	svCheats = CG_SpeedrunGetCheats();
+
+	x = 8;
+	y = 472;
+	Com_sprintf( text, sizeof( text ), "[%s]", CG_DifficultyTag( cg_gameSkill.integer ) );
+	x = CG_DrawSpeedrunTag( x, y, text, skillColor );
+
+	if ( svCheats ) {
+		x = CG_DrawSpeedrunTag( x, y, "[SV_CHEATS]", cheatColor );
+	}
+
+	if ( cg_speedrunIntegrity.modifiedCount > 0 ) {
+		Com_sprintf( text, sizeof( text ), "[CVARS:%d]", cg_speedrunIntegrity.modifiedCount );
+		CG_DrawSpeedrunTag( x, y, text, cvarColor );
+	}
+}
+
+static void CG_DrawSpeedrunIntegrity( void ) {
+	CG_SpeedrunUpdateIntegrity();
+	if ( cg.cameraMode ) {
+		cg_speedrunIntegrity.noticeStartTime = 0;
+		CG_DrawSpeedrunStatus();
+		return;
+	}
+	CG_DrawSpeedrunNotice();
+	CG_DrawSpeedrunStatus();
+}
+
 static void CG_Draw2D( void ) {
 
 	// if we are taking a levelshot for the menu, don't draw anything
@@ -3378,6 +3863,7 @@ static void CG_Draw2D( void ) {
 
 	if ( cg.cameraMode ) { //----(SA)	no 2d when in camera view
 		CG_DrawFlashBlend();    // (for fades)
+		CG_DrawSpeedrunIntegrity();
 		return;
 	}
 
@@ -3390,6 +3876,7 @@ static void CG_Draw2D( void ) {
 
 	if ( cg.snap->ps.pm_type == PM_INTERMISSION ) {
 		CG_DrawIntermission();
+		CG_DrawSpeedrunIntegrity();
 		return;
 	}
 
@@ -3446,6 +3933,7 @@ static void CG_Draw2D( void ) {
 
 	// Ridah, draw flash blends now
 	CG_DrawFlashBlend();
+	CG_DrawSpeedrunIntegrity();
 }
 
 /*
@@ -3651,78 +4139,78 @@ CG_Velocity
 ==================
 */
 // KoRrNiK - Added
-static float CG_drawVelocity() {
+static int CG_VelocityAlignedX( float anchor, int width ) {
+	if ( cg_velocity_align.integer <= 0 ) {
+		return (int)anchor;
+	}
+	if ( cg_velocity_align.integer >= 2 ) {
+		return (int)( anchor - (float)width );
+	}
+	return (int)( anchor - (float)width * 0.5f );
+}
 
-	char* s;
-	int		w;
-	int		x;
-	float	vel;
+static void CG_drawVelocity( void ) {
 
+	char    *s;
+	int     w;
+	int     x;
+	int     y;
+	int     font_w;
+	int     font_h;
+	float   scale;
+	float   vel;
+	vec4_t hcolor;
+	vec3_t  horizontalVelocity;
 
 	if (!(cg.snap->ps.pm_flags & PMF_LADDER)) {
-		vel = VectorLength(cg.snap->ps.velocity);
+		VectorSet( horizontalVelocity, cg.snap->ps.velocity[0], cg.snap->ps.velocity[1], 0 );
+		vel = VectorLength( horizontalVelocity );
 	}
 	else vel = 0;
 
 	s = va("%i", (int)vel);
 
-	w = CG_DrawStrlen(s) * BIGCHAR_WIDTH;
+	hcolor[0] = hcolor[1] = hcolor[2] = hcolor[3] = 1.0f;
 
-	w = CG_DrawStrlen(s);
-	x = (SCREEN_WIDTH - w) / 2;
-
-	if (!cg_velocity_size.integer || cg_velocity_size.integer == 1) {
-		if (vel > 1000) x -= 16;
-		else if (vel > 100) x -= 11;
-		else if (vel > 10) x -= 8;
-		else x -= 3;
-	}
-	else if (cg_velocity_size.integer == 2) {
-		if (vel > 1000) x -= 31;
-		else if (vel > 100) x -= 23;
-		else if (vel > 10) x -= 17;
-		else x -= 7;
-	}
-	else {
-		if (vel > 1000) x -= 54;
-		else if (vel > 100) x -= 43;
-		else if (vel > 10) x -= 35;
-		else x -= 15;
+	scale = cg_velocity_scale.value;
+	if ( scale < 0.25f ) {
+		scale = 0.25f;
+	} else if ( scale > 4.0f ) {
+		scale = 4.0f;
 	}
 
-	vec3_t hcolor;
+	font_w = (int)( (float)BIGCHAR_WIDTH * scale + 0.5f );
+	font_h = (int)( (float)BIGCHAR_HEIGHT * scale + 0.5f );
+	if ( font_w < 1 ) {
+		font_w = 1;
+	}
+	if ( font_h < 1 ) {
+		font_h = 1;
+	}
 
-	for (int i = 0; i < 4; i++) hcolor[i] = 1.0;
-
-	int font_w = !cg_velocity_size.integer ? TINYCHAR_WIDTH : cg_velocity_size.integer == 1 ? SMALLCHAR_WIDTH : cg_velocity_size.integer == 2 ? BIGCHAR_WIDTH : GIANTCHAR_WIDTH;
-	int font_h = !cg_velocity_size.integer ? TINYCHAR_HEIGHT : cg_velocity_size.integer == 1 ? SMALLCHAR_HEIGHT : cg_velocity_size.integer == 2 ? BIGCHAR_HEIGHT : GIANTCHAR_HEIGHT;
-
-	if (cg_velocity_type.value == 0) CG_DrawStringExt(x, cg_velocity_size.integer >= 3 ? (STATUSBARHEIGHT - 30) : (STATUSBARHEIGHT + 5), s, hcolor, qfalse, qtrue, font_w,font_h,TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_BOTTOM);
-	else CG_DrawStringExt(x, cg_velocity_size.integer >= 3 ? (STATUSBARHEIGHT / 2) + 40 : (STATUSBARHEIGHT / 2) + 30, s, hcolor, qfalse, qtrue, font_w,font_h, TEAM_OVERLAY_MAXLOCATION_WIDTH, ALIGN_CENTER);
-
-
-	/*
-	if (cg_velocity_size.integer == 1) {
-
-		if (vel > 1000) x -= 33;
-		else if (vel > 100) x -= 23;
-		else if (vel > 10) x -= 16;
-		else x -= 7;
-
-		if (cg_velocity_type.value == 0) CG_DrawBigString(x, STATUSBARHEIGHT + 5, s, 1.0F, ALIGN_BOTTOM);
-		else CG_DrawBigString(x, (STATUSBARHEIGHT / 2) + 30, s, 1.0F, ALIGN_CENTER);
-
+	w = CG_DrawStrlen( s ) * font_w;
+	if ( cg_velocity_x.integer == -1 && cg_velocity_y.integer == -1 ) {
+		x = CG_VelocityAlignedX( 320.0f, w );
+		if ( cg_velocity_type.integer == 0 ) {
+			y = STATUSBARHEIGHT + 5;
+		} else {
+			y = ( STATUSBARHEIGHT / 2 ) + 30;
+		}
 	} else {
+		if ( cg_velocity_x.integer < 0 ) {
+			x = CG_VelocityAlignedX( 320.0f, w );
+		} else {
+			x = CG_VelocityAlignedX( cg_velocity_x.value, w );
+		}
+		if ( cg_velocity_y.integer >= 0 ) {
+			y = cg_velocity_y.integer;
+		} else if ( cg_velocity_type.integer == 0 ) {
+			y = STATUSBARHEIGHT + 5;
+		} else {
+			y = ( STATUSBARHEIGHT / 2 ) + 30;
+		}
+	}
 
-		if (vel > 1000) x -= 16;
-		else if (vel > 100) x -= 11;
-		else if (vel > 10) x -= 8;
-		else x -= 3;
-
-		if (cg_velocity_type.value == 0) CG_DrawSmallString(x, STATUSBARHEIGHT + 5, s, 1.0F, ALIGN_BOTTOM);
-		else CG_DrawSmallString(x, (STATUSBARHEIGHT / 2) + 30, s, 1.0F, ALIGN_CENTER);
-
-	}*/
-	
-
+	CG_DrawStringExt( x, y, s, hcolor, qfalse, qtrue, font_w, font_h, 0,
+		cg_velocity_type.integer == 0 ? ALIGN_BOTTOM : ALIGN_CENTER );
 }

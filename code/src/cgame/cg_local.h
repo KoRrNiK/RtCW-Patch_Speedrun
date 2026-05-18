@@ -1636,6 +1636,10 @@ extern vmCvar_t cg_drawFPS;
 extern vmCvar_t cg_drawVelocity;
 extern vmCvar_t cg_velocity_type;
 extern vmCvar_t cg_velocity_size;
+extern vmCvar_t cg_velocity_scale;
+extern vmCvar_t cg_velocity_x;
+extern vmCvar_t cg_velocity_y;
+extern vmCvar_t cg_velocity_align;
 
 
 extern vmCvar_t cg_drawSnapshot;

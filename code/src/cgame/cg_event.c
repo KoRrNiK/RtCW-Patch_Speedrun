@@ -1535,7 +1535,10 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 			} else if ( cent->currentState.aiChar == AICHAR_HELGA ) {
 				CG_SoundPlayIndexedScript( cgs.media.footsteps[FOOTSTEP_BEAST][0], NULL, es->number );
 			} else {
-				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ ci->modelInfo->footsteps ][footstepcnt] );
+				int fsType = ( ci->modelInfo && ci->modelInfo->footsteps >= 0
+					&& ci->modelInfo->footsteps < FOOTSTEP_TOTAL )
+					? ci->modelInfo->footsteps : FOOTSTEP_NORMAL;
+				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ fsType ][footstepcnt] );
 			}
 		}
 		break;

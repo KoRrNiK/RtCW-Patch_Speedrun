@@ -2091,6 +2091,11 @@ CG_AddWeaponWithPowerups
 */
 static void CG_AddWeaponWithPowerups( refEntity_t *gun, int powerups, playerState_t *ps, centity_t *cent ) {
 
+	// Hide first-person weapon models, but keep the caller running so
+	// flamethrower and Tesla effects can still be emitted from tag_flash.
+	if ( ps && !cg_drawGun.integer ) {
+		return;
+	}
 
 	// add powerup effects
 	if ( powerups & ( 1 << PW_INVIS ) ) {
@@ -3030,17 +3035,11 @@ void CG_AddViewWeapon(playerState_t* ps) {
 	}
 
 	// allow the gun to be completely removed
+	// (but flamethrower/tesla still need CG_AddPlayerWeapon for effects)
 	if (!cg_drawGun.integer) {
-		/*
-				vec3_t		origin;
-				if ( cg.predictedPlayerState.eFlags & EF_FIRING ) {
-					// special hack for lightning gun...
-					VectorCopy( cg.refdef.vieworg, origin );
-					VectorMA( origin, -8, cg.refdef.viewaxis[2], origin );
-					CG_LightningBolt( &cg_entities[ps->clientNum], origin );
-				}
-		*/
-		return;
+		if (ps->weapon != WP_FLAMETHROWER && ps->weapon != WP_TESLA) {
+			return;
+		}
 	}
 
 	// don't draw if testing a gun model
@@ -3071,9 +3070,12 @@ void CG_AddViewWeapon(playerState_t* ps) {
 		fovOffset[0] = -0.2 * (cg.fov - 90) * cg.refdef.fov_x / cg.fov;
 	}
 
+	if (cg_drawGun.integer == 2) {
+		fovOffset[1] = -fovOffset[1];
+	}
 
 
-	
+
 
 	if (ps->weapon > WP_NONE) {
 		// DHM - Nerve :: handle WP_CLASS_SPECIAL for different classes
@@ -3112,6 +3114,10 @@ void CG_AddViewWeapon(playerState_t* ps) {
 		gunoff[1] = cg_gun_y.value;
 		gunoff[2] = cg_gun_z.value;
 
+		if (cg_drawGun.integer == 2) {
+			gunoff[1] = -gunoff[1];
+		}
+
 		//----(SA)	removed
 
 		VectorMA(hand.origin, (gunoff[0] + fovOffset[0]), cg.refdef.viewaxis[0], hand.origin);
@@ -3131,6 +3137,12 @@ void CG_AddViewWeapon(playerState_t* ps) {
 
 		hand.hModel = weapon->handsModel;
 		hand.renderfx = RF_DEPTHHACK | RF_FIRST_PERSON | RF_MINLIGHT;   //----(SA)
+
+		if (cg_drawGun.integer == 2) {
+			VectorNegate(hand.axis[1], hand.axis[1]);
+			hand.nonNormalizedAxes = qtrue;
+			hand.renderfx |= RF_LEFTHAND;
+		}
 
 		// add everything onto the hand
 		CG_AddPlayerWeapon(&hand, ps, &cg.predictedPlayerEntity);

@@ -1784,6 +1784,7 @@ void CG_SetLerpFrameAnimationRate( centity_t *cent, clientInfo_t *ci, lerpFrame_
 
 	if ( !lf->animation ) {
 		firstAnim = qtrue;
+		oldanim = NULL;
 	}
 
 	lf->animationNumber = newAnimation;
@@ -1811,7 +1812,7 @@ void CG_SetLerpFrameAnimationRate( centity_t *cent, clientInfo_t *ci, lerpFrame_
 			transitionMin = lf->frameTime + 170;    // always do some lerping (?)
 
 		}
-		if ( oldanim && oldanim->animBlend ) { //transitionMin < lf->frameTime + oldanim->animBlend) {
+		if ( !firstAnim && oldanim && oldanim->animBlend ) { //transitionMin < lf->frameTime + oldanim->animBlend) {
 			transitionMin = lf->frameTime + oldanim->animBlend;
 			lf->animationTime = transitionMin;
 		} else {
@@ -5389,6 +5390,10 @@ void CG_ResetPlayerEntity( centity_t *cent ) {
 	cent->extrapolated = qfalse;
 
 	if ( !( cent->currentState.eFlags & EF_DEAD ) ) {
+		/* Entity-slot reuse can leave lf->animation pointing at freed model data. */
+		cent->pe.legs.animation  = NULL;
+		cent->pe.torso.animation = NULL;
+
 		CG_ClearLerpFrameRate( &cgs.clientinfo[ cent->currentState.clientNum ], &cent->pe.legs, cent->currentState.legsAnim, cent );
 		CG_ClearLerpFrame( &cgs.clientinfo[ cent->currentState.clientNum ], &cent->pe.torso, cent->currentState.torsoAnim );
 

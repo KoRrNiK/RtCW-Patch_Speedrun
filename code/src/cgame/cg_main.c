@@ -121,6 +121,10 @@ vmCvar_t cg_drawFPS;
 vmCvar_t cg_drawVelocity;
 vmCvar_t cg_velocity_type;
 vmCvar_t cg_velocity_size;
+vmCvar_t cg_velocity_scale;
+vmCvar_t cg_velocity_x;
+vmCvar_t cg_velocity_y;
+vmCvar_t cg_velocity_align;
 
 vmCvar_t cg_drawSnapshot;
 vmCvar_t cg_draw3dIcons;
@@ -359,6 +363,10 @@ cvarTable_t cvarTable[] = {
 	{ &cg_drawVelocity, "cg_drawVelocity", "0", CVAR_ARCHIVE  },
 	{ &cg_velocity_type, "cg_velocity_type", "0", CVAR_ARCHIVE  },
 	{ &cg_velocity_size, "cg_velocity_size", "0", CVAR_ARCHIVE  },
+	{ &cg_velocity_scale, "cg_velocity_scale", "1", CVAR_ARCHIVE  },
+	{ &cg_velocity_x, "cg_velocity_x", "-1", CVAR_ARCHIVE  },
+	{ &cg_velocity_y, "cg_velocity_y", "-1", CVAR_ARCHIVE  },
+	{ &cg_velocity_align, "cg_velocity_align", "1", CVAR_ARCHIVE  },
 	
 	{ &cg_drawSnapshot, "cg_drawSnapshot", "0", CVAR_ARCHIVE  },
 	{ &cg_draw3dIcons, "cg_draw3dIcons", "1", CVAR_ARCHIVE  },
@@ -482,24 +490,24 @@ cvarTable_t cvarTable[] = {
 	{ &cg_gameSkill, "g_gameskill", "2", 0 }, // communicated by systeminfo	// (SA) new default '2' (was '1')
 
 	// Knightmare- game balancing cvars
-	{ &sk_rot_health, "sk_rot_health", "0", 0 },
+	{ &sk_rot_health, "sk_rot_health", "0", CVAR_CHEAT },
 //	{ &sk_rot_armor, "sk_rot_armor", "0", 0  },
 //	{ &sk_brandy_ignore_max_health, "sk_brandy_ignore_max_health", "0", 0 },
 //	{ &sk_dropped_weapon_min_ammo, "sk_dropped_weapon_min_ammo", "0.25", 0 },
 
-	{ &sk_max_mega_health, "sk_max_mega_health", "200", 0 },
-	{ &sk_max_armor, "sk_max_armor", "100", 0 },
-	{ &sk_max_9mm, "sk_max_9mm", "300", 0 },
-	{ &sk_max_45cal, "sk_max_45cal", "300", 0 },
-	{ &sk_max_792mm, "sk_max_792mm", "200", 0 },
-	{ &sk_max_30cal, "sk_max_30cal", "20", 0 },
-	{ &sk_max_127mm, "sk_max_127mm", "1000", 0 },
-	{ &sk_max_pf_rockets, "sk_max_pf_rockets", "5", 0 },
-	{ &sk_max_fuel, "sk_max_fuel", "150", 0 },
-	{ &sk_max_cells, "sk_max_cells", "300", 0 },
-	{ &sk_max_grenades, "sk_max_grenades", "15", 0 },
-	{ &sk_max_pineapples, "sk_max_pineapples", "15", 0 },
-	{ &sk_max_dynamite, "sk_max_dynamite", "10", 0 },
+	{ &sk_max_mega_health, "sk_max_mega_health", "200", CVAR_CHEAT },
+	{ &sk_max_armor, "sk_max_armor", "100", CVAR_CHEAT },
+	{ &sk_max_9mm, "sk_max_9mm", "300", CVAR_CHEAT },
+	{ &sk_max_45cal, "sk_max_45cal", "300", CVAR_CHEAT },
+	{ &sk_max_792mm, "sk_max_792mm", "200", CVAR_CHEAT },
+	{ &sk_max_30cal, "sk_max_30cal", "20", CVAR_CHEAT },
+	{ &sk_max_127mm, "sk_max_127mm", "1000", CVAR_CHEAT },
+	{ &sk_max_pf_rockets, "sk_max_pf_rockets", "5", CVAR_CHEAT },
+	{ &sk_max_fuel, "sk_max_fuel", "150", CVAR_CHEAT },
+	{ &sk_max_cells, "sk_max_cells", "300", CVAR_CHEAT },
+	{ &sk_max_grenades, "sk_max_grenades", "15", CVAR_CHEAT },
+	{ &sk_max_pineapples, "sk_max_pineapples", "15", CVAR_CHEAT },
+	{ &sk_max_dynamite, "sk_max_dynamite", "10", CVAR_CHEAT },
 	// end Knightmare
 
 	{ &cg_reloading, "g_reloading", "0", 0 }, //----(SA)	added
